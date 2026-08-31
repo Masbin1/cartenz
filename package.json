@@ -1,0 +1,29 @@
+{
+  "name": "linkederp-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LinkedERP AI Development Agent - AI-assisted Odoo development platform",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "./infrastructure/scripts/dev-up.sh",
+    "dev:stop": "./infrastructure/scripts/dev-down.sh",
+    "dev:api": "npm run start:dev --workspace backend",
+    "dev:worker": "npm run start:worker:dev --workspace backend",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "build": "npm run build --workspace backend && npm run build --workspace frontend",
+    "lint": "npm run lint --workspace backend && npm run lint --workspace frontend",
+    "typecheck": "npm run typecheck --workspace backend && npm run typecheck --workspace frontend",
+    "test": "npm run test --workspace backend",
+    "db:generate": "npm run db:generate --workspace backend",
+    "db:migrate": "npm run db:migrate --workspace backend",
+    "compose:up": "docker compose -f infrastructure/compose/docker-compose.yml up -d --build",
+    "compose:down": "docker compose -f infrastructure/compose/docker-compose.yml down"
+  }
+}

@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Environment - never commit real secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Runtime state (local development)
+.runtime/
+*.pid
+*.log
+logs/
+
+# Test and coverage
+coverage/
+.nyc_output/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Python (connector)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local workspaces created by the workspace manager
+workspaces/
