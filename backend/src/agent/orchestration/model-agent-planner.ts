@@ -9,6 +9,7 @@ import type { ProjectAnalysis } from '../analysis/odoo-project-analyser';
 import type { CodeSearchMatch } from '../analysis/code-search';
 import { inferOdooTarget } from './odoo-target';
 import type { ModelRelevance } from '../analysis/odoo-model-index';
+import { rankModulesForModel } from '../analysis/odoo-model-ownership';
 
 export interface ModelPlanningInput {
   /**
@@ -122,6 +123,15 @@ export class ModelAgentPlanner {
   private buildParts(input: ModelPlanningInput): PromptPart[] {
     const target = inferOdooTarget(input.prompt);
 
+    const rankedModules = rankModulesForModel(
+      (input.analysis?.modules ?? []).map((module) => ({
+        technicalName: module.technicalName,
+        depends: module.depends,
+        series: module.series,
+      })),
+      target.model,
+    );
+
     const facts = {
       projectName: input.projectName,
       odooVersion: input.analysis?.detectedOdooVersion ?? input.declaredOdooVersion,
@@ -130,7 +140,19 @@ export class ModelAgentPlanner {
       // A hint for the scripted provider and a starting point for a real one,
       // which is free to disagree with it after reading the code.
       targetModel: target.model,
-      modules: (input.analysis?.modules ?? []).map((module) => module.technicalName),
+      /**
+       * Ordered by whether the module already depends on the addon that owns the
+       * target model, best first (ADR-028). This decides where a *new* file goes,
+       * which ADR-025's file ranking cannot answer when nothing extends the model
+       * yet - and where the previous answer was the first name alphabetically.
+       */
+      modules: rankedModules.map((module) => module.technicalName),
+
+      /** The same order with the reason, so a model can disagree knowingly. */
+      candidateModules: rankedModules.map((module) => ({
+        module: module.technicalName,
+        relation: module.fit,
+      })),
       addonRoots: input.analysis?.structure.addonRoots ?? [],
       /**
        * Ordered by relation to the target model rather than by search order, and

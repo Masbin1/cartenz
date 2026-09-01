@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateObject, generateText, jsonSchema, stepCountIs, tool } from 'ai';
+import { generateObject, generateText, jsonSchema, NoObjectGeneratedError, stepCountIs, tool } from 'ai';
 import type { LanguageModel } from 'ai';
 import type { AppConfig } from '../../core/config/configuration';
 import { isLoopbackUrl } from '../../core/enums';
@@ -118,6 +118,20 @@ export class AiSdkModelProvider implements ModelProvider {
       name: 'linkederp-self-hosted',
       apiKey,
       baseURL: settings.baseUrl,
+      /**
+       * The SDK assumes an unknown OpenAI-compatible endpoint cannot enforce a
+       * JSON schema, and falls back to asking for JSON in the prompt. For a
+       * schema as large as an implementation plan that is unreliable: the first
+       * real attempt failed with "response did not match schema" while the same
+       * gateway answered a `response_format: json_schema` request correctly.
+       *
+       * A plan is a structured value. Asking the endpoint to enforce the schema
+       * is the whole point, and every gateway worth pointing this at supports it.
+       * One that does not will fail loudly on the first task rather than
+       * producing plans that nearly parse.
+       */
+      supportsStructuredOutputs: true,
+      transformRequestBody: withExplicitStream,
     });
     return compatible(settings.model);
   }
@@ -127,49 +141,66 @@ export class AiSdkModelProvider implements ModelProvider {
     const prompt = assemblePrompt(request.parts, nonce);
     const startedAt = Date.now();
 
-    try {
-      /**
-       * The schema is passed opaquely and the result asserted back.
-       *
-       * generateObject infers its return type from the schema, and the plan schema
-       * is nested deeply enough that TypeScript gives up (TS2589). Only the
-       * compile-time inference is lost: the SDK still validates the model's output
-       * against the schema at runtime, which is where it matters, and the caller's
-       * own type comes from StructuredRequest<T>.
-       */
-      const options = {
-        model: this.language,
-        system: request.system,
-        prompt: prompt.text,
-        schema: request.schema,
-        schemaName: request.schemaName,
-        temperature: this.config.ai.temperature,
-        maxOutputTokens: request.maxTokens ?? this.config.ai.maxOutputTokens,
-        abortSignal: AbortSignal.timeout(this.config.ai.requestTimeoutMs),
-      };
+    /**
+     * The schema is passed opaquely and the result asserted back.
+     *
+     * generateObject infers its return type from the schema, and the plan schema
+     * is nested deeply enough that TypeScript gives up (TS2589). Only the
+     * compile-time inference is lost: the SDK still validates the model's output
+     * against the schema at runtime, which is where it matters, and the caller's
+     * own type comes from StructuredRequest<T>.
+     */
+    const options = {
+      model: this.language,
+      system: request.system,
+      prompt: prompt.text,
+      schema: request.schema,
+      schemaName: request.schemaName,
+      temperature: this.config.ai.temperature,
+      maxOutputTokens: request.maxTokens ?? this.config.ai.maxOutputTokens,
+      abortSignal: AbortSignal.timeout(this.config.ai.requestTimeoutMs),
+    };
 
-      // The cast is on the argument rather than the schema field: narrowing the
-      // field alone makes TypeScript select a different overload and reject the
-      // whole call.
-      const result = (await generateObject(options as never)) as unknown as {
-        object: unknown;
-        usage?: { inputTokens?: number; outputTokens?: number };
-      };
+    // One retry, and only for NoObjectGeneratedError: the model answered but the
+    // SDK could not validate the JSON against the schema. At temperature 0 that's
+    // usually a one-off - the same request against the same gateway has come back
+    // clean on the very next attempt in testing. Every other failure (a rejected
+    // key, a missing model, a timeout) is not this and fails on the first try, as
+    // before.
+    const maxAttempts = 2;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        // The cast is on the argument rather than the schema field: narrowing the
+        // field alone makes TypeScript select a different overload and reject the
+        // whole call.
+        const result = (await generateObject(options as never)) as unknown as {
+          object: unknown;
+          usage?: { inputTokens?: number; outputTokens?: number };
+        };
 
-      return {
-        value: result.object as T,
-        usage: {
-          inputTokens: result.usage?.inputTokens ?? 0,
-          outputTokens: result.usage?.outputTokens ?? 0,
-          durationMs: Date.now() - startedAt,
-        },
-        boundaryFindings: [],
-        redactionCount: 0,
-        steps: 1,
-      };
-    } catch (error) {
-      throw this.toProviderError(error);
+        return {
+          value: result.object as T,
+          usage: {
+            inputTokens: result.usage?.inputTokens ?? 0,
+            outputTokens: result.usage?.outputTokens ?? 0,
+            durationMs: Date.now() - startedAt,
+          },
+          boundaryFindings: [],
+          redactionCount: 0,
+          steps: 1,
+        };
+      } catch (error) {
+        const canRetry = attempt < maxAttempts && NoObjectGeneratedError.isInstance(error);
+        if (!canRetry) throw this.toProviderError(error);
+        this.logger.warn(
+          `${this.id}/${this.model} produced a response that did not match the schema; ` +
+            `retrying (attempt ${attempt + 1}/${maxAttempts})`,
+        );
+      }
     }
+
+    // Unreachable: the loop always returns or throws.
+    throw new ModelProviderError(this.id, `${this.id} rejected the request.`, false);
   }
 
   async runToolLoop(request: ToolLoopRequest): Promise<ModelResult<ToolLoopOutcome>> {
@@ -371,4 +402,21 @@ function readProviderMessage(error: unknown): string | null {
  */
 function defaultModelFor(provider: ModelProviderSettings['provider']): string | null {
   return provider === 'anthropic' ? 'claude-sonnet-4-5' : null;
+}
+
+/**
+ * States `stream: false` rather than leaving it to the endpoint's default.
+ *
+ * The OpenAI specification treats a missing `stream` as false, and the SDK's
+ * non-streaming calls omit it. Not every gateway agrees: a local 9router returns
+ * Server-Sent Events when the field is absent, which reaches the SDK as "Invalid
+ * JSON response" on an HTTP 200 — a failure that reads like a broken model rather
+ * than a disagreement about a default.
+ *
+ * Saying so costs nothing against a gateway that already assumed it. This
+ * provider never streams: generateObject for the plan, generateText for the tool
+ * loop. If streaming is ever added, this must become conditional.
+ */
+function withExplicitStream(body: Record<string, unknown>): Record<string, unknown> {
+  return 'stream' in body ? body : { ...body, stream: false };
 }

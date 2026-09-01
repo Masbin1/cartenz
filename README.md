@@ -198,6 +198,7 @@ npm test                                                # 402 unit tests
 ./infrastructure/scripts/smoke-test-validation.sh       # a real Odoo run, where one is configured
 node infrastructure/scripts/probe-push-refusal.js       # the compiled runner, asked to push
 node infrastructure/scripts/probe-validation-refusal.js # the compiled runner, asked to run Python
+node infrastructure/scripts/probe-write-containment.js  # the write tools, aimed outside the workspace
 ./infrastructure/scripts/verify-portal-safety.sh        # the portal's safety surfaces
 ./infrastructure/scripts/verify-portal-settings.sh      # the provider configuration screen
 ./infrastructure/scripts/verify-portal-deletion.sh      # the project removal surfaces
