@@ -139,9 +139,20 @@ export class ModelProviderResolver {
       const provider = await this.build(organizationId, settings);
 
       const result = await provider.generateStructured({
+        // Asks for the object, not for a word. The previous wording — "reply with
+        // the single word OK" — was written assuming the provider would enforce
+        // the schema itself. Against a gateway where the SDK falls back to JSON
+        // mode, the model complied literally and answered `OK`, which then failed
+        // schema validation: a working provider reported as a broken one.
         system:
-          'You are validating an API credential. Reply with the single word OK.',
-        parts: [{ label: 'Check', content: 'Reply with OK.' }],
+          'You are validating an API credential. Respond with a JSON object and ' +
+          'nothing else.',
+        parts: [
+          {
+            label: 'Check',
+            content: 'Respond with this exact JSON object: {"status": "OK"}',
+          },
+        ],
         schema: CONNECTIVITY_SCHEMA,
         schemaName: 'ConnectivityCheck',
         maxTokens: 64,

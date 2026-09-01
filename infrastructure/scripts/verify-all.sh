@@ -58,6 +58,7 @@ echo
 echo "Probes against the compiled build"
 run "push refusal"        node "$ROOT/infrastructure/scripts/probe-push-refusal.js"
 run "validation refusal"  node "$ROOT/infrastructure/scripts/probe-validation-refusal.js"
+run "write containment"   node "$ROOT/infrastructure/scripts/probe-write-containment.js"
 
 echo
 echo "Portal surfaces"
