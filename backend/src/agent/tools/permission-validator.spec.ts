@@ -21,7 +21,8 @@ describe('ToolPermissionValidator', () => {
   const policy = (
     overrides: Partial<Record<AgentPermission, boolean>> = {},
     grantedApprovals: string[] = [],
-  ) => ({ agentPermissions: permissions(overrides), grantedApprovals });
+    executionMode: 'odoo_online' | 'odoo_sh' | 'on_premise' | null = 'odoo_sh',
+  ) => ({ agentPermissions: permissions(overrides), grantedApprovals, executionMode });
 
   it('allows a read tool under the default permissions', () => {
     const decision = validator.validate(
@@ -102,6 +103,57 @@ describe('ToolPermissionValidator', () => {
       expect(decision.outcome).toBe('denied');
     }
   });
+
+  it('refuses a filesystem tool in odoo_online mode', () => {
+    const decision = validator.validate(
+      { toolName: 'read_file', input: { path: 'models/sale_order.py' } },
+      policy({}, [], 'odoo_online'),
+    );
+    expect(decision.outcome).toBe('denied');
+    expect(decision.outcome === 'denied' && decision.reason).toContain('execution mode');
+  });
+
+  it('refuses a write tool in odoo_online mode even with the permission granted', () => {
+    const decision = validator.validate(
+      { toolName: 'edit_file', input: { path: 'x.py', find: 'a', replace: 'b', summary: 's' } },
+      policy({ repository_write: true }, [], 'odoo_online'),
+    );
+    expect(decision.outcome).toBe('denied');
+  });
+
+  it('allows filesystem tools in on_premise mode', () => {
+    const decision = validator.validate(
+      { toolName: 'read_file', input: { path: 'models/sale_order.py' } },
+      policy({}, [], 'on_premise'),
+    );
+    expect(decision.outcome).toBe('allowed');
+  });
+
+  it('refuses a mode-gated tool when the task has no execution mode', () => {
+    // e.g. an ai_project: no execution surface, so no mode-gated tool may run.
+    const decision = validator.validate(
+      { toolName: 'read_file', input: { path: 'models/x.py' } },
+      policy({}, [], null),
+    );
+    expect(decision.outcome).toBe('denied');
+  });
+
+  it('refuses an Odoo Online tool outside odoo_online mode', () => {
+    const decision = validator.validate(
+      { toolName: 'odoo_create_field', input: { model: 'sale.order', name: 'x', label: 'X', type: 'char' } },
+      policy({}, [], 'odoo_sh'),
+    );
+    expect(decision.outcome).toBe('denied');
+    expect(decision.outcome === 'denied' && decision.reason).toContain('execution mode');
+  });
+
+  it('allows an Odoo Online tool in odoo_online mode', () => {
+    const decision = validator.validate(
+      { toolName: 'odoo_list_fields', input: { model: 'sale.order' } },
+      policy({}, [], 'odoo_online'),
+    );
+    expect(decision.outcome).toBe('allowed');
+  });
 });
 
 describe('tool registry', () => {
@@ -139,10 +191,11 @@ describe('tool registry', () => {
       .map((tool) => tool.name)
       .sort();
 
-    // Validation executes repository code; push leaves the platform. Asserted as
-    // an exact set, so making a real capability fabricated - or a fabricated one
-    // real - fails here rather than passing quietly.
-    expect(simulated).toEqual(['git_push', 'run_linter', 'run_odoo_test', 'run_python_test']);
+    // Validation executes repository code. Push is no longer simulated: it is real
+    // once GIT_PUSH_ENABLED=true and refused at the process layer otherwise.
+    // Asserted as an exact set, so making a real capability fabricated - or a
+    // fabricated one real - fails here rather than passing quietly.
+    expect(simulated).toEqual(['run_linter', 'run_odoo_test', 'run_python_test']);
   });
 
   it('implements the repository, Git and metadata tools for real', () => {
@@ -160,9 +213,14 @@ describe('tool registry', () => {
       'git_branch',
       'git_commit',
       'git_diff',
+      'git_push',
       'git_status',
       'list_directory',
       'list_modules',
+      'odoo_add_field_to_view',
+      'odoo_create_field',
+      'odoo_list_fields',
+      'odoo_list_models',
       'read_file',
       'search_code',
       'update_file',
@@ -171,7 +229,9 @@ describe('tool registry', () => {
 
   it('reports the simulated capability categories for the task record', () => {
     const categories = registry.simulatedCapabilities();
-    expect(categories).toContain('push');
     expect(categories).toContain('validation');
+    // Push is no longer a simulated capability: it is either real (enabled) or
+    // refused (disabled), never fabricated.
+    expect(categories).not.toContain('push');
   });
 });

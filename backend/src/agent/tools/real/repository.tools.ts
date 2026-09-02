@@ -17,7 +17,9 @@ import {
 } from '../tool-schemas';
 import {
   resolveExistingPath,
+  resolveReadPath,
   resolveWritablePath,
+  assertNotReadOnlyPath,
 } from '../../workspace/workspace-path';
 import {
   applyEdit,
@@ -156,6 +158,7 @@ export class RealRepositoryTools {
     name: 'list_directory',
     description: 'List the contents of a directory in the project repository',
     permission: 'repository_read',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: LIST_DIRECTORY_SCHEMA,
@@ -163,7 +166,11 @@ export class RealRepositoryTools {
     validate: (input) => requireRelativePath(input),
     execute: async (input, context) => {
       assertRepository(context);
-      const target = await resolveExistingPath(context.workspace.repositoryPath, input.path);
+      const target = await resolveReadPath(
+        context.workspace.repositoryPath,
+        context.workspace.readOnlyRoots,
+        input.path,
+      );
       const entries = await readdir(target, { withFileTypes: true });
 
       return {
@@ -186,6 +193,7 @@ export class RealRepositoryTools {
     description:
       'Search the repository for a literal string: a model name, a field name or a class name',
     permission: 'repository_read',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: SEARCH_CODE_SCHEMA,
@@ -219,6 +227,7 @@ export class RealRepositoryTools {
     name: 'read_file',
     description: 'Read a file from the project repository',
     permission: 'repository_read',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: READ_FILE_SCHEMA,
@@ -226,7 +235,11 @@ export class RealRepositoryTools {
     validate: (input) => requireRelativePath(input),
     execute: async (input, context) => {
       assertRepository(context);
-      const target = await resolveExistingPath(context.workspace.repositoryPath, input.path);
+      const target = await resolveReadPath(
+        context.workspace.repositoryPath,
+        context.workspace.readOnlyRoots,
+        input.path,
+      );
 
       const info = await stat(target);
       if (info.isDirectory()) {
@@ -266,6 +279,7 @@ export class RealRepositoryTools {
     name: 'create_file',
     description: 'Create a new file in the project repository',
     permission: 'repository_write',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: CREATE_FILE_SCHEMA,
@@ -276,6 +290,7 @@ export class RealRepositoryTools {
       requireNonEmptyString(input, 'summary', 500),
     execute: async (input, context) => {
       assertRepository(context);
+      assertNotReadOnlyPath(context.workspace.readOnlyRoots, input.path);
       assertNotRedacted(input.content, input.path);
       const target = await resolveWritablePath(context.workspace.repositoryPath, input.path);
 
@@ -308,6 +323,7 @@ export class RealRepositoryTools {
     description:
       'Replace the entire contents of an existing file. Read it first: this is not a patch',
     permission: 'repository_write',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: UPDATE_FILE_SCHEMA,
@@ -318,6 +334,7 @@ export class RealRepositoryTools {
       requireNonEmptyString(input, 'summary', 500),
     execute: async (input, context) => {
       assertRepository(context);
+      assertNotReadOnlyPath(context.workspace.readOnlyRoots, input.path);
       assertNotRedacted(input.content, input.path);
       // resolveExistingPath, not resolveWritablePath: update_file must fail on a
       // file that is not there rather than create one, so a mistaken path is
@@ -363,6 +380,7 @@ export class RealRepositoryTools {
       'Replace one exact region of an existing file, leaving the rest untouched. ' +
       'Prefer this over update_file for any change to a file that already exists',
     permission: 'repository_write',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: EDIT_FILE_SCHEMA,
@@ -376,6 +394,7 @@ export class RealRepositoryTools {
       requireNonEmptyString(input, 'summary', 500),
     execute: async (input, context) => {
       assertRepository(context);
+      assertNotReadOnlyPath(context.workspace.readOnlyRoots, input.path);
       assertNotRedacted(input.replace, input.path);
       const target = await resolveExistingPath(context.workspace.repositoryPath, input.path);
 
@@ -403,6 +422,7 @@ export class RealRepositoryTools {
     name: 'delete_file',
     description: 'Delete a file from the project repository. Requires a human approval',
     permission: 'repository_write',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: true,
     simulated: false,
     parameters: DELETE_FILE_SCHEMA,
@@ -410,6 +430,7 @@ export class RealRepositoryTools {
     validate: (input) => requireRelativePath(input),
     execute: async (input, context) => {
       assertRepository(context);
+      assertNotReadOnlyPath(context.workspace.readOnlyRoots, input.path);
       const target = await resolveExistingPath(context.workspace.repositoryPath, input.path);
 
       const info = await stat(target);

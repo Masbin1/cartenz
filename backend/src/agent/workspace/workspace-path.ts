@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises';
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   pathSegments,
   stripLeadingSeparators,
@@ -176,4 +176,90 @@ export async function toWorkspaceRelative(root: string, absolute: string): Promi
   const realRoot = await realpath(resolve(root));
   if (!isInside(realRoot, absolute)) return absolute;
   return stripLeadingSeparators(absolute.slice(realRoot.length));
+}
+
+/**
+ * A read-only root the agent may inspect but never modify (ADR-028).
+ *
+ * On-premise, the agent needs to read Odoo base and enterprise to understand a
+ * model before changing the customer's module. Those directories are exposed
+ * under a synthetic prefix - the directory's own name - so the model references
+ * `odoo/addons/sale/...` rather than a host path. Reads are permitted; writes to
+ * them are refused by the write tools.
+ */
+export interface ReadOnlyRoot {
+  readonly prefix: string;
+  readonly path: string;
+}
+
+/** Derives read-only roots from configured absolute paths, prefix = basename. */
+export function readOnlyRootsFromPaths(paths: readonly string[]): readonly ReadOnlyRoot[] {
+  const roots: ReadOnlyRoot[] = [];
+  const seen = new Set<string>();
+  for (const raw of paths) {
+    const path = resolve(raw);
+    const prefix = basename(path);
+    // A duplicate prefix would make `odoo/...` ambiguous. Kept unique and
+    // deterministic rather than resolved by order.
+    if (seen.has(prefix)) continue;
+    seen.add(prefix);
+    roots.push({ prefix, path });
+  }
+  return roots;
+}
+
+/** The read-only root a requested path names, or null. */
+export function readOnlyRootFor(
+  readOnlyRoots: readonly ReadOnlyRoot[],
+  requested: string,
+): ReadOnlyRoot | null {
+  for (const root of readOnlyRoots) {
+    if (requested === root.prefix) return root;
+    if (requested.startsWith(root.prefix + '/') || requested.startsWith(root.prefix + '\\')) {
+      return root;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolves a path for reading, honouring the read-only roots.
+ *
+ * A request under a read-only prefix is resolved against that root instead of the
+ * workspace root, so the agent can read shared Odoo code without the shared
+ * directory being writable. Any other path resolves against the workspace root as
+ * before.
+ */
+export async function resolveReadPath(
+  root: string,
+  readOnlyRoots: readonly ReadOnlyRoot[],
+  requested: string,
+): Promise<string> {
+  const match = readOnlyRootFor(readOnlyRoots, requested);
+  if (match) {
+    const relative = requested.slice(match.prefix.length).replace(/^[/\\]+/, '');
+    return resolveExistingPath(match.path, relative);
+  }
+  return resolveExistingPath(root, requested);
+}
+
+/**
+ * Refuses a write whose path names a read-only root.
+ *
+ * The write tools are contained to the workspace root, so a write to `odoo/...`
+ * could not reach the shared directory in any case - it would create a stray file
+ * inside the project. Refusing here keeps that mistake visible and the shared
+ * directory unambiguous rather than silently creating `project/odoo/...`.
+ */
+export function assertNotReadOnlyPath(
+  readOnlyRoots: readonly ReadOnlyRoot[],
+  requested: string,
+): void {
+  const match = readOnlyRootFor(readOnlyRoots, requested);
+  if (match) {
+    throw new PathEscapeError(
+      requested,
+      `it targets "${match.prefix}", which is a read-only shared path and cannot be modified`,
+    );
+  }
 }

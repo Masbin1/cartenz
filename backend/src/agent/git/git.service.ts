@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { CommandRunner, type CommandResult } from '../../core/process/command-runner.service';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
@@ -43,6 +44,14 @@ const HARDENING_ARGS: readonly string[] = [
   '-c', 'advice.detachedHead=false',
 ];
 
+/** Reached from a request, so it fails fast rather than holding the connection. */
+const REMOTE_BRANCH_TIMEOUT_MS = 20_000;
+
+/** A browser renders these in a select; a repository may advertise far more. */
+const MAX_REMOTE_BRANCHES = 500;
+
+const REFS_HEADS = 'refs/heads/';
+
 export interface GitCloneOptions {
   readonly remoteUrl: string;
   readonly branch: string;
@@ -78,6 +87,23 @@ export interface GitDiffResult {
   readonly patchTruncated: boolean;
   readonly linesAdded: number;
   readonly linesRemoved: number;
+}
+
+export interface GitPushOptions {
+  readonly repositoryPath: string;
+  /** The remote to push to. Validated and credential-stripped like the clone. */
+  readonly remoteUrl: string;
+  /** The branch to push, pushed to the same name on the remote. */
+  readonly branch: string;
+  /** Directory for the credential helper files. Must be outside the repository. */
+  readonly credentialDirectory: string;
+  /** A token for HTTPS or an SSH key, or null for a public remote (ADR-021). */
+  readonly credential: GitCredential | null;
+}
+
+export interface GitPushResult {
+  readonly pushed: boolean;
+  readonly branch: string;
 }
 
 export class GitCommandError extends Error {
@@ -185,12 +211,120 @@ export class GitService {
     }
   }
 
+  /**
+   * The branch names a remote advertises, without cloning it.
+   *
+   * Exists so a person declaring environments picks from the branches a
+   * repository actually has instead of typing one. Typing is where the names
+   * diverge: a project declaring `staging` against a repository whose branch is
+   * `Staging` fails at clone time, minutes later, with an error about a missing
+   * branch rather than about the typo.
+   *
+   * Read-only and network-touching, and reached from a request rather than the
+   * worker, so it carries its own short timeout instead of the process maximum.
+   */
+  async listRemoteBranches(
+    remoteUrl: string,
+    options: {
+      readonly credential?: GitCredential | null;
+      readonly credentialDirectory?: string;
+    } = {},
+  ): Promise<readonly string[]> {
+    const remote = assertSafeRemoteUrl(remoteUrl, {
+      allowLocal: this.config.git.allowLocalRemotes,
+    });
+
+    // Without a credential there is nothing to write, so the lease has no files
+    // and any directory serves as the working directory for a command that does
+    // not read one.
+    const directory = options.credentialDirectory ?? tmpdir();
+    const lease = await leaseGitCredential({
+      directory,
+      credential: options.credential ?? null,
+      hostKeyPolicy: this.config.git.sshHostKeyPolicy,
+    });
+
+    const listUrl =
+      remote.scheme === 'https' && options.credential?.kind === 'token'
+        ? `https://${tokenUsernameFor(remote.host)}@${remote.host}/${remote.path}`
+        : remote.url;
+
+    try {
+      const result = await this.commands.run(
+        'git',
+        [...HARDENING_ARGS, 'ls-remote', '--heads', '--refs', '--', listUrl],
+        { cwd: directory, env: lease.env, timeoutMs: REMOTE_BRANCH_TIMEOUT_MS },
+      );
+
+      if (result.exitCode !== 0) {
+        throw new GitCommandError('ls-remote', result.exitCode, summariseFailure(result));
+      }
+
+      const branches = result.stdout
+        .split(NEWLINE)
+        .map((line) => line.split('\t')[1] ?? '')
+        .filter((ref) => ref.startsWith(REFS_HEADS))
+        .map((ref) => ref.slice(REFS_HEADS.length))
+        .filter((name) => name.length > 0);
+
+      // Bounded because the result is returned to a browser, and a repository
+      // may have thousands of branches.
+      return [...new Set(branches)].sort().slice(0, MAX_REMOTE_BRANCHES);
+    } finally {
+      await lease.release();
+    }
+  }
+
   /** Creates a branch at HEAD and checks it out. */
   async createBranch(repositoryPath: string, name: string): Promise<void> {
     const branch = assertSafeRefName(name);
     const result = await this.run(repositoryPath, ['checkout', '-b', branch, '--']);
     if (result.exitCode !== 0) {
       throw new GitCommandError(`checkout -b ${branch}`, result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * The branch names a local working copy has: local branches plus the remote's,
+   * with the remote prefix stripped. Used by the on-premise environment picker,
+   * where the repository is a local directory rather than a remote URL.
+   */
+  async listBranches(repositoryPath: string): Promise<readonly string[]> {
+    const heads = await this.run(repositoryPath, [
+      'for-each-ref', '--format=%(refname:short)', 'refs/heads/',
+    ]);
+    if (heads.exitCode !== 0) {
+      throw new GitCommandError('for-each-ref', heads.exitCode, summariseFailure(heads));
+    }
+
+    const remotes = await this.run(repositoryPath, [
+      'for-each-ref', '--format=%(refname:short)', 'refs/remotes/',
+    ]);
+    if (remotes.exitCode !== 0) {
+      throw new GitCommandError('for-each-ref', remotes.exitCode, summariseFailure(remotes));
+    }
+
+    const names = new Set<string>();
+    for (const line of heads.stdout.split('\n')) {
+      const name = line.trim();
+      if (name.length > 0) names.add(name);
+    }
+    for (const line of remotes.stdout.split('\n')) {
+      const ref = line.trim();
+      if (ref.length === 0 || ref === 'origin/HEAD') continue;
+      // `origin/Staging` -> `Staging`; any remote name, not just `origin`.
+      names.add(ref.replace(/^[^/]+\//, ''));
+    }
+
+    return [...names].sort();
+  }
+
+  /** Checks out an existing branch. */
+  async checkoutBranch(repositoryPath: string, name: string): Promise<void> {
+    const branch = assertSafeRefName(name);
+    const result = await this.run(repositoryPath, ['checkout', branch, '--']);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError(`checkout ${branch}`, result.exitCode, summariseFailure(result));
     }
   }
 
@@ -350,6 +484,64 @@ export class GitService {
     const filesChanged = changed.stdout.split('\n').filter((line) => line.trim().length > 0).length;
 
     return { commit, filesChanged };
+  }
+
+  /**
+   * Pushes a branch to the remote it was cloned from, or to an explicit URL.
+   *
+   * Phase 5 (ADR-021): the outward-facing operation. It uses the same credential
+   * lease as clone - an SSH key through GIT_SSH_COMMAND, or an HTTPS token through
+   * the askpass helper - so a credential never reaches an argument vector, a
+   * config file or a process listing. The branch is pushed to the same name on the
+   * remote, never to the default branch; a non-fast-forward push is refused by git
+   * itself because no force flag is passed.
+   */
+  async push(options: GitPushOptions): Promise<GitPushResult> {
+    const remote = assertSafeRemoteUrl(options.remoteUrl, {
+      allowLocal: this.config.git.allowLocalRemotes,
+    });
+    const branch = assertSafeRefName(options.branch);
+
+    const lease = await leaseGitCredential({
+      directory: options.credentialDirectory,
+      credential: options.credential,
+      hostKeyPolicy: this.config.git.sshHostKeyPolicy,
+    });
+
+    const pushUrl =
+      remote.scheme === 'https' && options.credential?.kind === 'token'
+        ? `https://${tokenUsernameFor(remote.host)}@${remote.host}/${remote.path}`
+        : remote.url;
+
+    try {
+      const result = await this.commands.run(
+        'git',
+        [
+          ...HARDENING_ARGS,
+          'push',
+          '--quiet',
+          '--atomic',
+          '--',
+          pushUrl,
+          `${branch}:${branch}`,
+        ],
+        {
+          cwd: options.repositoryPath,
+          env: lease.env,
+          timeoutMs: this.config.process.maxTimeoutMs,
+        },
+      );
+
+      if (result.exitCode !== 0) {
+        throw new GitCommandError('push', result.exitCode, summariseFailure(result));
+      }
+
+      this.logger.log(`Pushed ${branch} to ${remote.host}/${remote.path}`);
+      return { pushed: true, branch };
+    } finally {
+      // Always: a failed push must not leave a credential helper on disk.
+      await lease.release();
+    }
   }
 
   /**

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { AgentPermission } from '../../core/authz/agent-permissions';
 import { isNeverGrantable } from '../../core/authz/agent-permissions';
+import type { ExecutionMode } from '../executors/execution-mode';
 import { ToolRegistry } from './tool-registry';
 import type { AnyToolDefinition } from './tool.interface';
 
@@ -24,6 +25,8 @@ export interface ToolPolicyContext {
   readonly agentPermissions: Record<AgentPermission, boolean>;
   /** Approval actions already granted for this task. */
   readonly grantedApprovals: readonly string[];
+  /** The execution mode this task runs in (ADR-028). */
+  readonly executionMode: ExecutionMode | null;
 }
 
 /**
@@ -37,13 +40,14 @@ export interface ToolPolicyContext {
  *
  *   1. Is the capability one that can never be granted?
  *   2. Is the tool registered?
- *   3. Does the project grant the permission the tool requires?
- *   4. Is the input well formed?
- *   5. Does this instance additionally require a human approval?
+ *   3. Is the tool legal in this task's execution mode?
+ *   4. Does the project grant the permission the tool requires?
+ *   5. Is the input well formed?
+ *   6. Does this instance additionally require a human approval?
  *
- * A denial at step 1 or 3 is a policy failure; a denial at step 4 is a malformed
- * request. They are distinguished because they mean different things to whoever
- * reads the audit trail.
+ * A denial at step 1, 3 or 4 is a policy failure; a denial at step 5 is a
+ * malformed request. They are distinguished because they mean different things
+ * to whoever reads the audit trail.
  */
 @Injectable()
 export class ToolPermissionValidator {
@@ -60,6 +64,19 @@ export class ToolPermissionValidator {
     const tool = this.registry.get(request.toolName);
     if (!tool) {
       return { outcome: 'denied', reason: `${request.toolName} is not a registered tool` };
+    }
+
+    // Mode gating (ADR-028). A tool that declares modes is refused in any other
+    // mode, and in a task with no mode at all. The AI is never the boundary: the
+    // model is not asked to avoid a filesystem on odoo_online; the request is
+    // refused here before anything executes.
+    if (tool.modes !== undefined) {
+      if (context.executionMode === null || !tool.modes.includes(context.executionMode)) {
+        return {
+          outcome: 'denied',
+          reason: `${tool.name} is not available in this project's execution mode`,
+        };
+      }
     }
 
     if (context.agentPermissions[tool.permission] !== true) {

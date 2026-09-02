@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { isLoopbackUrl } from '../enums';
 
@@ -102,6 +103,22 @@ const environmentSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+
+  /**
+   * On-premise execution (ADR-028).
+   *
+   * ON_PREMISE_ROOT is the base directory under which on-premise projects live,
+   * e.g. /home/masbintang/linkederp. Empty means on-premise execution is disabled:
+   * a task on an on_premise project is refused with a message an operator can act
+   * on rather than failing obscurely inside the workspace layer.
+   *
+   * ON_PREMISE_READ_ONLY_PATHS names the shared Odoo directories (base,
+   * enterprise) the agent may READ for dependency analysis and testing but must
+   * never modify. Comma-separated absolute paths; each becomes a read-only root
+   * whose prefix is its directory name.
+   */
+  ON_PREMISE_ROOT: z.string().default(''),
+  ON_PREMISE_READ_ONLY_PATHS: z.string().default(''),
 
   // Git. Shallow by default: a task needs a branch and a diff, not history.
   GIT_CLONE_DEPTH: z.coerce.number().int().min(1).max(1000).default(1),
@@ -253,6 +270,12 @@ export interface AppConfig {
     readonly maxFiles: number;
     readonly retainOnFailure: boolean;
   };
+  readonly onPremise: {
+    /** Base directory for on-premise projects, or null when disabled. */
+    readonly root: string | null;
+    /** Shared Odoo directories the agent may read but never write. */
+    readonly readOnlyPaths: readonly string[];
+  };
   readonly git: {
     readonly cloneDepth: number;
     readonly authorName: string;
@@ -350,6 +373,22 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     ]);
   }
 
+  // On-premise paths are validated at boot so a typo fails here rather than at the
+  // first task that targets the misconfigured directory.
+  if (env.ON_PREMISE_ROOT && !isAbsolute(env.ON_PREMISE_ROOT)) {
+    throw new ConfigurationError(['ON_PREMISE_ROOT must be an absolute path.']);
+  }
+  const readOnlyPaths = env.ON_PREMISE_READ_ONLY_PATHS.split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  for (const path of readOnlyPaths) {
+    if (!isAbsolute(path)) {
+      throw new ConfigurationError([
+        `ON_PREMISE_READ_ONLY_PATHS entry "${path}" must be an absolute path.`,
+      ]);
+    }
+  }
+
   // Guard against a production deployment left on the development providers.
   if (env.NODE_ENV === 'production') {
     const unsafe: string[] = [];
@@ -422,6 +461,10 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       maxBytes: env.WORKSPACE_MAX_BYTES,
       maxFiles: env.WORKSPACE_MAX_FILES,
       retainOnFailure: env.WORKSPACE_RETAIN_ON_FAILURE,
+    },
+    onPremise: {
+      root: emptyToUndefined(env.ON_PREMISE_ROOT) ?? null,
+      readOnlyPaths,
     },
     git: {
       cloneDepth: env.GIT_CLONE_DEPTH,

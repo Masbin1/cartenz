@@ -19,6 +19,7 @@ export const AGENT_PERMISSIONS = [
   'database_metadata_read',
   'database_record_read',
   'database_record_write',
+  'odoo_customize',
   'restart_odoo',
   'production_deploy',
 ] as const;
@@ -51,6 +52,7 @@ export const DEFAULT_AGENT_PERMISSIONS: Readonly<Record<AgentPermission, boolean
   database_metadata_read: true,
   database_record_read: false,
   database_record_write: false,
+  odoo_customize: true,
   restart_odoo: false,
   production_deploy: false,
 };

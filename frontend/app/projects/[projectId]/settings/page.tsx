@@ -140,6 +140,31 @@ export default function ProjectSettingsPage() {
     kind: EnvironmentKind;
   }>({ name: '', branch: '', kind: 'development' });
 
+  const [branches, setBranches] = useState<string[] | undefined>(undefined);
+  const [readingBranches, setReadingBranches] = useState(false);
+
+  /**
+   * Asks the repository which branches it has, so the branch below is picked
+   * rather than typed. Not read on load: it is a network call to the remote,
+   * and most visits to this page are not about environments.
+   */
+  const readBranches = async () => {
+    setReadingBranches(true);
+    setError(null);
+
+    try {
+      const { branches: found } = await api.projects.remoteBranches(projectId);
+      setBranches(found);
+    } catch (caught) {
+      // The field stays typeable, so this is a note rather than a dead end.
+      setError(
+        caught instanceof ApiError ? caught.message : 'The branches could not be read.',
+      );
+    } finally {
+      setReadingBranches(false);
+    }
+  };
+
   /**
    * Adds an environment to an existing project.
    *
@@ -375,16 +400,41 @@ export default function ProjectSettingsPage() {
                     disabled={saving}
                     className="field-input w-40 text-xs"
                   />
-                  <input
-                    aria-label="Environment branch"
-                    value={newEnvironment.branch}
-                    onChange={(event) =>
-                      setNewEnvironment((previous) => ({ ...previous, branch: event.target.value }))
-                    }
-                    placeholder="StagingDM"
-                    disabled={saving}
-                    className="field-input w-48 font-mono text-xs"
-                  />
+                  {branches ? (
+                    <select
+                      aria-label="Environment branch"
+                      value={newEnvironment.branch}
+                      onChange={(event) =>
+                        setNewEnvironment((previous) => ({
+                          ...previous,
+                          branch: event.target.value,
+                        }))
+                      }
+                      disabled={saving}
+                      className="field-input w-48 font-mono text-xs"
+                    >
+                      <option value="">Pick a branch</option>
+                      {branches.map((branch) => (
+                        <option key={branch} value={branch}>
+                          {branch}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      aria-label="Environment branch"
+                      value={newEnvironment.branch}
+                      onChange={(event) =>
+                        setNewEnvironment((previous) => ({
+                          ...previous,
+                          branch: event.target.value,
+                        }))
+                      }
+                      placeholder="StagingDM"
+                      disabled={saving}
+                      className="field-input w-48 font-mono text-xs"
+                    />
+                  )}
                   <select
                     aria-label="Environment kind"
                     value={newEnvironment.kind}
@@ -412,7 +462,20 @@ export default function ProjectSettingsPage() {
                   >
                     Add
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => void readBranches()}
+                    disabled={saving || readingBranches}
+                    className="btn-ghost whitespace-nowrap px-3 text-2xs"
+                  >
+                    {readingBranches ? 'Reading' : 'Read branches'}
+                  </button>
                 </div>
+                <p className="mt-1.5 text-2xs text-content-subtle">
+                  {branches
+                    ? `Picking from the ${branches.length} branch${branches.length === 1 ? '' : 'es'} the repository has.`
+                    : 'Branch names are case-sensitive: read the branches to pick one that exists.'}
+                </p>
                 {environments.length === 0 ? (
                   <p className="mt-2 text-2xs text-state-waiting">
                     This project has no environments, so no task can run against it. Add the

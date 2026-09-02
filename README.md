@@ -13,7 +13,8 @@ The governing architecture is held in `docs/reference/`:
 Those documents are authoritative. Implementation decisions that deviate from
 them, or that resolve a conflict within them, are recorded in `docs/adr/`.
 
-**Status: Phase 3 complete — the agent is model-driven.** The agent clones a
+**Status: Phase 3 complete, Phase 5 push delivered.** The agent is model-driven. The
+agent clones a
 repository into an isolated per-task workspace, detects the Odoo series from the
 project's own manifests, asks a model for a plan, carries that plan out through a
 tool loop after a person approves it, produces a real `git diff` for review, and
@@ -39,15 +40,12 @@ Two capabilities remain simulated, and the portal states which on every task:
 
 - **Validation** — running a linter or a test suite executes the repository's own
   code, which is the risk the microVM boundary exists for (ADR-013, ADR-019).
-- **`git push`** — the one operation that leaves the platform. Phase 5.
 
-**The platform cannot push, and that is enforced where it cannot be undone by
-accident** (ADR-021). `GIT_PUSH_ENABLED` defaults to false, and with it false the
-process layer refuses `git push` before a process is built — not the tool, the
-process layer, so no permission and no approval can cause a push.
-`infrastructure/scripts/probe-push-refusal.js` asks the compiled artefact to push
-in seven forms and reports each refusal. With pushing off the platform does not
-ask for push approval either: it completes and says the branch is in the workspace.
+**Push is real** (Phase 5, ADR-021, ADR-028). `git_push` pushes the task branch to
+the connected remote with the sealed SSH key or token, behind the `git_push`
+approval and the `GIT_PUSH_ENABLED` master switch. With `GIT_PUSH_ENABLED=false`
+the process layer refuses `git push` before a process is built — not the tool, the
+process layer — so no permission and no approval can cause a push.
 
 **A task targets a named environment, and production is refused** (ADR-021). On
 Odoo.sh an environment is a branch, so a project declares its branches and what
@@ -320,8 +318,8 @@ architecture.
    AI-authored code (ADR-013, ADR-019). This is what keeps validation simulated.
 3. HashiCorp Vault (ADR-014).
 4. Keycloak or Ory, and third-party OAuth sign-in (ADR-015).
-5. A push to a customer repository — Phase 5. Everything up to and including the
-   commit is real; the push is not.
+5. ~~A push to a customer repository — Phase 5.~~ Delivered: `git push` is real behind
+   `GIT_PUSH_ENABLED` and the `git_push` approval (ADR-021, ADR-028).
 6. Targeted edits. The write tools replace a whole file, which is why a file
    containing a hardcoded credential cannot be rewritten at all — the boundary
    removes the credential before the agent reads it, and writing the redaction back

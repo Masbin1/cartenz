@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRequireAuth } from '@/lib/auth';
 import { ApiError, api } from '@/lib/api';
 import { AppShell } from '@/components/ui/app-shell';
@@ -97,8 +97,11 @@ function FlowCard({
 
 function ConnectExistingForm({ organizationId }: { organizationId: string }) {
   const router = useRouter();
+  // Seeded with no branch names: the staging and development guesses were the
+  // cause of a project whose every task failed on a missing branch. Reading the
+  // repository fills them in.
   const [environments, setEnvironments] = useState<EnvironmentDraft[]>(
-    defaultEnvironments('main'),
+    defaultEnvironments('main', []),
   );
   const [form, setForm] = useState({
     name: '',
@@ -112,6 +115,75 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
   });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [branches, setBranches] = useState<string[] | undefined>(undefined);
+  const [branchError, setBranchError] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
+
+  // On-premise: the folders a project may be pointed at, read once the type is
+  // chosen. `onPremiseRoot` is undefined until read, null when disabled, and a
+  // string when enabled.
+  const [onPremiseRoot, setOnPremiseRoot] = useState<string | null | undefined>(undefined);
+  const [onPremiseFolders, setOnPremiseFolders] = useState<
+    { name: string; path: string; isGitRepository: boolean }[]
+  >([]);
+  const [onPremisePath, setOnPremisePath] = useState('');
+
+  useEffect(() => {
+    if (form.projectType !== 'on_premise') return;
+
+    let cancelled = false;
+    setOnPremiseRoot(undefined);
+
+    (async () => {
+      try {
+        const { root, folders } = await api.projects.onPremiseLocations(organizationId);
+        if (cancelled) return;
+        setOnPremiseRoot(root);
+        setOnPremiseFolders(folders);
+        setOnPremisePath((previous) => previous || (folders[0]?.path ?? ''));
+      } catch (caught) {
+        if (cancelled) return;
+        setOnPremiseRoot(null);
+        setOnPremiseFolders([]);
+        setError(caught instanceof ApiError ? caught.message : 'The folders could not be read.');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [form.projectType, organizationId]);
+
+  /**
+   * Asks the repository which branches it has, so the environments below are
+   * picked rather than typed. Git refs are case-sensitive, and a typed
+   * `staging` against a repository whose branch is `Staging` produces a project
+   * whose every task fails at clone time.
+   *
+   * A failure here is not fatal: the branch fields stay typeable, because a
+   * repository the platform cannot reach yet must not block creating a project.
+   */
+  const readBranches = async () => {
+    setReading(true);
+    setBranchError(null);
+
+    try {
+      const { branches: found } = await api.projects.remoteBranchesFor({
+        organizationId,
+        repositoryUrl: form.repositoryUrl,
+      });
+
+      setBranches(found);
+      setEnvironments(defaultEnvironments(form.defaultBranch, found));
+    } catch (caught) {
+      setBranches(undefined);
+      setBranchError(
+        caught instanceof ApiError ? caught.message : 'The branches could not be read.',
+      );
+    } finally {
+      setReading(false);
+    }
+  };
 
   const update =
     (field: keyof typeof form) =>
@@ -139,6 +211,12 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
     setError(null);
     setSubmitting(true);
 
+    if (form.projectType === 'on_premise' && onPremisePath.trim().length === 0) {
+      setError('Select the project folder the agent should operate on.');
+      setSubmitting(false);
+      return;
+    }
+
     try {
       const project = await api.projects.create({
         organizationId,
@@ -148,6 +226,10 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
         odooVersion: form.odooVersion,
         defaultBranch: form.defaultBranch,
         repositoryUrl: needsRepository ? form.repositoryUrl : undefined,
+        // The selected on-premise directory, stored in the project's environment
+        // configuration and enforced by the workspace layer at task time.
+        environmentConfig:
+          form.projectType === 'on_premise' ? { onPremisePath } : undefined,
         // Sent only where branches mean something. Blank rows are dropped rather
         // than rejected: a half-filled row is a person still typing.
         environments: needsRepository
@@ -231,14 +313,30 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
               <label htmlFor="repositoryUrl" className="field-label">
                 Repository URL
               </label>
-              <input
-                id="repositoryUrl"
-                required
-                value={form.repositoryUrl}
-                onChange={update('repositoryUrl')}
-                className="field-input font-mono text-xs"
-                placeholder="https://github.com/organisation/repository.git"
-              />
+              <div className="flex gap-2">
+                <input
+                  id="repositoryUrl"
+                  required
+                  value={form.repositoryUrl}
+                  onChange={update('repositoryUrl')}
+                  className="field-input flex-1 font-mono text-xs"
+                  placeholder="https://github.com/organisation/repository.git"
+                />
+                <button
+                  type="button"
+                  onClick={readBranches}
+                  disabled={reading || submitting || form.repositoryUrl.trim().length === 0}
+                  className="btn-ghost whitespace-nowrap px-3 text-xs"
+                >
+                  {reading ? <Spinner /> : null}
+                  {reading ? 'Reading' : 'Read branches'}
+                </button>
+              </div>
+              {branchError ? (
+                <p className="mt-1.5 text-2xs text-state-failure">
+                  {branchError} The branch fields below stay typeable.
+                </p>
+              ) : null}
             </div>
 
             <div>
@@ -260,6 +358,7 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
               value={environments}
               onChange={setEnvironments}
               disabled={submitting}
+              branches={branches}
             />
 
             <div>
@@ -297,6 +396,45 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
           </>
         ) : null}
 
+        {form.projectType === 'on_premise' ? (
+          <div className="sm:col-span-2">
+            <label htmlFor="onPremisePath" className="field-label">
+              Project folder
+            </label>
+            {onPremiseRoot === undefined ? (
+              <p className="mt-1.5 text-2xs text-content-subtle">Reading available folders…</p>
+            ) : onPremiseRoot === null ? (
+              <p className="mt-1.5 text-2xs text-state-failure">
+                On-premise execution is not configured on this server. Ask an operator to set
+                ON_PREMISE_ROOT.
+              </p>
+            ) : onPremiseFolders.length === 0 ? (
+              <p className="mt-1.5 text-2xs text-content-subtle">
+                No folders were found under the configured root.
+              </p>
+            ) : (
+              <select
+                id="onPremisePath"
+                value={onPremisePath}
+                onChange={(event) => setOnPremisePath(event.target.value)}
+                className="field-input font-mono text-xs"
+                required
+              >
+                {onPremiseFolders.map((folder) => (
+                  <option key={folder.path} value={folder.path}>
+                    {folder.name}
+                    {folder.isGitRepository ? '' : ' (not a Git repository)'}
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className="mt-1.5 text-2xs text-content-subtle">
+              The agent operates directly on this directory and never modifies the shared Odoo base
+              or enterprise addons.
+            </p>
+          </div>
+        ) : null}
+
         <div className="sm:col-span-2">
           <label htmlFor="description" className="field-label">
             Description (optional)
@@ -311,10 +449,10 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
         </div>
       </div>
 
-      {form.projectType === 'on_premise' || form.projectType === 'odoo_online' ? (
+      {form.projectType === 'odoo_online' ? (
         <Alert tone="warning" title="Not yet reachable by the agent">
-          On-premise projects require the LinkedERP Connector, and Odoo Online requires the
-          integration service. Both arrive in a later phase; the project can be recorded now.
+          Odoo Online requires the integration service, which arrives in a later phase; the project
+          can be recorded now.
         </Alert>
       ) : null}
 

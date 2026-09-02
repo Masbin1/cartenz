@@ -185,3 +185,81 @@ export const RUN_LINTER_SCHEMA = {
   },
   additionalProperties: false,
 } as const;
+
+const odooModelName = {
+  type: 'string',
+  description:
+    'The technical model name, e.g. "sale.order". Dotted, as in the Odoo ORM.',
+  pattern: '^[a-z0-9_]+(\\.[a-z0-9_]+)*$',
+  maxLength: 120,
+} as const;
+
+export const ODOO_LIST_MODELS_SCHEMA = {
+  type: 'object',
+  properties: {
+    query: {
+      type: 'string',
+      description: 'A case-insensitive fragment of the model name to filter on. Omit to list everything.',
+      maxLength: 120,
+    },
+  },
+  additionalProperties: false,
+} as const;
+
+export const ODOO_LIST_FIELDS_SCHEMA = {
+  type: 'object',
+  properties: { model: odooModelName },
+  required: ['model'],
+  additionalProperties: false,
+} as const;
+
+export const ODOO_CREATE_FIELD_SCHEMA = {
+  type: 'object',
+  properties: {
+    model: odooModelName,
+    name: {
+      type: 'string',
+      description:
+        'Technical field name, without the "x_" prefix (it is added automatically, as Studio does). e.g. "referensi".',
+      pattern: '^[a-z0-9_]+$',
+      maxLength: 60,
+    },
+    label: {
+      type: 'string',
+      description: 'The human label shown in the UI, e.g. "Referensi".',
+      maxLength: 200,
+    },
+    type: {
+      type: 'string',
+      description: 'Field type: char, text, integer, float, boolean, date, datetime, selection, many2one.',
+      maxLength: 40,
+    },
+    required: {
+      type: 'boolean',
+      description: 'Whether the field must always have a value. Defaults to false.',
+    },
+  },
+  required: ['model', 'name', 'label', 'type'],
+  additionalProperties: false,
+} as const;
+
+export const ODOO_ADD_FIELD_TO_VIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    model: odooModelName,
+    field: {
+      type: 'string',
+      description: 'The technical field name to add, including the "x_" prefix.',
+      pattern: '^[a-z0-9_]+$',
+      maxLength: 120,
+    },
+    after: {
+      type: 'string',
+      description: 'The technical name of the existing field this new field goes below, e.g. "payment_term_id".',
+      pattern: '^[a-z0-9_]+$',
+      maxLength: 120,
+    },
+  },
+  required: ['model', 'field', 'after'],
+  additionalProperties: false,
+} as const;

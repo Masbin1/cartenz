@@ -186,3 +186,14 @@ allowed to exist; the refusal moves to task time, where the message says what to
 Verified by 5 unit tests naming the inversion and 6 checks in `smoke-test-safety.sh` §1b, which walk
 the repair in the order a careful person would: declare production first, be told a targetable
 environment is needed, declare it, and confirm the task runs on that branch and not on `main`.
+
+## Amendment, 2026-09-01 — Phase 5 push delivered
+
+`git_push` is no longer a simulation. `GitService.push` pushes the task branch to the remote with
+the same credential lease as clone (SSH key through `GIT_SSH_COMMAND`, or an HTTPS token through the
+askpass helper), and the tool is gated by the existing `git_push` approval. Section 1's chokepoint is
+unchanged and is what makes the delivery safe: with `GIT_PUSH_ENABLED=false` the process layer still
+refuses the subcommand before anything is built, so removing the simulation does not remove the
+guard. Odoo.sh additionally refuses tasks targeting the `main` branch at creation (ADR-028), because
+`main` is the live business there; on-premise commits in the customer's own repository and does not
+push, since that remote carries the customer's own credentials.

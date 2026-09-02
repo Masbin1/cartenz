@@ -248,6 +248,7 @@ export const api = {
       odooVersion?: string;
       defaultBranch?: string;
       repositoryUrl?: string;
+      environmentConfig?: Record<string, unknown>;
       environments?: { name: string; branch: string; kind: EnvironmentKind }[];
     }) => request<ProjectDetail>('/projects', { method: 'POST', body }),
 
@@ -259,6 +260,20 @@ export const api = {
       requirements: { title: string; detail?: string }[];
       modules?: string[];
     }) => request<ProjectDetail>('/projects/ai', { method: 'POST', body }),
+
+    /** The branches a repository advertises, before the project exists. */
+    remoteBranchesFor: (body: { organizationId: string; repositoryUrl: string }) =>
+      request<{ branches: string[] }>('/projects/remote-branches', { method: 'POST', body }),
+
+    /** The folders an on-premise project may be pointed at. */
+    onPremiseLocations: (organizationId: string) =>
+      request<{
+        root: string | null;
+        folders: { name: string; path: string; isGitRepository: boolean }[];
+      }>(`/projects/on-premise-locations?organizationId=${organizationId}`),
+
+    remoteBranches: (projectId: string) =>
+      request<{ branches: string[] }>(`/projects/${projectId}/remote-branches`),
 
     update: (projectId: string, body: Record<string, unknown>) =>
       request<ProjectDetail>(`/projects/${projectId}`, { method: 'PATCH', body }),

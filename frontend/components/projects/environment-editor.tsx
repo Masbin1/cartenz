@@ -15,16 +15,32 @@ const KINDS: { value: EnvironmentKind; label: string }[] = [
 ];
 
 /**
- * Seeds the three environments an Odoo.sh project normally has, from the branch
- * the person has already named as the default. Production is included because a
- * project that hides its production branch does not stop it existing - naming it
- * is what lets the platform refuse to touch it.
+ * Seeds the three environments an Odoo.sh project normally has. Production is
+ * included because a project that hides its production branch does not stop it
+ * existing - naming it is what lets the platform refuse to touch it.
+ *
+ * The staging and development branches were once guessed as `staging` and
+ * `development`. Git refs are case-sensitive, so against a repository whose
+ * branch is `Staging` the guess produced a project that failed at clone time,
+ * minutes later, with an error about a missing branch rather than about the
+ * name. When `branches` is supplied the seed matches against what the
+ * repository actually has, and leaves a row blank rather than inventing a name.
  */
-export function defaultEnvironments(defaultBranch: string): EnvironmentDraft[] {
+export function defaultEnvironments(
+  defaultBranch: string,
+  branches: readonly string[],
+): EnvironmentDraft[] {
+  // Matched without case so `Staging` is found for `staging`, but the
+  // repository's own spelling is what gets stored. No match leaves the row
+  // blank: an empty row is dropped on submit, a wrong one fails at clone time.
+  const asDeclared = (wanted: string) =>
+    branches.find((branch) => branch.toLowerCase() === wanted.toLowerCase()) ?? '';
+
+  // Production follows the default branch, which was named rather than guessed.
   return [
     { name: 'production', branch: defaultBranch.trim() || 'main', kind: 'production' },
-    { name: 'staging', branch: 'staging', kind: 'staging' },
-    { name: 'development', branch: 'development', kind: 'development' },
+    { name: 'staging', branch: asDeclared('staging'), kind: 'staging' },
+    { name: 'development', branch: asDeclared('development'), kind: 'development' },
   ];
 }
 
@@ -32,6 +48,12 @@ interface Props {
   value: EnvironmentDraft[];
   onChange: (next: EnvironmentDraft[]) => void;
   disabled?: boolean;
+  /**
+   * The branches the repository advertises. Undefined means they have not been
+   * read, and the branch stays a text field - a repository the platform cannot
+   * reach must not become a project nobody can create.
+   */
+  branches?: readonly string[];
 }
 
 /**
@@ -41,7 +63,7 @@ interface Props {
  * environment; one marked production is refused, because on Odoo.sh that branch
  * is the live business.
  */
-export function EnvironmentEditor({ value, onChange, disabled = false }: Props) {
+export function EnvironmentEditor({ value, onChange, disabled = false, branches }: Props) {
   const set = (index: number, patch: Partial<EnvironmentDraft>) =>
     onChange(value.map((row, i) => (i === index ? { ...row, ...patch } : row)));
 
@@ -58,6 +80,16 @@ export function EnvironmentEditor({ value, onChange, disabled = false }: Props) 
           On Odoo.sh an environment is a branch. Tasks run against staging and development
           environments; one marked production is refused.
         </p>
+        {branches ? (
+          <p className="mt-1 text-2xs text-content-subtle">
+            {branches.length} branch{branches.length === 1 ? '' : 'es'} read from the repository.
+          </p>
+        ) : (
+          <p className="mt-1 text-2xs text-state-waiting">
+            Read the branches above to pick from what the repository has. Branch names are
+            case-sensitive, so a typed one may not exist.
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -71,14 +103,36 @@ export function EnvironmentEditor({ value, onChange, disabled = false }: Props) 
               disabled={disabled}
               className="field-input flex-1 text-xs"
             />
-            <input
-              aria-label={`Environment ${index + 1} branch`}
-              placeholder="staging"
-              value={row.branch}
-              onChange={(event) => set(index, { branch: event.target.value })}
-              disabled={disabled}
-              className="field-input flex-1 font-mono text-xs"
-            />
+            {branches ? (
+              <select
+                aria-label={`Environment ${index + 1} branch`}
+                value={row.branch}
+                onChange={(event) => set(index, { branch: event.target.value })}
+                disabled={disabled}
+                className="field-input flex-1 font-mono text-xs"
+              >
+                <option value="">Pick a branch</option>
+                {branches.map((branch) => (
+                  <option key={branch} value={branch}>
+                    {branch}
+                  </option>
+                ))}
+                {/* A branch already declared but no longer on the remote would
+                    otherwise vanish from the row without anyone noticing. */}
+                {row.branch && !branches.includes(row.branch) ? (
+                  <option value={row.branch}>{row.branch} (not on the remote)</option>
+                ) : null}
+              </select>
+            ) : (
+              <input
+                aria-label={`Environment ${index + 1} branch`}
+                placeholder="staging"
+                value={row.branch}
+                onChange={(event) => set(index, { branch: event.target.value })}
+                disabled={disabled}
+                className="field-input flex-1 font-mono text-xs"
+              />
+            )}
             <select
               aria-label={`Environment ${index + 1} kind`}
               value={row.kind}

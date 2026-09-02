@@ -35,8 +35,10 @@ import { ProjectEnvironmentsService } from './project-environments.service';
 import { WorkspaceManager } from '../../agent/workspace/workspace-manager';
 import { TERMINAL_TASK_STATUSES } from '../../agent/task-state';
 import { assertSafeRemoteUrl, UnsafeRemoteUrlError } from '../../agent/git/git-url';
+import { GitService } from '../../agent/git/git.service';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
+import { listOnPremiseFolders, type OnPremiseFolder } from './on-premise-locations';
 import type {
   CreateAiProjectDto,
   CreateConnectionDto,
@@ -65,6 +67,7 @@ export class ProjectsService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly environments: ProjectEnvironmentsService,
     private readonly workspaces: WorkspaceManager,
+    private readonly git: GitService,
   ) {}
 
   /**
@@ -83,6 +86,101 @@ export class ProjectsService {
       }
       throw error;
     }
+  }
+
+  /**
+   * The branches a repository actually has, so environments are picked rather
+   * than typed.
+   *
+   * Typing is where the names diverge: a project declaring `staging` against a
+   * repository whose branch is `Staging` clones nothing, and the failure arrives
+   * minutes later as a missing branch rather than as a typo.
+   *
+   * A caller-supplied URL that is then reached over the network is an SSRF
+   * surface, so it goes through the same `assertSafeRemoteUrl` the clone path
+   * uses - no scheme is reachable here that is not reachable there.
+   */
+  private async readRemoteBranches(repositoryUrl: string): Promise<readonly string[]> {
+    this.assertRepositoryUrl(repositoryUrl);
+
+    try {
+      return await this.git.listRemoteBranches(repositoryUrl);
+    } catch (error) {
+      // A private or mistyped repository is the caller's problem to correct, not
+      // a platform fault - and the portal falls back to typing a branch, so the
+      // reason has to survive to the response.
+      const detail = error instanceof Error ? error.message : 'the repository could not be read';
+      throw new BadRequestException(`Could not read branches from that repository: ${detail}`);
+    }
+  }
+
+  /** Branch probe for the project-creation form, before a project exists. */
+  async remoteBranchesFor(
+    user: AuthenticatedUser,
+    organizationId: string,
+    repositoryUrl: string,
+  ): Promise<{ branches: readonly string[] }> {
+    await this.authz.requireOrganizationMember(user, organizationId, 'developer');
+    return { branches: await this.readRemoteBranches(repositoryUrl) };
+  }
+
+  /**
+   * The folders an on-premise project may be pointed at, for the creation form
+   * (ADR-028).
+   *
+   * Read while the form is being filled in, so a person picks a directory instead
+   * of typing a host path. Returns `root: null` when on-premise execution is not
+   * configured on this host, so the portal can say so rather than guess.
+   */
+  async onPremiseLocations(
+    user: AuthenticatedUser,
+    organizationId: string,
+  ): Promise<{ root: string | null; folders: OnPremiseFolder[] }> {
+    await this.authz.requireOrganizationMember(user, organizationId, 'developer');
+    const root = this.config.onPremise.root;
+    if (!root) return { root: null, folders: [] };
+    return { root, folders: await listOnPremiseFolders(root) };
+  }
+
+  /**
+   * Branch probe for a project that already exists.
+   *
+   * Repository-backed projects read the remote; an on-premise project reads the
+   * branches of its local working copy, because there is no remote URL to probe.
+   */
+  async remoteBranches(
+    user: AuthenticatedUser,
+    projectId: string,
+  ): Promise<{ branches: readonly string[] }> {
+    await this.authz.requireProjectAccess(user, projectId, 'developer');
+
+    const [project] = await this.database.db
+      .select({
+        projectType: projects.projectType,
+        repositoryUrl: projects.repositoryUrl,
+        environmentConfig: projects.environmentConfig,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+
+    if (!project) throw new NotFoundException('Project not found');
+
+    if (project.projectType === 'on_premise') {
+      const path = readOnPremisePath(project.environmentConfig);
+      if (!path) {
+        throw new BadRequestException(
+          'This on-premise project has no local directory selected.',
+        );
+      }
+      return { branches: await this.git.listBranches(path) };
+    }
+
+    if (!project.repositoryUrl) {
+      throw new BadRequestException('This project has no repository to read branches from.');
+    }
+
+    return { branches: await this.readRemoteBranches(project.repositoryUrl) };
   }
 
   async list(user: AuthenticatedUser, query: ListProjectsQueryDto) {
@@ -755,4 +853,13 @@ export class ProjectsService {
 /** PostgreSQL unique-violation SQLSTATE. */
 function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505';
+}
+
+/** The selected on-premise directory, stored in a project's environment config. */
+function readOnPremisePath(
+  environmentConfig: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!environmentConfig || typeof environmentConfig !== 'object') return null;
+  const value = environmentConfig.onPremisePath;
+  return typeof value === 'string' && value.length > 0 ? value : null;
 }

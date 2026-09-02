@@ -14,7 +14,9 @@ import { AuditService } from '../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../core/audit/audit-events';
 import { TaskEventPublisher } from '../core/events/task-event-publisher.service';
 import { resolveAgentPermissions, type AgentPermission } from '../core/authz/agent-permissions';
+import type { ProjectType } from '../core/enums';
 import { assertTransition, isTerminalStatus, type AgentTaskStatus } from './task-state';
+import { executionModeFor, type ExecutionMode } from './executors/execution-mode';
 import type { ImplementationPlan, ModifiedFile, TaskTestResults } from './orchestration/agent-plan';
 
 /** Everything a workflow step needs about a task, read in one query. */
@@ -24,9 +26,21 @@ export interface TaskExecutionSnapshot {
   readonly organizationId: string;
   readonly projectId: string;
   readonly projectName: string;
+  readonly projectType: ProjectType;
+  /**
+   * The execution mode this task runs in, derived from the project type (ADR-028).
+   * Null for a project type with no execution surface, such as an `ai_project`.
+   */
+  readonly executionMode: ExecutionMode | null;
   readonly prompt: string;
   readonly status: AgentTaskStatus;
   readonly branch: string | null;
+  /**
+   * The commit the change is based on, saved during analysis and used to diff.
+   * Null before the task has analysed once, which is how a resumed on-premise
+   * task is told apart from a first allocation.
+   */
+  readonly baseCommit: string | null;
   readonly odooVersion: string | null;
   readonly repositoryUrl: string | null;
   readonly defaultBranch: string;
@@ -48,6 +62,11 @@ export interface TaskExecutionSnapshot {
    */
   readonly targetBranch: string;
   readonly targetEnvironment: { name: string; kind: string } | null;
+  /**
+   * For an on-premise project, the selected local custom-module directory
+   * (ADR-028). Null for every other mode.
+   */
+  readonly onPremiseProjectPath: string | null;
   readonly plan: ImplementationPlan | null;
   readonly agentPermissions: Record<AgentPermission, boolean>;
   readonly grantedApprovals: readonly string[];
@@ -94,11 +113,14 @@ export class TaskRepository {
         prompt: agentTasks.prompt,
         status: agentTasks.status,
         branch: agentTasks.branch,
+        baseCommit: agentTasks.baseCommit,
         plan: agentTasks.plan,
         odooVersion: projects.odooVersion,
         repositoryUrl: projects.repositoryUrl,
         defaultBranch: projects.defaultBranch,
+        projectType: projects.projectType,
         agentPermissions: projects.agentPermissions,
+        environmentConfig: projects.environmentConfig,
         environmentId: agentTasks.environmentId,
       })
       .from(agentTasks)
@@ -166,9 +188,12 @@ export class TaskRepository {
       organizationId: row.organizationId,
       projectId: row.projectId,
       projectName: row.projectName,
+      projectType: row.projectType as ProjectType,
+      executionMode: executionModeFor(row.projectType as ProjectType),
       prompt: row.prompt,
       status: row.status as AgentTaskStatus,
       branch: row.branch,
+      baseCommit: row.baseCommit,
       odooVersion: row.odooVersion,
       repositoryUrl: row.repositoryUrl,
       defaultBranch: row.defaultBranch,
@@ -179,6 +204,7 @@ export class TaskRepository {
       targetEnvironment: environment
         ? { name: environment.name, kind: environment.kind }
         : null,
+      onPremiseProjectPath: readOnPremisePath(row.environmentConfig),
       plan: (row.plan as ImplementationPlan | null) ?? null,
       agentPermissions: resolveAgentPermissions(row.agentPermissions),
       grantedApprovals: granted.map((entry) => entry.action),
@@ -457,4 +483,16 @@ function auditEventForStatus(status: AgentTaskStatus) {
     default:
       return AUDIT_EVENTS.TASK_TRANSITIONED;
   }
+}
+
+/**
+ * The selected local directory for an on-premise project, stored in the project's
+ * environment configuration. Null when absent or not a string.
+ */
+function readOnPremisePath(
+  environmentConfig: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!environmentConfig || typeof environmentConfig !== 'object') return null;
+  const value = environmentConfig.onPremisePath;
+  return typeof value === 'string' && value.length > 0 ? value : null;
 }

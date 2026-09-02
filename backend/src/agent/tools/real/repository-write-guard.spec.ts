@@ -51,6 +51,7 @@ describe('repository write guard', () => {
       taskReference: 'task_1',
       projectId: 'project-1',
       organizationId: 'org-1',
+      executionMode: 'odoo_sh',
       workspace: {
         workspaceId: 'ws-1',
         repositoryPath: repository,
@@ -60,6 +61,11 @@ describe('repository write guard', () => {
         repositoryUrl: 'https://example.test/repo.git',
         odooVersion: '18.0',
         simulated: false,
+        readOnlyRoots: [],
+        metadataPath: '/tmp/metadata',
+        credentialRef: null,
+        credentialKind: 'token',
+        sshHostKey: null,
       },
     };
   });

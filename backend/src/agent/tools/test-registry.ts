@@ -2,9 +2,13 @@ import { ToolRegistry } from './tool-registry';
 import { RealRepositoryTools } from './real/repository.tools';
 import { RealGitTools } from './real/git.tools';
 import { RealOdooTools } from './real/odoo.tools';
+import { OdooOnlineTools } from './real/odoo-online.tools';
+import { OdooOnlineClient } from '../odoo-online/odoo-online-client';
 import type { AppConfig } from '../../core/config/configuration';
 import type { GitService } from '../git/git.service';
 import type { OdooProjectAnalyser } from '../analysis/odoo-project-analyser';
+import type { SecretsProvider } from '../../core/secrets/secrets.provider';
+import type { DatabaseService } from '../../core/database/database.service';
 
 /**
  * Builds a registry for tests, without a Nest container.
@@ -45,9 +49,18 @@ export function buildTestToolRegistry(): ToolRegistry {
     analyse: refuse('OdooProjectAnalyser.analyse'),
   } as unknown as OdooProjectAnalyser;
 
+  const secrets = {
+    read: refuse('SecretsProvider.read'),
+  } as unknown as SecretsProvider;
+
+  const database = {
+    db: { select: refuse('DatabaseService.select') },
+  } as unknown as DatabaseService;
+
   return new ToolRegistry(
     new RealRepositoryTools(config),
-    new RealGitTools(git),
+    new RealGitTools(git, secrets),
     new RealOdooTools(analyser),
+    new OdooOnlineTools(new OdooOnlineClient(), database, secrets),
   );
 }

@@ -3,6 +3,7 @@ import type { AnyToolDefinition } from './tool.interface';
 import { RealRepositoryTools } from './real/repository.tools';
 import { RealGitTools } from './real/git.tools';
 import { RealOdooTools } from './real/odoo.tools';
+import { OdooOnlineTools } from './real/odoo-online.tools';
 import { VALIDATION_TOOLS } from './simulated/validation.tools';
 
 /**
@@ -12,11 +13,11 @@ import { VALIDATION_TOOLS } from './simulated/validation.tools';
  * resolves by name and refuses an unknown name. This is what makes the tool
  * surface a closed set rather than whatever the model happens to ask for.
  *
- * As of Phase 2 the repository, Git and Odoo-metadata tools are real (ADR-019).
- * The validation tools remain simulated because they execute repository code, and
- * `git_push` remains simulated because it leaves the platform. The split is not
- * configurable: it is a property of what each tool does, so there is no setting
- * that could accidentally turn validation into real execution.
+ * As of Phase 5 the repository, Git (including push) and Odoo-metadata tools are
+ * real (ADR-019, ADR-021). The validation tools remain simulated because they
+ * execute repository code. The split is not configurable: it is a property of what
+ * each tool does, so there is no setting that could accidentally turn validation
+ * into real execution.
  *
  * Registration rejects a duplicate name at construction, so the process fails at
  * boot rather than silently resolving to whichever definition was registered last.
@@ -30,11 +31,13 @@ export class ToolRegistry {
     repositoryTools: RealRepositoryTools,
     gitTools: RealGitTools,
     odooTools: RealOdooTools,
+    odooOnlineTools: OdooOnlineTools,
   ) {
     this.registerAll([
       ...repositoryTools.definitions,
       ...gitTools.definitions,
       ...odooTools.definitions,
+      ...odooOnlineTools.definitions,
       ...VALIDATION_TOOLS,
     ]);
 
@@ -77,8 +80,7 @@ export class ToolRegistry {
     const categories = new Set<string>();
     for (const tool of this.all()) {
       if (!tool.simulated) continue;
-      if (tool.name === 'git_push') categories.add('push');
-      else if (tool.permission === 'run_tests') categories.add('validation');
+      if (tool.permission === 'run_tests') categories.add('validation');
       else categories.add(tool.name);
     }
     return [...categories].sort();
@@ -90,6 +92,7 @@ export class ToolRegistry {
       name: tool.name,
       description: tool.description,
       permission: tool.permission,
+      modes: tool.modes ?? null,
       leavesPlatform: tool.leavesPlatform,
       simulated: tool.simulated,
     }));

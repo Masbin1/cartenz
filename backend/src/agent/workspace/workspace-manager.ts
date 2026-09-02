@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
@@ -9,6 +9,11 @@ import { DatabaseService } from '../../core/database/database.service';
 import { agentWorkspaces } from '../../core/database/schema';
 import { GitService } from '../git/git.service';
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
+import type { ExecutionMode } from '../executors/execution-mode';
+import {
+  readOnlyRootsFromPaths,
+  type ReadOnlyRoot,
+} from './workspace-path';
 
 /**
  * A provisioned workspace, in the layout of chapter 8:
@@ -33,10 +38,25 @@ export interface Workspace {
   /** False once a real clone exists; true when no repository was provisioned. */
   readonly simulated: boolean;
   /**
+   * Shared directories the agent may read but never write (ADR-028). Empty for
+   * every mode except on-premise, where it holds the configured base/enterprise
+   * paths.
+   */
+  readonly readOnlyRoots: readonly ReadOnlyRoot[];
+  /**
    * A host key accepted on first contact, for the caller to record on the
    * connection so that the next clone can verify strictly (ADR-021).
    */
   readonly learnedHostKey?: string | null;
+  /**
+   * Reference into the secrets store for the repository credential, and what it
+   * is. A reference, never a value: the push tool unseals it at the moment it
+   * needs it, exactly as the clone does.
+   */
+  readonly credentialRef: string | null;
+  readonly credentialKind: 'token' | 'ssh_key';
+  /** Recorded host key for the remote, where one is held. */
+  readonly sshHostKey: string | null;
 }
 
 export interface AllocateWorkspaceInput {
@@ -54,6 +74,22 @@ export interface AllocateWorkspaceInput {
   readonly credentialKind: 'token' | 'ssh_key';
   /** Recorded host key for the remote, where one is held. */
   readonly sshHostKey: string | null;
+  /**
+   * The execution mode this task runs in (ADR-028). Null for a project type with
+   * no execution surface.
+   */
+  readonly executionMode: ExecutionMode | null;
+  /**
+   * For on-premise: the selected local custom-module directory, operated on
+   * directly rather than cloned.
+   */
+  readonly onPremiseProjectPath: string | null;
+  /**
+   * The commit the change is based on, saved during a prior allocation. Null on
+   * the first allocation of a task; used to tell a resumed on-premise task (whose
+   * working tree already carries the agent's changes) from a fresh start.
+   */
+  readonly baseCommit: string | null;
 }
 
 export class WorkspaceQuotaError extends Error {
@@ -107,6 +143,10 @@ export class WorkspaceManager {
    * layer behaves identically. It is marked `simulated` because no clone exists.
    */
   async allocate(input: AllocateWorkspaceInput): Promise<Workspace> {
+    if (input.executionMode === 'on_premise') {
+      return this.allocateOnPremise(input);
+    }
+
     const workspaceId = `ws-${randomUUID().slice(0, 8)}`;
     const root = join(this.root, `task-${sanitiseSegment(input.taskReference)}-${workspaceId}`);
     const repositoryPath = join(root, 'repository');
@@ -148,7 +188,11 @@ export class WorkspaceManager {
         repositoryUrl: null,
         odooVersion: input.odooVersion,
         simulated: true,
+        readOnlyRoots: [],
         learnedHostKey: null,
+        credentialRef: input.credentialRef,
+        credentialKind: input.credentialKind,
+        sshHostKey: input.sshHostKey,
       };
     }
 
@@ -222,7 +266,11 @@ export class WorkspaceManager {
         repositoryUrl: input.repositoryUrl,
         odooVersion: input.odooVersion,
         simulated: false,
+        readOnlyRoots: [],
         learnedHostKey: this.learnedHostKeys.get(workspaceId) ?? null,
+        credentialRef: input.credentialRef,
+        credentialKind: input.credentialKind,
+        sshHostKey: input.sshHostKey,
       };
     } catch (error) {
       await this.markStatus(workspaceId, 'failed', null, 0, 0, (error as Error).message);
@@ -231,6 +279,139 @@ export class WorkspaceManager {
       await rm(root, { recursive: true, force: true }).catch(() => undefined);
       throw error;
     }
+  }
+
+  /**
+   * Provisions the on-premise execution surface (ADR-028): no clone.
+   *
+   * The agent operates directly on the customer's selected local directory, so the
+   * workspace's `repositoryPath` points at it rather than at a platform-owned
+   * clone. The platform still owns an ephemeral metadata directory under the
+   * workspace root - for logs and the task record - and it is that directory, not
+   * the customer's, that `release` removes.
+   *
+   * The selected directory must be inside the configured ON_PREMISE_ROOT and must
+   * be a Git repository. Both are refused here rather than discovered mid-task.
+   */
+  private async allocateOnPremise(input: AllocateWorkspaceInput): Promise<Workspace> {
+    const root = this.config.onPremise.root;
+    if (!root) {
+      throw new Error(
+        'On-premise execution is not configured on this server (ON_PREMISE_ROOT is not set).',
+      );
+    }
+    if (!input.onPremiseProjectPath) {
+      throw new Error('This on-premise project has no local directory selected.');
+    }
+
+    const realRoot = await realpath(resolve(root)).catch(() => null);
+    if (!realRoot) {
+      throw new Error(`The configured ON_PREMISE_ROOT "${root}" does not exist.`);
+    }
+
+    const projectPath = await realpath(resolve(input.onPremiseProjectPath)).catch(() => null);
+    if (!projectPath) {
+      throw new Error(`The selected project directory "${input.onPremiseProjectPath}" does not exist.`);
+    }
+    if (!isInside(realRoot, projectPath)) {
+      throw new Error(
+        `The selected project directory "${input.onPremiseProjectPath}" is outside the configured on-premise root.`,
+      );
+    }
+    const projectInfo = await stat(projectPath);
+    if (!projectInfo.isDirectory()) {
+      throw new Error(`The selected project path "${input.onPremiseProjectPath}" is not a directory.`);
+    }
+
+    const gitInfo = await stat(join(projectPath, '.git')).catch(() => null);
+    if (!gitInfo) {
+      throw new Error(
+        `The selected project directory "${input.onPremiseProjectPath}" is not a Git repository.`,
+      );
+    }
+
+    const branch = input.defaultBranch;
+
+    // On-premise works directly on the environment's branch — the branch a person
+    // chose — rather than on a separate AI branch. A fresh allocation must start
+    // from a clean tree so the commit only carries the agent's changes; a resumed
+    // task already has the agent's own changes in the working tree, so the check
+    // is skipped and the saved base commit is reused.
+    if (input.baseCommit === null) {
+      const status = await this.git.status(projectPath);
+      if (!status.clean) {
+        throw new Error(
+          `The working tree of "${input.onPremiseProjectPath}" has uncommitted changes. ` +
+            'Commit or stash them before submitting a task.',
+        );
+      }
+    }
+
+    await this.git.checkoutBranch(projectPath, branch);
+    const baseCommit = input.baseCommit ?? (await this.git.revParse(projectPath, 'HEAD'));
+
+    const workspaceId = `ws-${randomUUID().slice(0, 8)}`;
+    const metadataRoot = join(this.root, `task-${sanitiseSegment(input.taskReference)}-${workspaceId}`);
+    const metadataPath = join(metadataRoot, 'metadata');
+    const logsPath = join(metadataRoot, 'logs');
+
+    await mkdir(metadataPath, { recursive: true });
+    await mkdir(logsPath, { recursive: true });
+
+    await this.database.db.insert(agentWorkspaces).values({
+      id: undefined,
+      workspaceRef: workspaceId,
+      taskId: input.taskId,
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      rootPath: metadataRoot,
+      branch,
+      status: 'ready',
+      baseCommit,
+    });
+
+    await writeFile(
+      join(metadataPath, 'task.json'),
+      JSON.stringify(
+        {
+          workspaceId,
+          taskReference: input.taskReference,
+          branch,
+          baseBranch: branch,
+          baseCommit,
+          mode: 'on_premise',
+          projectPath,
+          allocatedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    this.logger.log(
+      `On-premise workspace ${workspaceId} ready: operating directly on ${projectPath} (branch ${branch})`,
+    );
+
+    return {
+      workspaceId,
+      taskReference: input.taskReference,
+      root: metadataRoot,
+      repositoryPath: projectPath,
+      metadataPath,
+      logsPath,
+      branch,
+      baseBranch: branch,
+      baseCommit,
+      repositoryUrl: null,
+      odooVersion: input.odooVersion,
+      simulated: false,
+      readOnlyRoots: readOnlyRootsFromPaths(this.config.onPremise.readOnlyPaths),
+      learnedHostKey: null,
+      credentialRef: input.credentialRef,
+      credentialKind: input.credentialKind,
+      sshHostKey: input.sshHostKey,
+    };
   }
 
   /**
@@ -417,6 +598,12 @@ export class WorkspaceManager {
 /** Keeps a task reference safe as a directory name. */
 function sanitiseSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 64);
+}
+
+/** True when `candidate` is `root` itself or lies beneath it. */
+function isInside(root: string, candidate: string): boolean {
+  if (candidate === root) return true;
+  return candidate.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
 /**
