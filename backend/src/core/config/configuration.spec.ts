@@ -176,6 +176,14 @@ describe('loadConfig', () => {
       expect(config.ai.temperature).toBe(0);
     });
 
+    it('enforces JSON schema by default, and disables it for DeepSeek-style endpoints', () => {
+      // Default: the endpoint enforces the plan's schema itself.
+      expect(loadConfig(valid).ai.structuredOutputs).toBe(true);
+
+      const config = loadConfig({ ...valid, AI_STRUCTURED_OUTPUTS: 'false' });
+      expect(config.ai.structuredOutputs).toBe(false);
+    });
+
     it('rejects bounds outside their permitted range', () => {
       expect(() => loadConfig({ ...valid, AI_MAX_STEPS: '0' })).toThrow();
       expect(() => loadConfig({ ...valid, AI_MAX_STEPS: '5000' })).toThrow();

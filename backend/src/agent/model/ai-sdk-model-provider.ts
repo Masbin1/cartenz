@@ -41,6 +41,13 @@ export interface ModelProviderSettings {
   readonly model?: string;
   readonly baseUrl?: string;
   readonly apiKey: string;
+  /**
+   * Whether the endpoint enforces a JSON schema itself (json_schema). False for
+   * DeepSeek, which only accepts json_object. Falls back to the environment's
+   * AI_STRUCTURED_OUTPUTS when unset, so a portal-configured organisation follows
+   * the deployment default unless it says otherwise.
+   */
+  readonly structuredOutputs?: boolean;
 }
 
 export class AiSdkModelProvider implements ModelProvider {
@@ -119,18 +126,17 @@ export class AiSdkModelProvider implements ModelProvider {
       apiKey,
       baseURL: settings.baseUrl,
       /**
-       * The SDK assumes an unknown OpenAI-compatible endpoint cannot enforce a
-       * JSON schema, and falls back to asking for JSON in the prompt. For a
-       * schema as large as an implementation plan that is unreliable: the first
-       * real attempt failed with "response did not match schema" while the same
-       * gateway answered a `response_format: json_schema` request correctly.
+       * Ask the endpoint to enforce the plan's JSON schema when it can
+       * (Claude, OpenAI), because a plan is a structured value and the SDK's
+       * prompt-only fallback was unreliable against a schema this large.
        *
-       * A plan is a structured value. Asking the endpoint to enforce the schema
-       * is the whole point, and every gateway worth pointing this at supports it.
-       * One that does not will fail loudly on the first task rather than
-       * producing plans that nearly parse.
+       * DeepSeek cannot: its API rejects `response_format: json_schema` and
+       * accepts only `json_object`, so a deployment pointed at DeepSeek sets
+       * AI_STRUCTURED_OUTPUTS=false and the schema is enforced by the SDK's own
+       * validation instead. Setting it true against a model that refuses it
+       * fails loudly on the first task, which is the honest failure.
        */
-      supportsStructuredOutputs: true,
+      supportsStructuredOutputs: settings.structuredOutputs ?? this.config.ai.structuredOutputs,
       transformRequestBody: withExplicitStream,
     });
     return compatible(settings.model);
