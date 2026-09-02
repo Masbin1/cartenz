@@ -124,12 +124,87 @@ describe('OdooOnlineClient', () => {
     expect(vals.inherit_id).toBe(1122);
   });
 
-  it('refuses a business model, keeping the surface customization-only', async () => {
+  /**
+   * The data-blind posture, restated after the read route changed.
+   *
+   * `listFields` used to call `fields_get` on the model itself, which the
+   * allow-list refused - so the tool could not answer the one question it exists
+   * for. It now reads the same schema from `ir.model.fields`, which means the
+   * *subject* of the read may be a business model while the model actually
+   * addressed over RPC is not. That distinction is the whole property, so it is
+   * asserted directly rather than through the refusal it used to produce.
+   */
+  it('reads a business model\'s schema without ever addressing it over RPC', async () => {
+    const { client, calls } = clientWith(() => [
+      { name: 'email', field_description: 'Email', ttype: 'char', required: false, state: 'base' },
+    ]);
+
+    const fields = await client.listFields(credentials, 86, 'res.partner');
+    expect(fields).toEqual([
+      { name: 'email', label: 'Email', type: 'char', required: false, manual: false },
+    ]);
+
+    // Every model addressed is a customization model. res.partner appears only
+    // inside a domain, as the subject of a metadata query - never as the model a
+    // method is executed against, which is what would reach its records.
+    for (const call of calls) {
+      expect(['ir.model', 'ir.model.fields', 'ir.ui.view']).toContain(modelOf(call));
+    }
+  });
+
+  it('still refuses a business model reached directly, as a backstop', async () => {
     const { client } = clientWith(() => []);
 
-    await expect(client.listFields(credentials, 86, 'res.partner')).rejects.toThrow(
-      /not part of the customization surface/i,
-    );
+    // No public method routes here any more; the allow-list stays because it is
+    // what makes a future method that gets it wrong fail closed rather than read
+    // records.
+    await expect(
+      (
+        client as unknown as {
+          call: (
+            c: typeof credentials,
+            uid: number,
+            model: string,
+            method: string,
+            args: unknown[],
+          ) => Promise<unknown>;
+        }
+      ).call(credentials, 86, 'res.partner', 'search_read', [[]]),
+    ).rejects.toThrow(/not part of the customization surface/i);
+  });
+
+  /**
+   * The shape of a real defect: `{fields, limit}` passed as a positional argument
+   * became `search_read`'s `fields` parameter, and every call against a live Odoo
+   * 19 failed with `Invalid field 'fields' on 'ir.ui.view'`. kwargs travel as the
+   * seventh element of the RPC args, never inside the positional array.
+   */
+  it('sends kwargs as the seventh rpc argument, not inside the positional args', async () => {
+    const { client, calls } = clientWith(() => [{ id: 1122 }]);
+    await client.baseFormViewId(credentials, 86, 'sale.order');
+
+    const [call] = calls;
+    const positional = methodArgsOf(call);
+    expect(positional).toHaveLength(1);
+    expect(positional[0]).toEqual([
+      ['model', '=', 'sale.order'],
+      ['type', '=', 'form'],
+      ['inherit_id', '=', false],
+    ]);
+    expect(call.args[6]).toEqual({ fields: ['id'], limit: 1 });
+  });
+
+  /**
+   * What people copy out of the browser is the web client, not the instance root.
+   * Posting JSON-RPC under it reaches the web controller, which answers
+   * "400 Session expired (invalid CSRF token)" - an error naming nothing the user
+   * did wrong. Verified against a live instance in both forms.
+   */
+  it('strips the /odoo web-client suffix from a pasted url', async () => {
+    const { client, calls } = clientWith(() => 86);
+    await client.authenticate({ ...credentials, url: 'https://vania-uat123.odoo.com/odoo' });
+
+    expect(calls[0].endpoint).toBe('https://vania-uat123.odoo.com/jsonrpc');
   });
 
   it('refuses a non-https instance url', async () => {

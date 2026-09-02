@@ -85,32 +85,60 @@ export class OdooOnlineClient {
     return result;
   }
 
-  /** Fields of a model, as name -> label/type/etc, for the model to plan against. */
+  /**
+   * Fields of a model, for the agent to plan against.
+   *
+   * Read from `ir.model.fields` rather than by calling `fields_get` on the model
+   * itself. Both return the same schema, but only this one stays inside the
+   * customization allow-list: `fields_get` would require permitting a call against
+   * `sale.order`, and a surface that may call one method on a business model is one
+   * narrow reading away from permitting another. The allow-list is the control
+   * here, so the route that does not widen it is the right one.
+   *
+   * `state` is Odoo's own record of where a field came from: `manual` for one added
+   * through Studio or by this platform, `base` for one that ships with the module.
+   */
   async listFields(
     credentials: OdooOnlineCredentials,
     uid: number,
     model: string,
   ): Promise<OdooFieldInfo[]> {
-    const fields = await this.call(credentials, uid, model, 'fields_get', []);
-    const record = fields as Record<string, Record<string, unknown>>;
+    const rows = (await this.call(
+      credentials,
+      uid,
+      'ir.model.fields',
+      'search_read',
+      [[['model', '=', model]]],
+      { fields: ['name', 'field_description', 'ttype', 'required', 'state'], limit: 500 },
+    )) as {
+      name: string;
+      field_description: string;
+      ttype: string;
+      required: boolean;
+      state: string;
+    }[];
 
-    return Object.entries(record)
-      .map(([name, field]) => ({
-        name,
-        label: String(field.string ?? name),
-        type: String(field.type ?? 'unknown'),
-        required: field.required === true,
-        manual: field.manual === true,
+    return rows
+      .map((row) => ({
+        name: row.name,
+        label: row.field_description ?? row.name,
+        type: row.ttype ?? 'unknown',
+        required: row.required === true,
+        manual: row.state === 'manual',
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   /** The id of a model by its technical name, e.g. `sale.order`. */
   async modelId(credentials: OdooOnlineCredentials, uid: number, model: string): Promise<number> {
-    const rows = (await this.call(credentials, uid, 'ir.model', 'search_read', [
-      [['model', '=', model]],
+    const rows = (await this.call(
+      credentials,
+      uid,
+      'ir.model',
+      'search_read',
+      [[['model', '=', model]]],
       { fields: ['id'], limit: 1 },
-    ])) as { id: number }[];
+    )) as { id: number }[];
 
     if (rows.length === 0) {
       throw new OdooRpcError(`No model named "${model}" was found`);
@@ -125,10 +153,10 @@ export class OdooOnlineClient {
     query?: string,
   ): Promise<{ name: string; model: string }[]> {
     const domain = query ? [['model', 'ilike', query]] : [];
-    const rows = (await this.call(credentials, uid, 'ir.model', 'search_read', [
-      domain,
-      { fields: ['name', 'model'], limit: 200 },
-    ])) as { name: string; model: string }[];
+    const rows = (await this.call(credentials, uid, 'ir.model', 'search_read', [domain], {
+      fields: ['name', 'model'],
+      limit: 200,
+    })) as { name: string; model: string }[];
 
     return rows
       .map((row) => ({ name: row.name, model: row.model }))
@@ -162,10 +190,14 @@ export class OdooOnlineClient {
     uid: number,
     model: string,
   ): Promise<number> {
-    const views = (await this.call(credentials, uid, 'ir.ui.view', 'search_read', [
-      [['model', '=', model], ['type', '=', 'form'], ['inherit_id', '=', false]],
+    const views = (await this.call(
+      credentials,
+      uid,
+      'ir.ui.view',
+      'search_read',
+      [[['model', '=', model], ['type', '=', 'form'], ['inherit_id', '=', false]]],
       { fields: ['id'], limit: 1 },
-    ])) as { id: number }[];
+    )) as { id: number }[];
 
     if (views.length === 0) {
       throw new OdooRpcError(`No base form view was found for "${model}"`);
@@ -196,13 +228,22 @@ export class OdooOnlineClient {
     ])) as number;
   }
 
-  /** Generic execute_kw, restricted to the customization allow-list. */
+  /**
+   * Generic execute_kw, restricted to the customization allow-list.
+   *
+   * `kwargs` is a seventh element of the RPC argument list, not a trailing entry
+   * of the positional array. Odoo binds positional arguments by position, so a
+   * `{fields, limit}` object passed positionally became `search_read`'s `fields`
+   * parameter and every call failed with `Invalid field 'fields'`. Verified
+   * against a live Odoo 19 instance, in both shapes.
+   */
   private async call(
     credentials: OdooOnlineCredentials,
     uid: number,
     model: string,
     method: string,
     args: unknown[],
+    kwargs: Record<string, unknown> = {},
   ): Promise<unknown> {
     if (!CUSTOMIZATION_MODELS.has(model)) {
       throw new OdooRpcError(
@@ -218,6 +259,7 @@ export class OdooOnlineClient {
       model,
       method,
       args,
+      kwargs,
     ]);
   }
 
@@ -272,10 +314,40 @@ export class OdooOnlineClient {
 
   /** Builds the JSON-RPC endpoint, requiring an https instance root. */
   private endpointFor(url: string): string {
-    const value = url.trim();
-    if (!/^https:\/\//i.test(value)) {
-      throw new OdooRpcError(`the Odoo Online URL must be https, got "${value}"`);
-    }
-    return `${value.replace(/\/+$/, '')}/jsonrpc`;
+    return `${instanceRootOf(url)}/jsonrpc`;
+  }
+}
+
+/**
+ * The instance root, from whatever a person pasted.
+ *
+ * What people copy out of the browser is the web client - `https://x.odoo.com/odoo`
+ * in Odoo 17+, `/web` before that - and posting JSON-RPC under that path reaches the
+ * web controller instead, which answers `400 Session expired (invalid CSRF token)`.
+ * That error names nothing the user did wrong, so the suffix is stripped here rather
+ * than left for them to discover. Verified against a live instance in both forms.
+ */
+export function instanceRootOf(url: string): string {
+  const value = url.trim();
+  if (!/^https:\/\//i.test(value)) {
+    throw new OdooRpcError(`the Odoo Online URL must be https, got "${value}"`);
+  }
+  return value.replace(/\/+$/, '').replace(/\/(odoo|web)$/i, '');
+}
+
+/**
+ * The database name implied by an Odoo Online URL.
+ *
+ * On odoo.com the database is the subdomain, so asking for it separately asks a
+ * person to retype something the URL already says. Offered as a default; the
+ * connection may still carry an explicit `db` for an instance where it differs.
+ */
+export function databaseFromUrl(url: string): string | null {
+  try {
+    const host = new URL(instanceRootOf(url)).hostname;
+    const [subdomain, ...rest] = host.split('.');
+    return rest.length >= 2 && subdomain.length > 0 ? subdomain : null;
+  } catch {
+    return null;
   }
 }

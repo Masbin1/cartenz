@@ -15,6 +15,24 @@ import {
 
 const ODOO_VERSIONS = ['15.0', '16.0', '17.0', '18.0', '19.0'];
 
+/**
+ * The database name an Odoo Online URL implies.
+ *
+ * On odoo.com the database is the subdomain, so asking for it separately asks a
+ * person to retype what the URL already says - and getting it wrong produces an
+ * authentication failure that names nothing they did. Offered as a default here
+ * and defaulted again on the server, which is the authority.
+ */
+function databaseFromOdooUrl(url: string): string {
+  try {
+    const host = new URL(url.trim()).hostname;
+    const [subdomain, ...rest] = host.split('.');
+    return rest.length >= 2 ? subdomain : '';
+  } catch {
+    return '';
+  }
+}
+
 type Flow = 'connect' | 'ai';
 
 /**
@@ -113,6 +131,15 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
     credential: '',
     connectionType: 'github',
   });
+
+  // Odoo Online: the four things needed to reach an instance. The API key is
+  // sealed by the secrets provider on arrival and never comes back from the API.
+  const [odooOnline, setOdooOnline] = useState({
+    url: '',
+    db: '',
+    login: '',
+    apiKey: '',
+  });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [branches, setBranches] = useState<string[] | undefined>(undefined);
@@ -205,6 +232,7 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
     };
 
   const needsRepository = form.projectType === 'repository' || form.projectType === 'odoo_sh';
+  const isOdooOnline = form.projectType === 'odoo_online';
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -215,6 +243,19 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
       setError('Select the project folder the agent should operate on.');
       setSubmitting(false);
       return;
+    }
+
+    // Refused here rather than after the project row exists: a project created
+    // without its credentials is one whose every task fails at the first read.
+    if (isOdooOnline) {
+      const missing = (['url', 'login', 'apiKey'] as const).filter(
+        (field) => odooOnline[field].trim().length === 0,
+      );
+      if (missing.length > 0) {
+        setError('An Odoo Online project needs its URL, login and API key.');
+        setSubmitting(false);
+        return;
+      }
     }
 
     try {
@@ -245,7 +286,19 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
 
       // The credential is sent separately, so it never travels in a project
       // payload and is sealed by the secrets provider on arrival.
-      if (form.credential.trim().length > 0) {
+      if (isOdooOnline) {
+        await api.projects.createConnection(project.id, {
+          connectionType: 'odoo_api',
+          credential: odooOnline.apiKey.trim(),
+          // The database defaults to the subdomain, which is what it is on
+          // odoo.com. The field stays editable for an instance where it differs.
+          metadata: {
+            url: odooOnline.url.trim(),
+            db: odooOnline.db.trim() || databaseFromOdooUrl(odooOnline.url),
+            login: odooOnline.login.trim(),
+          },
+        });
+      } else if (form.credential.trim().length > 0) {
         await api.projects.createConnection(project.id, {
           connectionType: form.connectionType,
           credential: form.credential,
@@ -396,6 +449,88 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
           </>
         ) : null}
 
+        {isOdooOnline ? (
+          <>
+            <div className="sm:col-span-2">
+              <label htmlFor="odooUrl" className="field-label">
+                Instance URL
+              </label>
+              <input
+                id="odooUrl"
+                required
+                value={odooOnline.url}
+                onChange={(event) =>
+                  setOdooOnline((previous) => ({ ...previous, url: event.target.value }))
+                }
+                className="field-input font-mono text-xs"
+                placeholder="https://your-instance.odoo.com"
+              />
+              <p className="mt-1.5 text-2xs text-content-subtle">
+                The instance address. A trailing /odoo or /web copied from the browser is removed.
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="odooLogin" className="field-label">
+                User
+              </label>
+              <input
+                id="odooLogin"
+                required
+                value={odooOnline.login}
+                onChange={(event) =>
+                  setOdooOnline((previous) => ({ ...previous, login: event.target.value }))
+                }
+                className="field-input font-mono text-xs"
+                placeholder="you@example.com"
+              />
+              <p className="mt-1.5 text-2xs text-content-subtle">
+                The login the API key belongs to, usually an email address.
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="odooDb" className="field-label">
+                Database (optional)
+              </label>
+              <input
+                id="odooDb"
+                value={odooOnline.db}
+                onChange={(event) =>
+                  setOdooOnline((previous) => ({ ...previous, db: event.target.value }))
+                }
+                className="field-input font-mono text-xs"
+                placeholder={databaseFromOdooUrl(odooOnline.url) || 'from the URL'}
+              />
+              <p className="mt-1.5 text-2xs text-content-subtle">
+                Defaults to the subdomain of the URL, which is the database name on odoo.com.
+              </p>
+            </div>
+
+            <div className="sm:col-span-2">
+              <label htmlFor="odooApiKey" className="field-label">
+                API key
+              </label>
+              <input
+                id="odooApiKey"
+                type="password"
+                required
+                value={odooOnline.apiKey}
+                onChange={(event) =>
+                  setOdooOnline((previous) => ({ ...previous, apiKey: event.target.value }))
+                }
+                className="field-input font-mono text-xs"
+                autoComplete="off"
+              />
+              <p className="mt-1.5 text-2xs text-content-subtle">
+                Generated in Odoo under Preferences, Account Security. Encrypted under a key unique
+                to this project and stored by reference. It is never returned by the API, written to
+                a log, or sent to an AI provider.
+              </p>
+            </div>
+          </>
+        ) : null}
+
         {form.projectType === 'on_premise' ? (
           <div className="sm:col-span-2">
             <label htmlFor="onPremisePath" className="field-label">
@@ -449,10 +584,11 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
         </div>
       </div>
 
-      {form.projectType === 'odoo_online' ? (
-        <Alert tone="warning" title="Not yet reachable by the agent">
-          Odoo Online requires the integration service, which arrives in a later phase; the project
-          can be recorded now.
+      {isOdooOnline ? (
+        <Alert tone="warning" title="The agent changes this instance directly">
+          There is no repository, no branch and no diff for an Odoo Online project. An approved
+          change is created on the live instance, the way Odoo Studio does it, and undoing the task
+          does not remove it.
         </Alert>
       ) : null}
 
