@@ -69,24 +69,31 @@ export class TasksService {
     if (!project) throw new NotFoundException('Project not found');
 
     /**
-     * A project with no repository cannot be worked on at all.
+     * A repository-backed project with no repository cannot be worked on at all.
      *
      * Checked here rather than discovered by the workflow, because the alternative
      * is worse than it sounds: the task would clone nothing, plan anyway, ask a
      * person to approve that plan, and only then fail because there is nothing to
      * modify. Refusing at submission tells the user the one thing they need to do.
      *
-     * This applies to every project type, including ai_project. The AI creation
-     * flow produces a specification; changing code still requires a repository.
+     * `on_premise` and `odoo_online` have no repository by design: the first
+     * operates on a local directory, the second on the Odoo instance. They fall
+     * through; their own surface is validated at workspace allocation or by the
+     * Odoo Online tools.
      */
-    if (!project.repositoryUrl) {
-      const guidance = REPOSITORY_BACKED_PROJECT_TYPES.includes(
-        project.projectType as ProjectType,
-      )
-        ? 'Connect one in the project settings before submitting a task.'
-        : 'This project was created from a specification and has no repository yet. Connect one before submitting a development request.';
+    if (!project.repositoryUrl && project.projectType === 'ai_project') {
+      throw new BadRequestException(
+        'This project was created from a specification and has no repository yet. ' +
+          'Connect one before submitting a development request.',
+      );
+    }
 
-      throw new BadRequestException(`This project has no repository connected. ${guidance}`);
+    if (!project.repositoryUrl && REPOSITORY_BACKED_PROJECT_TYPES.includes(
+      project.projectType as ProjectType,
+    )) {
+      throw new BadRequestException(
+        'This project has no repository connected. Connect one in the project settings before submitting a task.',
+      );
     }
 
     if (context.agentPermissions.repository_read !== true) {
@@ -107,6 +114,18 @@ export class TasksService {
       dto.environmentId,
       user.userId,
     );
+
+    /**
+     * Odoo.sh projects are never worked on the `main` branch (ADR-028). The branch
+     * is the live business there, so it is refused outright rather than gated: if
+     * the repository only has `main`, the person must ask the project administrator
+     * to create another branch before anything can be submitted.
+     */
+    if (project.projectType === 'odoo_sh' && environment.branch === 'main') {
+      throw new BadRequestException(
+        'Odoo.sh projects cannot target the main branch. Ask the project administrator to create another branch.',
+      );
+    }
 
     const sessionId = dto.sessionId
       ? await this.assertSessionBelongsToProject(dto.sessionId, projectId)

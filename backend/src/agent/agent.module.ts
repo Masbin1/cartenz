@@ -6,6 +6,8 @@ import { ToolExecutionService } from './tools/tool-execution.service';
 import { RealRepositoryTools } from './tools/real/repository.tools';
 import { RealGitTools } from './tools/real/git.tools';
 import { RealOdooTools } from './tools/real/odoo.tools';
+import { OdooOnlineTools } from './tools/real/odoo-online.tools';
+import { OdooOnlineClient } from './odoo-online/odoo-online-client';
 import { WorkspaceManager } from './workspace/workspace-manager';
 import { OdooValidationRunner } from './validation/odoo-validation-runner';
 import { GitService } from './git/git.service';
@@ -18,6 +20,11 @@ import { ModelModule } from './model/model.module';
 import { AgentWorkflow } from './orchestration/agent-workflow';
 import { QueueAgentOrchestrator } from './orchestration/queue-agent-orchestrator';
 import { AGENT_ORCHESTRATOR } from './orchestration/agent-orchestrator.interface';
+import { ExecutorRegistry } from './executors/executor-registry';
+import { EXECUTOR } from './executors/executor.interface';
+import { OnPremiseExecutor } from './executors/on-premise.executor';
+import { OdooSHExecutor } from './executors/odoo-sh.executor';
+import { OdooOnlineExecutor } from './executors/odoo-online.executor';
 import { ApprovalsModule } from '../modules/approvals/approvals.module';
 
 /**
@@ -46,6 +53,8 @@ import { ApprovalsModule } from '../modules/approvals/approvals.module';
     RealRepositoryTools,
     RealGitTools,
     RealOdooTools,
+    OdooOnlineTools,
+    OdooOnlineClient,
     ToolRegistry,
     ToolPermissionValidator,
     ToolExecutionService,
@@ -53,8 +62,21 @@ import { ApprovalsModule } from '../modules/approvals/approvals.module';
     ModelImplementationLoop,
     ModelCallRecorder,
     AgentWorkflow,
+    ExecutorRegistry,
+    OnPremiseExecutor,
+    OdooSHExecutor,
+    OdooOnlineExecutor,
     QueueAgentOrchestrator,
     { provide: AGENT_ORCHESTRATOR, useExisting: QueueAgentOrchestrator },
+    {
+      provide: EXECUTOR,
+      useFactory: (
+        onPremise: OnPremiseExecutor,
+        odooSh: OdooSHExecutor,
+        odooOnline: OdooOnlineExecutor,
+      ) => [onPremise, odooSh, odooOnline],
+      inject: [OnPremiseExecutor, OdooSHExecutor, OdooOnlineExecutor],
+    },
   ],
   exports: [
     TaskRepository,
@@ -67,6 +89,7 @@ import { ApprovalsModule } from '../modules/approvals/approvals.module';
     ProjectMemoryService,
     OdooProjectAnalyser,
     ModelCallRecorder,
+    ExecutorRegistry,
     AGENT_ORCHESTRATOR,
   ],
 })

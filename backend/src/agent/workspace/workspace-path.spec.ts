@@ -6,6 +6,10 @@ import {
   resolveExistingPath,
   resolveWritablePath,
   toWorkspaceRelative,
+  readOnlyRootsFromPaths,
+  readOnlyRootFor,
+  resolveReadPath,
+  assertNotReadOnlyPath,
 } from './workspace-path';
 
 /**
@@ -182,6 +186,68 @@ describe('workspace path containment', () => {
     it('leaves a path outside the workspace unchanged, rather than mangling it', async () => {
       const absolute = join(outside, 'secret.txt');
       expect(await toWorkspaceRelative(workspace, absolute)).toBe(absolute);
+    });
+  });
+
+  describe('read-only roots (on-premise base/enterprise)', () => {
+    let baseDir: string;
+    let enterpriseDir: string;
+    let roots: ReturnType<typeof readOnlyRootsFromPaths>;
+
+    beforeEach(async () => {
+      baseDir = join(sandbox, 'odoo');
+      enterpriseDir = join(sandbox, 'enterprise');
+      await mkdir(join(baseDir, 'addons', 'sale', 'models'), { recursive: true });
+      await mkdir(join(enterpriseDir, 'account_reports'), { recursive: true });
+      await writeFile(
+        join(baseDir, 'addons', 'sale', 'models', 'sale_order.py'),
+        'class SaleOrder:\n',
+        'utf8',
+      );
+      roots = readOnlyRootsFromPaths([baseDir, enterpriseDir]);
+    });
+
+    it('derives a prefix from the directory name', () => {
+      expect(roots.map((root) => root.prefix)).toEqual(['odoo', 'enterprise']);
+    });
+
+    it('matches a path under a read-only prefix, and nothing else', () => {
+      expect(readOnlyRootFor(roots, 'odoo/addons/sale')).toMatchObject({ prefix: 'odoo' });
+      expect(readOnlyRootFor(roots, 'odoo')).toMatchObject({ prefix: 'odoo' });
+      expect(readOnlyRootFor(roots, 'models/x.py')).toBeNull();
+    });
+
+    it('resolves a read under a read-only prefix against the shared directory', async () => {
+      const resolved = await resolveReadPath(
+        workspace,
+        roots,
+        'odoo/addons/sale/models/sale_order.py',
+      );
+      expect(resolved).toBe(join(baseDir, 'addons', 'sale', 'models', 'sale_order.py'));
+    });
+
+    it('falls back to the workspace root for an un-prefixed path', async () => {
+      const resolved = await resolveReadPath(workspace, roots, 'models/sale_order.py');
+      expect(resolved).toBe(join(workspace, 'models', 'sale_order.py'));
+    });
+
+    it('refuses traversal out of a read-only root', async () => {
+      await expect(
+        resolveReadPath(workspace, roots, 'odoo/../outside/secret.txt'),
+      ).rejects.toThrow(/traverses upwards/i);
+    });
+
+    it('refuses a write that names a read-only prefix', () => {
+      expect(() => assertNotReadOnlyPath(roots, 'odoo/addons/x.py')).toThrow(
+        /read-only shared path/i,
+      );
+      expect(() => assertNotReadOnlyPath(roots, 'enterprise/y.py')).toThrow(
+        /read-only shared path/i,
+      );
+    });
+
+    it('permits a write that does not name a read-only prefix', () => {
+      expect(() => assertNotReadOnlyPath(roots, 'models/custom.py')).not.toThrow();
     });
   });
 });

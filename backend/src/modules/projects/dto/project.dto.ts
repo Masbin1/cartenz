@@ -261,6 +261,23 @@ export class CreateConnectionDto {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Asking a repository which branches it has, before a project exists.
+ *
+ * Same shape of check as `repositoryUrl` above and for the same reason: the URL
+ * rule that governs the network call lives in `assertSafeRemoteUrl`, not here.
+ */
+export class RemoteBranchesDto {
+  @IsUUID()
+  organizationId!: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'A repository URL is required' })
+  @MaxLength(2048)
+  @Transform(trim)
+  repositoryUrl!: string;
+}
+
 /** Query filter for the project list. */
 export class ListProjectsQueryDto {
   @IsUUID()
@@ -270,6 +287,15 @@ export class ListProjectsQueryDto {
   @IsBoolean()
   @Transform(({ value }) => value === true || value === 'true')
   includeArchived?: boolean;
+}
+
+/**
+ * Query for the on-premise location list, read while the project form is being
+ * filled in. Gated behind developer membership like project creation itself.
+ */
+export class OnPremiseLocationsQueryDto {
+  @IsUUID()
+  organizationId!: string;
 }
 
 /**

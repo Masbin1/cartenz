@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { GitService } from '../../git/git.service';
 import { assertSafeRefName } from '../../git/git-url';
 import { GIT_BRANCH_SCHEMA, GIT_COMMIT_SCHEMA, NO_ARGUMENTS_SCHEMA } from '../tool-schemas';
+import { SECRETS_PROVIDER, type SecretsProvider } from '../../../core/secrets/secrets.provider';
 import type { AnyToolDefinition, ToolDefinition, ToolExecutionContext } from '../tool.interface';
 
 /**
@@ -29,7 +30,10 @@ function assertRepository(context: ToolExecutionContext): void {
 
 @Injectable()
 export class RealGitTools {
-  constructor(private readonly git: GitService) {}
+  constructor(
+    private readonly git: GitService,
+    @Inject(SECRETS_PROVIDER) private readonly secrets: SecretsProvider,
+  ) {}
 
   get definitions(): readonly AnyToolDefinition[] {
     return [this.gitStatus, this.gitDiff, this.gitBranch, this.gitCommit, this.gitPush];
@@ -39,6 +43,7 @@ export class RealGitTools {
     name: 'git_status',
     description: 'Report which files you have changed so far on the task branch',
     permission: 'repository_read',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: NO_ARGUMENTS_SCHEMA,
@@ -60,6 +65,7 @@ export class RealGitTools {
     name: 'git_diff',
     description: 'Review your own changes so far, as a summary of files and line counts',
     permission: 'repository_read',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: NO_ARGUMENTS_SCHEMA,
@@ -90,6 +96,7 @@ export class RealGitTools {
     name: 'git_branch',
     description: 'Create the isolated AI branch for the task',
     permission: 'repository_write',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: GIT_BRANCH_SCHEMA,
@@ -117,6 +124,7 @@ export class RealGitTools {
     name: 'git_commit',
     description: 'Commit the staged changes on the task branch',
     permission: 'git_commit',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: GIT_COMMIT_SCHEMA,
@@ -142,27 +150,58 @@ export class RealGitTools {
   };
 
   /**
-   * Simulated (ADR-019). Push is the one operation that reaches a customer's
-   * repository, and Phase 5 owns it. Registered here with leavesPlatform so it
-   * still requires the `git_push` approval, and reports what it did not do.
+   * Real (Phase 5, ADR-021). Push sends the task branch to the connected
+   * repository, which is the one operation whose effect leaves the platform.
+   * It is gated twice: the `git_push` approval, reached through the lifecycle
+   * rather than the model, and GIT_PUSH_ENABLED at the process chokepoint, which
+   * refuses the subcommand outright when false.
+   *
+   * The credential is unsealed here, on demand, and passed straight to the git
+   * service - never held in the context, a log or a prompt.
    */
   private readonly gitPush: ToolDefinition<Record<string, never>> = {
     name: 'git_push',
     description: 'Push the task branch to the connected repository',
     permission: 'git_push',
+    modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: true,
-    simulated: true,
+    simulated: false,
     parameters: NO_ARGUMENTS_SCHEMA,
     // Never. The push is the one action that leaves the platform, and it is
     // gated on a human approval reached through the lifecycle, not through a loop.
     availableToModel: false,
     validate: requireObject,
-    execute: async (_input, context) => ({
-      branch: context.workspace.branch,
-      remote: context.workspace.repositoryUrl,
-      pushed: false,
-      note: 'Simulated: the commit exists in the workspace but was not sent to the remote. Phase 5 implements the push.',
-      simulated: true,
-    }),
+    execute: async (_input, context) => {
+      assertRepository(context);
+
+      if (!context.workspace.repositoryUrl) {
+        throw new Error(
+          'This workspace has no repository URL to push to. On-premise push to the ' +
+            "customer's own remote is not yet supported.",
+        );
+      }
+
+      const credential = context.workspace.credentialRef
+        ? {
+            kind: context.workspace.credentialKind,
+            value: await this.secrets.read(context.workspace.credentialRef),
+            hostKey: context.workspace.sshHostKey,
+          }
+        : null;
+
+      const result = await this.git.push({
+        repositoryPath: context.workspace.repositoryPath,
+        remoteUrl: context.workspace.repositoryUrl,
+        branch: context.workspace.branch,
+        credentialDirectory: context.workspace.metadataPath,
+        credential,
+      });
+
+      return {
+        branch: result.branch,
+        remote: context.workspace.repositoryUrl,
+        pushed: result.pushed,
+      };
+    },
   };
 }

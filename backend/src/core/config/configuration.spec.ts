@@ -26,6 +26,34 @@ describe('loadConfig', () => {
     expect(config.secrets.rootKey).toHaveLength(32);
   });
 
+  it('disables on-premise execution by default, and enables it with a root path', () => {
+    expect(loadConfig(valid).onPremise.root).toBeNull();
+    expect(loadConfig(valid).onPremise.readOnlyPaths).toEqual([]);
+
+    const config = loadConfig({ ...valid, ON_PREMISE_ROOT: '/home/masbintang/linkederp' });
+    expect(config.onPremise.root).toBe('/home/masbintang/linkederp');
+  });
+
+  it('parses read-only on-premise paths', () => {
+    const config = loadConfig({
+      ...valid,
+      ON_PREMISE_READ_ONLY_PATHS: '/home/masbintang/linkederp/odoo, /home/masbintang/linkederp/enterprise',
+    });
+    expect(config.onPremise.readOnlyPaths).toEqual([
+      '/home/masbintang/linkederp/odoo',
+      '/home/masbintang/linkederp/enterprise',
+    ]);
+  });
+
+  it('refuses a non-absolute on-premise root or read-only path', () => {
+    expect(() => loadConfig({ ...valid, ON_PREMISE_ROOT: 'relative/path' })).toThrow(
+      ConfigurationError,
+    );
+    expect(() =>
+      loadConfig({ ...valid, ON_PREMISE_READ_ONLY_PATHS: '/abs/odoo,relative/enterprise' }),
+    ).toThrow(ConfigurationError);
+  });
+
   it('refuses to start without a database URL', () => {
     const { DATABASE_URL: _omitted, ...withoutDatabase } = valid;
     expect(() => loadConfig(withoutDatabase)).toThrow(ConfigurationError);

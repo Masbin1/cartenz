@@ -14,6 +14,11 @@ out/
 .env
 .env.local
 .env.*.local
+# Any backup or variant of a real .env: these carry JWT_SECRET, SECRETS_ROOT_KEY
+# and DATABASE_URL, and a single accidental commit publishes them permanently.
+.env.bak*
+.env.*.bak
+*.env.backup
 !.env.example
 
 # Runtime state (local development)

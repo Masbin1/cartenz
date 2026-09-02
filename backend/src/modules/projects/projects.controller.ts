@@ -19,6 +19,8 @@ import {
   DeleteProjectDto,
   EnvironmentDto,
   ListProjectsQueryDto,
+  OnPremiseLocationsQueryDto,
+  RemoteBranchesDto,
   UpdateAgentPermissionsDto,
   UpdateProjectDto,
 } from './dto/project.dto';
@@ -53,6 +55,33 @@ export class ProjectsController {
   @HttpCode(HttpStatus.CREATED)
   createAiProject(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateAiProjectDto) {
     return this.projects.createAiProject(user, dto);
+  }
+
+  /**
+   * The branches a repository advertises, so environments are picked from a list
+   * instead of typed (git refs are case-sensitive: `Staging` is not `staging`).
+   *
+   * A POST rather than a GET with a query string because it takes a URL and is
+   * not cacheable, and its own path rather than a field on create because the
+   * branches are needed while the form is still being filled in.
+   */
+  @Post('remote-branches')
+  @HttpCode(HttpStatus.OK)
+  remoteBranchesFor(@CurrentUser() user: AuthenticatedUser, @Body() dto: RemoteBranchesDto) {
+    return this.projects.remoteBranchesFor(user, dto.organizationId, dto.repositoryUrl);
+  }
+
+  /**
+   * The folders an on-premise project may be pointed at, read while the creation
+   * form is being filled in. Declared before `:projectId` so the literal path
+   * wins over the UUID parameter.
+   */
+  @Get('on-premise-locations')
+  onPremiseLocations(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: OnPremiseLocationsQueryDto,
+  ) {
+    return this.projects.onPremiseLocations(user, query.organizationId);
   }
 
   @Get(':projectId')
@@ -161,6 +190,15 @@ export class ProjectsController {
     await this.authz.requireProjectAccess(user, projectId, 'admin');
     await this.environments.setDefaultTarget(projectId, environmentId);
     return this.environments.listForProject(projectId);
+  }
+
+  /** The same probe for a project that already has a repository URL. */
+  @Get(':projectId/remote-branches')
+  remoteBranches(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ) {
+    return this.projects.remoteBranches(user, projectId);
   }
 
   @Post(':projectId/connections')

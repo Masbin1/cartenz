@@ -1,4 +1,6 @@
 import type { AgentPermission } from '../../core/authz/agent-permissions';
+import type { ExecutionMode } from '../executors/execution-mode';
+import type { ReadOnlyRoot } from '../workspace/workspace-path';
 
 /**
  * The tool contract (chapter 7).
@@ -23,6 +25,14 @@ export interface ToolDefinition<
 
   /** The permission this tool requires. Checked before every execution. */
   readonly permission: AgentPermission;
+
+  /**
+   * The execution modes this tool is legal in (ADR-028). Undefined means the tool
+   * is not gated by mode. A tool that declares modes is denied in any other mode,
+   * so a filesystem tool cannot run on an `odoo_online` task no matter what the
+   * prompt says - the enforcement is in the execution layer, not the model.
+   */
+  readonly modes?: readonly ExecutionMode[];
 
   /**
    * Whether this tool's effects leave the platform boundary. Used by the policy
@@ -78,6 +88,12 @@ export interface ToolExecutionContext {
   readonly taskReference: string;
   readonly projectId: string;
   readonly organizationId: string;
+  /**
+   * The execution mode this task runs in, derived from the project type at
+   * dispatch (ADR-028). Null for a project type with no execution surface, such
+   * as an `ai_project`.
+   */
+  readonly executionMode: ExecutionMode | null;
   readonly workspace: {
     readonly workspaceId: string;
     /**
@@ -93,6 +109,24 @@ export interface ToolExecutionContext {
     readonly odooVersion: string | null;
     /** True when no repository was cloned, so the file tools have nothing to read. */
     readonly simulated: boolean;
+    /**
+     * Shared directories the agent may read but never write (ADR-028). Read tools
+     * resolve a path under one of these prefixes against the shared directory;
+     * write tools refuse them outright.
+     */
+    readonly readOnlyRoots: readonly ReadOnlyRoot[];
+    /**
+     * Directory for per-operation credential files, outside the repository. The
+     * push tool leases its credential here, as the clone did.
+     */
+    readonly metadataPath: string;
+    /**
+     * Reference into the secrets store for the repository credential, and what it
+     * is. A reference, never a value; the push tool unseals it on demand.
+     */
+    readonly credentialRef: string | null;
+    readonly credentialKind: 'token' | 'ssh_key';
+    readonly sshHostKey: string | null;
   };
 }
 

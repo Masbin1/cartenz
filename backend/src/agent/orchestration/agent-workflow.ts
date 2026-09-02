@@ -19,7 +19,8 @@ import { ProjectMemoryService } from '../analysis/project-memory.service';
 import { GitService } from '../git/git.service';
 import { isTerminalStatus, type AgentTaskStatus } from '../task-state';
 import type { ModifiedFile, TaskTestResults } from './agent-plan';
-import type { ToolExecutionContext } from '../tools/tool.interface';
+import type { ToolExecutionContext, AnyToolDefinition } from '../tools/tool.interface';
+import type { ExecutionMode } from '../executors/execution-mode';
 import type { CodeSearchMatch } from '../analysis/code-search';
 import { rankCandidates, type ModelRelevance } from '../analysis/odoo-model-index';
 import { inferOdooTarget } from './odoo-target';
@@ -216,7 +217,13 @@ export class AgentWorkflow {
    * project.
    */
   private async analyze(snapshot: TaskExecutionSnapshot): Promise<boolean> {
-    await this.narrate(snapshot, `Preparing an isolated workspace for ${snapshot.projectName}...`);
+    const onPremise = snapshot.executionMode === 'on_premise';
+    await this.narrate(
+      snapshot,
+      onPremise
+        ? `Preparing to operate directly on the selected project directory for ${snapshot.projectName}...`
+        : `Preparing an isolated workspace for ${snapshot.projectName}...`,
+    );
 
     let workspace: Workspace;
     try {
@@ -247,10 +254,12 @@ export class AgentWorkflow {
 
     await this.narrate(
       snapshot,
-      snapshot.targetEnvironment
-        ? `Cloned ${workspace.baseBranch} (${snapshot.targetEnvironment.name}, ${snapshot.targetEnvironment.kind}) ` +
-            `at ${workspace.baseCommit?.slice(0, 8)} and created ${workspace.branch}.`
-        : `Cloned ${workspace.baseBranch} at ${workspace.baseCommit?.slice(0, 8)} and created ${workspace.branch}.`,
+      onPremise
+        ? `Operating directly on ${workspace.repositoryPath} (branch ${workspace.branch}).`
+        : snapshot.targetEnvironment
+          ? `Cloned ${workspace.baseBranch} (${snapshot.targetEnvironment.name}, ${snapshot.targetEnvironment.kind}) ` +
+              `at ${workspace.baseCommit?.slice(0, 8)} and created ${workspace.branch}.`
+          : `Cloned ${workspace.baseBranch} at ${workspace.baseCommit?.slice(0, 8)} and created ${workspace.branch}.`,
     );
 
     // Through the tool layer, not called directly: the analysis must appear in the
@@ -681,6 +690,20 @@ export class AgentWorkflow {
     await this.tasks.saveCommitHash(snapshot.taskId, commit);
     await this.narrate(snapshot, `Committed ${commit.slice(0, 8)} on ${workspace.branch}.`);
 
+    // On-premise commits in the customer's own repository, which already has its
+    // own remote and its own credentials. Pushing that remote is not the
+    // platform's to do yet, so the commit stays local and the task completes.
+    if (snapshot.executionMode === 'on_premise') {
+      await this.narrate(
+        snapshot,
+        'On-premise: the change is committed in the selected local directory. ' +
+          'Pushing to its remote is not yet supported, so nothing was sent.',
+      );
+      return this.tasks.transition(snapshot.taskId, 'committing', 'completed', {
+        message: `Committed ${commit.slice(0, 8)} on ${workspace.branch} in the selected local directory. No push was made.`,
+      });
+    }
+
     if (snapshot.grantedApprovals.includes('git_push')) {
       return this.tasks.transition(snapshot.taskId, 'committing', 'pushing');
     }
@@ -726,7 +749,7 @@ export class AgentWorkflow {
     });
   }
 
-  /** PUSHING. Still simulated: Phase 5 owns the outward-facing operation. */
+  /** PUSHING. Real once GIT_PUSH_ENABLED=true; refused at the process layer otherwise. */
   private async push(snapshot: TaskExecutionSnapshot): Promise<boolean> {
     const workspace = await this.acquireWorkspace(snapshot);
     const result = await this.callTool(snapshot, workspace, 'git_push', {});
@@ -738,13 +761,10 @@ export class AgentWorkflow {
       });
     }
 
-    await this.narrate(
-      snapshot,
-      `The commit is on ${workspace.branch} in the workspace. The push to the remote is simulated; Phase 5 implements it.`,
-    );
+    await this.narrate(snapshot, `Pushed ${workspace.branch} to the remote repository.`);
 
     return this.tasks.transition(snapshot.taskId, 'pushing', 'completed', {
-      message: `Branch ${workspace.branch} is ready. The push to the remote is simulated.`,
+      message: `Branch ${workspace.branch} was pushed to the remote repository.`,
     });
   }
 
@@ -763,6 +783,7 @@ export class AgentWorkflow {
     return this.registry
       .all()
       .filter((tool) => tool.availableToModel)
+      .filter((tool) => toolAllowedInMode(tool, snapshot.executionMode))
       .filter((tool) => snapshot.agentPermissions[tool.permission] === true)
       .map((tool) => tool.name);
   }
@@ -889,6 +910,9 @@ export class AgentWorkflow {
       credentialRef: snapshot.credentialRef,
       credentialKind: snapshot.credentialKind,
       sshHostKey: snapshot.sshHostKey,
+      executionMode: snapshot.executionMode,
+      onPremiseProjectPath: snapshot.onPremiseProjectPath,
+      baseCommit: snapshot.baseCommit,
     });
 
     this.workspaces.set(snapshot.taskId, workspace);
@@ -956,6 +980,7 @@ export class AgentWorkflow {
       taskReference: snapshot.reference,
       projectId: snapshot.projectId,
         organizationId: snapshot.organizationId,
+      executionMode: snapshot.executionMode,
       workspace: {
         workspaceId: workspace.workspaceId,
         repositoryPath: workspace.repositoryPath,
@@ -965,6 +990,11 @@ export class AgentWorkflow {
         repositoryUrl: workspace.repositoryUrl,
         odooVersion: workspace.odooVersion,
         simulated: workspace.simulated,
+        readOnlyRoots: workspace.readOnlyRoots,
+        metadataPath: workspace.metadataPath,
+        credentialRef: workspace.credentialRef,
+        credentialKind: workspace.credentialKind,
+        sshHostKey: workspace.sshHostKey,
       },
     };
 
@@ -976,6 +1006,7 @@ export class AgentWorkflow {
         policy: {
           agentPermissions: snapshot.agentPermissions,
           grantedApprovals: snapshot.grantedApprovals,
+          executionMode: snapshot.executionMode,
         },
         taskStatus: snapshot.status,
       });
@@ -1077,6 +1108,18 @@ function toLoopResult(status: 'succeeded' | 'failed' | 'denied' | 'suspended'): 
 
 function humanise(value: string): string {
   return value.replace(/_/g, ' ');
+}
+
+/**
+ * Whether a tool may be offered or executed in the given mode (ADR-028).
+ *
+ * Mirrors the enforcement in the permission validator, but here it decides what
+ * the model is told about rather than what runs: a model told the truth about its
+ * tools wastes less of its budget discovering it. The two must not diverge.
+ */
+function toolAllowedInMode(tool: AnyToolDefinition, mode: ExecutionMode | null): boolean {
+  if (tool.modes === undefined) return true;
+  return mode !== null && tool.modes.includes(mode);
 }
 
 /** Re-exported so the worker can narrow on the status union. */

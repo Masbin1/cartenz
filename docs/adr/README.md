@@ -21,3 +21,10 @@ with the condition under which it is retired.
 | [ADR-019](ADR-019-real-repository-operations.md) | Real repository operations ahead of microVM isolation | Accepted |
 | [ADR-020](ADR-020-ai-provider-boundary.md) | Model provider binding and the AI data boundary | Accepted |
 | [ADR-021](ADR-021-push-safety-and-environments.md) | Push safety, target environments, and SSH remotes | Accepted |
+| [ADR-022](ADR-022-tool-output-fidelity-and-targeted-edits.md) | Tool output fidelity and targeted edits | Accepted |
+| [ADR-023](ADR-023-portal-managed-model-provider.md) | Portal-managed model provider | Accepted |
+| [ADR-024](ADR-024-project-removal.md) | Project removal | Accepted |
+| [ADR-025](ADR-025-model-aware-file-selection.md) | Model-aware file selection | Accepted |
+| [ADR-026](ADR-026-on-premise-deployment.md) | On-premise deployment | Accepted |
+| [ADR-027](ADR-027-odoo-validation-runtime.md) | Running Odoo for validation | Accepted |
+| [ADR-028](ADR-028-execution-adapters.md) | Three execution modes behind separate adapters | Accepted |
