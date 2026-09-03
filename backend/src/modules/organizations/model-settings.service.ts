@@ -128,20 +128,22 @@ export class ModelSettingsService {
           .where(eq(organizationModelSettings.organizationId, organizationId))
           .limit(1);
 
+    // Compute the key availability once: the screen's hasApiKey and the warning
+    // message must reflect the same fact. Two expressions computing it would
+    // eventually drift, and that drift would tell a user a key is stored when none is.
+    const hasApiKey = resolved.fromEnvironment
+      ? Boolean(this.config.ai.apiKey)
+      : resolved.secretRef !== null;
+
     return {
       providerId: resolved.providerId,
       model: resolved.model,
       baseUrl: resolved.baseUrl,
-      hasApiKey: resolved.fromEnvironment
-        ? Boolean(this.config.ai.apiKey)
-        : resolved.secretRef !== null,
+      hasApiKey,
       callsExternalService: resolved.providerId !== 'mock',
       fromEnvironment: resolved.fromEnvironment,
       updatedAt: row?.updatedAt?.toISOString() ?? null,
-      warning: this.keylessLoopbackWarning(
-        resolved.baseUrl,
-        resolved.fromEnvironment ? Boolean(this.config.ai.apiKey) : resolved.secretRef !== null,
-      ),
+      warning: this.keylessLoopbackWarning(resolved.baseUrl, hasApiKey),
     };
   }
 

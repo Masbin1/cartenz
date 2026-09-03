@@ -119,5 +119,88 @@ describe('ModelSettingsService', () => {
       // warning here would be a second, weaker answer to a settled question.
       expect(warn('https://api.deepseek.com', false)).toBeNull();
     });
+
+    /**
+     * Drives describe() rather than the warning method, because the value the
+     * warning is asked about must be the same one the screen is shown. Two
+     * expressions computing it would eventually disagree, and the direction they
+     * would disagree in is telling someone a token is stored when none is.
+     */
+    it('reports both the absent key and the warning, from one answer', async () => {
+      const row = {
+        providerId: 'openai-compatible',
+        model: 'Paket-Hemat',
+        baseUrl: 'http://127.0.0.1:20128/v1',
+        secretRef: null,
+        revision: 3,
+        updatedAt: new Date('2026-09-04T00:00:00.000Z'),
+      };
+
+      const service = new ModelSettingsService(
+        {
+          db: {
+            select: () => ({
+              from: () => ({
+                where: () => ({
+                  limit: async () => [row],
+                }),
+              }),
+            }),
+          },
+        } as unknown as DatabaseService,
+        noAudit,
+        {
+          write: async () => ({ ref: 'secret:model-api-key:0001' }),
+          read: async () => 'unsealed',
+          destroy: async () => undefined,
+          exists: async () => true,
+        } as SecretsProvider,
+        config,
+      );
+
+      const described = await service.describe('org-1');
+
+      expect(described.hasApiKey).toBe(false);
+      expect(described.warning).toContain('9router');
+      expect(described.fromEnvironment).toBe(false);
+    });
+
+    it('says nothing once a key is stored against the same row', async () => {
+      const row = {
+        providerId: 'openai-compatible',
+        model: 'Paket-Hemat',
+        baseUrl: 'http://127.0.0.1:20128/v1',
+        secretRef: 'secret:model-api-key:0001',
+        revision: 4,
+        updatedAt: new Date('2026-09-04T00:00:00.000Z'),
+      };
+
+      const service = new ModelSettingsService(
+        {
+          db: {
+            select: () => ({
+              from: () => ({
+                where: () => ({
+                  limit: async () => [row],
+                }),
+              }),
+            }),
+          },
+        } as unknown as DatabaseService,
+        noAudit,
+        {
+          write: async () => ({ ref: 'secret:model-api-key:0001' }),
+          read: async () => 'unsealed',
+          destroy: async () => undefined,
+          exists: async () => true,
+        } as SecretsProvider,
+        config,
+      );
+
+      const described = await service.describe('org-1');
+
+      expect(described.hasApiKey).toBe(true);
+      expect(described.warning).toBeNull();
+    });
   });
 });
