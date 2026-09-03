@@ -319,7 +319,12 @@ export class AiSdkModelProvider implements ModelProvider {
         `${status ? ` [HTTP ${status}]` : ''}: ${message}`,
     );
 
-    return new ModelProviderError(this.id, this.explain(status, retryable, error), retryable);
+    return new ModelProviderError(
+      this.id,
+      this.explain(status, retryable, error),
+      retryable,
+      status,
+    );
   }
 
   /**
