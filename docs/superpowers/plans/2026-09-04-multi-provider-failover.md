@@ -289,7 +289,7 @@ Check `frontend/components/ui/alert.tsx` for the tones it accepts. If `warning` 
 - [ ] **Step 11: Full suite and typecheck**
 
 Run: `cd backend && npx jest && npm run typecheck && cd ../frontend && npm run typecheck`
-Expected: 496 tests passing, both typechecks clean.
+Expected: 498 tests passing, both typechecks clean.
 
 - [ ] **Step 12: Commit**
 
@@ -450,7 +450,7 @@ Expected: 4 rows, each with `has_id = t`, `priority = 1`, a non-null `label`, `e
 - [ ] **Step 5: Typecheck and full suite**
 
 Run: `cd backend && npm run typecheck && npx jest`
-Expected: typecheck clean, 496 tests passing.
+Expected: typecheck clean, 498 tests passing.
 
 - [ ] **Step 6: Commit**
 
@@ -858,7 +858,7 @@ If the `it.each` status cases fail, check that `ModelProviderError` instances ca
 - [ ] **Step 5: Full suite**
 
 Run: `cd backend && npx jest && npm run typecheck`
-Expected: 510 tests passing, typecheck clean.
+Expected: 512 tests passing, typecheck clean.
 
 - [ ] **Step 6: Commit**
 
@@ -1231,6 +1231,8 @@ In `backend/src/agent/model/model-provider-resolver.ts`:
   }
 ```
 
+Delete the public `buildForTest` (lines 90-95). It has no callers — `grep -rn buildForTest --include=*.ts` finds only its own definition — and the next change is what makes it dangerous: it returns whatever `build` returns, so the moment `buildOne` stops wrapping, this hands an unguarded provider to anyone who asks. ADR-020's guarantee is that no such path exists, and a public method that would become one is worth deleting rather than guarding.
+
 Rename the existing private `build` to `buildOne`, returning the **unguarded** `AiSdkModelProvider` (the guard now lives outside the chain), and pass the row's structured-output setting:
 
 ```typescript
@@ -1308,7 +1310,7 @@ In `backend/src/agent/orchestration/agent-workflow.ts`, `failOnModelError` curre
 - [ ] **Step 9: Full suite and typecheck**
 
 Run: `cd backend && npx jest && npm run typecheck`
-Expected: 510+ tests passing, typecheck clean.
+Expected: 513 tests passing, typecheck clean — Task 4 adds the label test only.
 
 - [ ] **Step 10: Verify against the real gateway**
 
@@ -1333,6 +1335,11 @@ The service, resolver and endpoints now speak rows: add, edit, remove, reorder,
 test one, test the chain, and ask a gateway what models it serves. The guard
 moves outside the chain, so the boundary is crossed once and a refusal cannot be
 failed over.
+
+buildForTest goes with it. It had no callers, and it returned whatever build
+returned — so once the guard moved outward it would have been a public method
+handing out an unguarded provider, which is the one path ADR-020 says does not
+exist.
 
 Also fixes the failure path recording AI_PROVIDER as the provider that failed.
 It was already wrong for any organisation configured through the portal; with a
