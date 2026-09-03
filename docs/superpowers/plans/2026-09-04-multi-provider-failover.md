@@ -480,10 +480,60 @@ MSG
 **Files:**
 - Create: `backend/src/agent/model/failover-model-provider.ts`
 - Create: `backend/src/agent/model/failover-model-provider.spec.ts`
+- Modify: `backend/src/agent/model/model-provider.interface.ts:112-121`
+- Modify: `backend/src/agent/model/ai-sdk-model-provider.ts:295-312`
+
+**Preflight ruling — the status must survive the error.** `toProviderError` reads
+the HTTP status, uses it to compute `retryable` and to write the message, then
+constructs a fresh `ModelProviderError(provider, message, retryable)` — which
+drops it. So `movesOn` below would read `error.statusCode` and find nothing,
+falling through to a message regex that does not match "rejected the API key":
+no failover on the case the feature exists for. 429 and 5xx would limp through
+on `retryable`; 401, 402, 403 and 404 would not.
+
+`ModelProviderError` therefore gains a fourth constructor parameter, and
+`toProviderError` passes what it already read:
+
+```typescript
+export class ModelProviderError extends Error {
+  constructor(
+    readonly provider: string,
+    message: string,
+    readonly retryable: boolean = false,
+    /**
+     * The HTTP status, when the failure had one.
+     *
+     * Kept because the failover chain decides move-on from stop by it, and this
+     * class is where the status stops being available: toProviderError reads it,
+     * uses it, and used to construct this error without it.
+     */
+    readonly statusCode?: number,
+  ) {
+    super(message);
+    this.name = 'ModelProviderError';
+  }
+}
+```
+
+```typescript
+    return new ModelProviderError(
+      this.id,
+      this.explain(status, retryable, error),
+      retryable,
+      status,
+    );
+```
+
+Do this first, in Step 0, before writing the failover tests — the tests below
+assert through the real field rather than attaching one.
 
 **Interfaces:**
 - Consumes: `ModelProvider`, `ModelProviderError` from `./model-provider.interface`; `AiBoundaryRefusalError` from `../../core/ai-boundary/boundary-types`.
 - Produces: `class FailoverModelProvider implements ModelProvider`, constructed as `new FailoverModelProvider(members: readonly FailoverMember[])` where `FailoverMember = { readonly priority: number; readonly label: string; readonly provider: ModelProvider }`. Task 4 constructs it.
+
+- [ ] **Step 0: Carry the status on the error**
+
+Make the two edits in the preflight ruling above — the fourth constructor parameter and the argument that fills it. Then `cd backend && npx jest && npm run typecheck`: 498 tests still passing, typecheck clean. Nothing reads `statusCode` yet, so nothing should change.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -550,10 +600,11 @@ describe('FailoverModelProvider', () => {
       })),
     );
 
+  // Constructed the way AiSdkModelProvider constructs it, status included, so
+  // these exercise the real contract rather than a stand-in with a field bolted
+  // on. That distinction is the whole defect: the status used to be dropped here.
   const httpError = (status: number) =>
-    Object.assign(new ModelProviderError('openai-compatible', `HTTP ${status}`, status >= 500), {
-      statusCode: status,
-    });
+    new ModelProviderError('openai-compatible', `HTTP ${status}`, status >= 500, status);
 
   describe('moving on', () => {
     // 429 is the case the feature exists for: one account's quota is spent and
@@ -616,7 +667,7 @@ describe('FailoverModelProvider', () => {
      * exactly what the first was forbidden.
      */
     it('rethrows a boundary refusal untouched and calls nobody else', async () => {
-      const refusal = new AiBoundaryRefusalError('a credential was found', []);
+      const refusal = new AiBoundaryRefusalError('Check', 'a credential was found', []);
       const second = stub('second');
       const spy = jest.spyOn(second, 'generateStructured');
       const provider = chain({ provider: stub('first', refusal) }, { provider: second });
@@ -670,7 +721,9 @@ describe('FailoverModelProvider', () => {
 Run: `cd backend && npx jest src/agent/model/failover-model-provider.spec.ts`
 Expected: FAIL — module not found.
 
-Check the `AiBoundaryRefusalError` constructor signature at `backend/src/core/ai-boundary/boundary-types.ts:70` and adjust the test's construction if it takes different arguments.
+The `AiBoundaryRefusalError` constructor is `(label, reason, findings)` — verified at `backend/src/core/ai-boundary/boundary-types.ts:70`, and the test above already passes all three.
+
+One thing this test is and is not: with the guard outside the chain, a refusal is thrown in `GuardedModelProvider` before `inner` is called, so it cannot reach this class by any current path. The test guards the invariant rather than a live route — it fails loudly if someone later moves the guard inside the members, which is exactly the change that would make failing over a refusal possible.
 
 - [ ] **Step 3: Implement it**
 
@@ -853,7 +906,7 @@ function movesOn(error: unknown): boolean {
 Run: `cd backend && npx jest src/agent/model/failover-model-provider.spec.ts`
 Expected: PASS, 14 tests.
 
-If the `it.each` status cases fail, check that `ModelProviderError` instances carry `statusCode` — the test attaches it with `Object.assign`, and `movesOn` reads it from there.
+If the `it.each` status cases fail, check Step 0 landed: `movesOn` reads `statusCode` off the error, and before Step 0 nothing put it there.
 
 - [ ] **Step 5: Full suite**
 
@@ -871,6 +924,11 @@ A rejected key, a spent account, a rate limit or a dead endpoint is a fact about
 one provider; the next has its own key and quota. A malformed request and a
 schema mismatch are not, and asking three endpoints spends three times as much
 to hear the same answer.
+
+ModelProviderError carries the HTTP status now. toProviderError read it, used
+it, and then built an error without it — so the chain would have decided
+move-on-or-stop from a message regex, and a rejected key, the case this exists
+for, does not match one.
 
 A boundary refusal is rethrown untouched. Failing that over would ask a second
 endpoint for exactly what the first was forbidden to send, which is why the
@@ -1285,6 +1343,8 @@ Import `FailoverModelProvider` and `FailoverMember` from `./failover-model-provi
 In `backend/src/modules/organizations/organizations.controller.ts`, replace lines 102-155 with the six endpoints named in the Interfaces block. Authorisation is unchanged: `requireOrganizationMember` to read, `'admin'` to write and to test. Every write and every reorder calls `this.providers.invalidate(organizationId)` — the cached chain is keyed on the summed revision, and dropping it here means a change applies to the next task rather than whenever the revision is next read.
 
 Route order matters: declare `POST :organizationId/model-providers/discover-models` **before** `POST :organizationId/model-providers/:rowId/test`, or `discover-models` is captured as a `rowId`.
+
+The discovery handler wraps the resolver's `string[]` — `return { models: await this.providers.discoverModels(body.baseUrl, body.apiKey) }`. An endpoint answering with a bare JSON array is worth avoiding, and Task 5's client is written against the object.
 
 Add the DTOs to `backend/src/modules/organizations/dto/model-settings.dto.ts`, following the existing `WriteModelSettingsDto` shape and its comment about `apiKey` being write-only. `ReorderModelProvidersDto` carries `@IsArray() @IsUUID('4', { each: true }) order!: string[]`. `DiscoverModelsDto` carries `baseUrl!: string` and an optional `apiKey?: string`.
 
