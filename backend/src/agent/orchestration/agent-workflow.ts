@@ -1136,13 +1136,18 @@ export class AgentWorkflow {
         ? `${error.message}${error.retryable ? ' This is usually transient; submitting the task again may succeed.' : ''}`
         : `The ${operation} step failed: ${(error as Error).message}`;
 
+    // The provider that actually failed, not the environment's. A
+    // ModelProviderError names its own provider; anything else did not reach one.
+    const attemptedProvider =
+      error instanceof ModelProviderError ? error.provider : this.config.ai.provider;
+
     await this.modelCalls.record({
       taskId: snapshot.taskId,
-        organizationId: snapshot.organizationId,
+      organizationId: snapshot.organizationId,
       operation,
-      providerId: this.config.ai.provider,
+      providerId: attemptedProvider,
       model: this.config.ai.model,
-      calledExternalService: this.config.ai.provider !== 'mock',
+      calledExternalService: attemptedProvider !== 'mock',
       inputTokens: 0,
       outputTokens: 0,
       durationMs: 0,

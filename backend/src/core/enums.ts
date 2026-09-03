@@ -139,6 +139,67 @@ export const MODEL_PROVIDERS_REQUIRING_KEY: readonly ModelProviderId[] = [
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
 
 /**
+ * Ready-made configurations, offered in the portal (ADR-023 extended).
+ *
+ * Presets fill a form; they are not provider kinds, and every one of them stores
+ * as an existing MODEL_PROVIDER_ID. The value of naming them is the two fields
+ * nobody can guess: which base URL an endpoint uses, and whether it enforces a
+ * JSON schema itself.
+ *
+ * 9router and Hermes share one entry because on the deployment this was written
+ * for they are the same process, serving http://127.0.0.1:20128/v1 (ADR-023).
+ * Two entries with an identical URL would suggest a difference that is not there.
+ */
+export const MODEL_PROVIDER_PRESETS = [
+  {
+    id: 'local-gateway',
+    label: 'Local gateway (9router / Hermes)',
+    providerId: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:20128/v1',
+    model: '',
+    structuredOutputs: true,
+    detail: 'A gateway on this machine. Load its model list rather than guessing a name.',
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    providerId: 'openai-compatible',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-chat',
+    // DeepSeek rejects response_format json_schema and accepts only json_object.
+    structuredOutputs: false,
+    detail: 'Enforces JSON objects rather than schemas, so schema checking falls to the SDK.',
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    providerId: 'openai-compatible',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    structuredOutputs: true,
+    detail: 'OpenAI directly.',
+  },
+  {
+    id: 'groq',
+    label: 'Groq',
+    providerId: 'openai-compatible',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    model: 'llama-3.3-70b-versatile',
+    structuredOutputs: true,
+    detail: 'Open-weight models, served fast.',
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic direct',
+    providerId: 'anthropic',
+    baseUrl: '',
+    model: 'claude-sonnet-4-5',
+    structuredOutputs: true,
+    detail: 'Claude models, called directly rather than through a gateway.',
+  },
+] as const;
+
+/**
  * Hosts that mean "this machine", where plain http carries no network risk and a
  * gateway may legitimately require no key (ADR-023).
  *

@@ -228,11 +228,11 @@ export const projects = pgTable(
 );
 
 /**
- * The model provider an organisation has configured (ADR-023).
+ * The model providers an organisation has configured (ADR-023).
  *
- * One row per organisation, so the configuration is one thing a person can look
- * at and change rather than a set of environment variables an operator has to be
- * asked about. The API key is not here: `secret_ref` points into secret_records,
+ * One row per provider, ordered by `priority`, so an organisation's failover
+ * chain is a list it can see and reorder rather than a single environment
+ * variable. The API key is not here: `secret_ref` points into secret_records,
  * the same way a repository credential does.
  */
 export const organizationModelSettings = pgTable(
