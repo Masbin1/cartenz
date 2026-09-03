@@ -386,6 +386,8 @@ export interface ModelProviderSettings {
   /** True when this comes from the server's environment, not from a saved row. */
   fromEnvironment: boolean;
   updatedAt: string | null;
+  /** Set when the configuration is accepted but likely to fail. */
+  warning: string | null;
 }
 
 export interface ModelProviderTestResult {

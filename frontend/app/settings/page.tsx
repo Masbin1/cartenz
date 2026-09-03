@@ -189,6 +189,7 @@ export default function OrganizationSettingsPage() {
 
       {error ? <Alert tone="error">{error}</Alert> : null}
       {notice ? <Alert tone="success">{notice}</Alert> : null}
+      {settings.warning ? <Alert tone="warning">{settings.warning}</Alert> : null}
 
       <section className="panel">
         <div className="panel-header">

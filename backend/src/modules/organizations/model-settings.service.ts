@@ -43,6 +43,11 @@ export interface PublicModelSettings {
   readonly callsExternalService: boolean;
   readonly fromEnvironment: boolean;
   readonly updatedAt: string | null;
+  /**
+   * Set when the stored configuration is accepted but likely to fail: a loopback
+   * endpoint with no key. Null when there is nothing to say.
+   */
+  readonly warning: string | null;
 }
 
 export interface WriteModelSettingsInput {
@@ -133,6 +138,10 @@ export class ModelSettingsService {
       callsExternalService: resolved.providerId !== 'mock',
       fromEnvironment: resolved.fromEnvironment,
       updatedAt: row?.updatedAt?.toISOString() ?? null,
+      warning: this.keylessLoopbackWarning(
+        resolved.baseUrl,
+        resolved.fromEnvironment ? Boolean(this.config.ai.apiKey) : resolved.secretRef !== null,
+      ),
     };
   }
 
@@ -301,6 +310,24 @@ export class ModelSettingsService {
       .limit(1);
 
     return row;
+  }
+
+  /**
+   * What to tell someone who saved a local endpoint without a key.
+   *
+   * Not a refusal: ollama and llama.cpp have no key to give, and refusing would
+   * break a legitimate deployment. But 9router and Hermes authenticate, and
+   * without this the failure arrives on the next task as "rejected the API key",
+   * which sends people looking for a key that was never stored.
+   */
+  private keylessLoopbackWarning(baseUrl: string | null, hasKey: boolean): string | null {
+    if (hasKey || !isLoopbackUrl(baseUrl)) return null;
+
+    return (
+      'No API token is stored. Local gateways differ: 9router and Hermes authenticate ' +
+      'and will refuse the request, while ollama and llama.cpp need no token. If this ' +
+      'endpoint authenticates, enter its token.'
+    );
   }
 
   private assertValid(input: WriteModelSettingsInput): void {

@@ -81,4 +81,43 @@ describe('ModelSettingsService', () => {
       ).rejects.toThrow(/longer than 8192/);
     });
   });
+
+  describe('a loopback row saved with no key', () => {
+    /**
+     * Accepted, not refused: ollama and llama.cpp genuinely have no key to give.
+     * But 9router and Hermes authenticate, and the failure they produce arrives a
+     * task later, far from the person who saved the row.
+     */
+    it('warns rather than refusing, because ollama has no key to give', () => {
+      const service = build();
+      const warn = (service as unknown as {
+        keylessLoopbackWarning(baseUrl: string | null, hasKey: boolean): string | null;
+      }).keylessLoopbackWarning.bind(service);
+
+      const warning = warn('http://127.0.0.1:20128/v1', false);
+
+      expect(warning).toContain('9router');
+      expect(warning).toContain('ollama');
+    });
+
+    it('says nothing when a key is stored', () => {
+      const service = build();
+      const warn = (service as unknown as {
+        keylessLoopbackWarning(baseUrl: string | null, hasKey: boolean): string | null;
+      }).keylessLoopbackWarning.bind(service);
+
+      expect(warn('http://127.0.0.1:20128/v1', true)).toBeNull();
+    });
+
+    it('says nothing for an endpoint that is not on this machine', () => {
+      const service = build();
+      const warn = (service as unknown as {
+        keylessLoopbackWarning(baseUrl: string | null, hasKey: boolean): string | null;
+      }).keylessLoopbackWarning.bind(service);
+
+      // A third-party endpoint with no key is refused outright elsewhere, so a
+      // warning here would be a second, weaker answer to a settled question.
+      expect(warn('https://api.deepseek.com', false)).toBeNull();
+    });
+  });
 });
