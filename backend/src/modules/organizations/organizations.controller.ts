@@ -9,7 +9,6 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
-  Put,
 } from '@nestjs/common';
 import { OrganizationsService } from './organizations.service';
 import {
@@ -156,7 +155,7 @@ export class OrganizationsController {
     this.providers.invalidate(organizationId);
   }
 
-  @Put(':organizationId/model-providers/order')
+  @Patch(':organizationId/model-providers/order')
   async reorderModelProviders(
     @CurrentUser() user: AuthenticatedUser,
     @Param('organizationId', ParseUUIDPipe) organizationId: string,

@@ -1,4 +1,10 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
@@ -171,9 +177,24 @@ export class ModelProviderResolver {
     const url = new URL('models', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
 
     const response = await fetch(url, {
+      // A redirect target is a second URL the caller influences, and it arrives
+      // after assertHttpsUrl has already run. Following it would let an endpoint
+      // that passed the check hand back the body of one that would not — a host
+      // on the server's own network, reached with the server's network position.
+      redirect: 'manual',
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
       signal: AbortSignal.timeout(10_000),
     });
+
+    // Refused rather than followed. Said plainly, because a gateway behind a
+    // redirect is a real configuration and the person who typed the URL needs to
+    // know to enter the destination instead of guessing why discovery failed.
+    if (response.status >= 300 && response.status < 400) {
+      throw new BadRequestException(
+        'That endpoint redirected the request. Enter the URL it redirects to, ' +
+          'because the platform will not follow a redirect while carrying your token.',
+      );
+    }
 
     if (!response.ok) {
       throw new Error(

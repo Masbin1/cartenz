@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import { organizationModelSettings } from '../../core/database/schema';
 import { AuditService } from '../../core/audit/audit.service';
@@ -434,7 +434,12 @@ export class ModelSettingsService {
 
     await this.database.db
       .delete(organizationModelSettings)
-      .where(eq(organizationModelSettings.id, rowId));
+      .where(
+        and(
+          eq(organizationModelSettings.id, rowId),
+          eq(organizationModelSettings.organizationId, organizationId),
+        ),
+      );
 
     await this.audit.record({
       event: AUDIT_EVENTS.MODEL_PROVIDER_CLEARED,
@@ -473,7 +478,12 @@ export class ModelSettingsService {
         await tx
           .update(organizationModelSettings)
           .set({ priority: 1000 + index })
-          .where(eq(organizationModelSettings.id, id));
+          .where(
+            and(
+              eq(organizationModelSettings.id, id),
+              eq(organizationModelSettings.organizationId, organizationId),
+            ),
+          );
       }
 
       for (const [index, id] of orderedIds.entries()) {
@@ -485,7 +495,12 @@ export class ModelSettingsService {
             updatedByUserId: userId,
             updatedAt: new Date(),
           })
-          .where(eq(organizationModelSettings.id, id));
+          .where(
+            and(
+              eq(organizationModelSettings.id, id),
+              eq(organizationModelSettings.organizationId, organizationId),
+            ),
+          );
       }
     });
 
@@ -521,11 +536,19 @@ export class ModelSettingsService {
     return rows.reduce((max, row) => Math.max(max, row.priority), 0) + 1;
   }
 
+  // Both the query and the JS check exist on purpose: the query is the backstop
+  // for a call site added later, the JS check is what turns a foreign row into
+  // `undefined` for the callers that exist now.
   private async storedRow(organizationId: string, rowId: string): Promise<StoredRow | undefined> {
     const [row] = await this.database.db
       .select()
       .from(organizationModelSettings)
-      .where(eq(organizationModelSettings.id, rowId))
+      .where(
+        and(
+          eq(organizationModelSettings.id, rowId),
+          eq(organizationModelSettings.organizationId, organizationId),
+        ),
+      )
       .limit(1);
 
     return row && row.organizationId === organizationId ? row : undefined;
@@ -629,10 +652,11 @@ function normalise(value: string | null | undefined): string | null {
  * endpoint would send the prompt - which carries repository source - in the
  * clear, and the key with it.
  *
- * Exported because `discoverModels` on the resolver fetches a caller-supplied
- * URL from the server and must refuse the same ones the save path does - a
- * second copy of this rule would eventually disagree with this one, and the
- * direction it would disagree in is permitting plaintext to a third party.
+ * This is a transport rule and not an SSRF control: a private-network host over
+ * https satisfies it, and a loopback port that is not a model gateway satisfies
+ * the localhost branch. Anything fetching a caller-supplied URL needs its own
+ * answer to "which host may this reach" - see `discoverModels`, which refuses
+ * redirects for exactly that reason.
  */
 export function assertHttpsUrl(value: string): void {
   let url: URL;
