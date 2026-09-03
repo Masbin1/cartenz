@@ -11,15 +11,19 @@ import type { ProjectEnvironmentsService } from '../projects/project-environment
 import type { AgentOrchestrator } from '../../agent/orchestration/agent-orchestrator.interface';
 
 /**
- * The Odoo.sh `main` branch restriction (ADR-028).
+ * The `main` branch restriction (ADR-028: "the platform never pushes to main").
  *
- * Odoo.sh's `main` branch is the live business, so a task targeting it is refused
- * outright rather than gated on an approval - the same shape of guarantee as the
- * production refusal in ADR-021.
+ * `main` is the live business, so a task targeting it is refused outright rather
+ * than gated on an approval - the same shape of guarantee as the production
+ * refusal in ADR-021.
+ *
+ * On-premise is covered as well as Odoo.sh, and matters more: it commits directly
+ * in the directory a person selected, on the environment's own branch, so there is
+ * no separate AI branch between the agent's commit and `main`.
  */
-describe('TasksService.create — odoo_sh main branch restriction', () => {
-  const makeService = (branch: string) => {
-    const project = { projectType: 'odoo_sh', repositoryUrl: 'git@git.odoo.com:p.git', name: 'P' };
+describe('TasksService.create — main branch restriction', () => {
+  const makeService = (branch: string, projectType = 'odoo_sh') => {
+    const project = { projectType, repositoryUrl: 'git@git.odoo.com:p.git', name: 'P' };
 
     const database = {
       db: {
@@ -62,11 +66,26 @@ describe('TasksService.create — odoo_sh main branch restriction', () => {
     );
   };
 
-  it('refuses a task targeting the main branch on an odoo_sh project', async () => {
-    const service = makeService('main');
+  const submit = (service: TasksService) =>
+    service.create({ userId: 'u' } as never, 'project-1', { prompt: 'add a field' } as never);
 
-    await expect(
-      service.create({ userId: 'u' } as never, 'project-1', { prompt: 'add a field' } as never),
-    ).rejects.toThrow(BadRequestException);
+  it('refuses a task targeting the main branch on an odoo_sh project', async () => {
+    await expect(submit(makeService('main', 'odoo_sh'))).rejects.toThrow(BadRequestException);
+  });
+
+  it('refuses a task targeting the main branch on an on_premise project', async () => {
+    await expect(submit(makeService('main', 'on_premise'))).rejects.toThrow(BadRequestException);
+  });
+
+  it('names the project type in the refusal, so the message fits what was submitted', async () => {
+    await expect(submit(makeService('main', 'on_premise'))).rejects.toThrow(/On-premise/);
+    await expect(submit(makeService('main', 'odoo_sh'))).rejects.toThrow(/Odoo\.sh/);
+  });
+
+  it('permits another branch on an on_premise project', async () => {
+    // The guard must not be a blanket refusal: Staging is the branch this is for.
+    await expect(submit(makeService('Staging', 'on_premise'))).rejects.not.toThrow(
+      BadRequestException,
+    );
   });
 });

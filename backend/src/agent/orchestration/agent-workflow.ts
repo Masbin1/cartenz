@@ -729,6 +729,7 @@ export class AgentWorkflow {
         odooVersion: snapshot.odooVersion,
         plan: snapshot.plan,
         agentPermissions: snapshot.agentPermissions,
+        executionMode: snapshot.executionMode,
         run: async (call) => {
           const outcome = await this.callTool(snapshot, workspace, call.name, call.input);
           return { status: toLoopResult(outcome.status), output: outcome.output };
@@ -966,19 +967,11 @@ export class AgentWorkflow {
     await this.tasks.saveCommitHash(snapshot.taskId, commit);
     await this.narrate(snapshot, `Committed ${commit.slice(0, 8)} on ${workspace.branch}.`);
 
-    // On-premise commits in the customer's own repository, which already has its
-    // own remote and its own credentials. Pushing that remote is not the
-    // platform's to do yet, so the commit stays local and the task completes.
-    if (snapshot.executionMode === 'on_premise') {
-      await this.narrate(
-        snapshot,
-        'On-premise: the change is committed in the selected local directory. ' +
-          'Pushing to its remote is not yet supported, so nothing was sent.',
-      );
-      return this.tasks.transition(snapshot.taskId, 'committing', 'completed', {
-        message: `Committed ${commit.slice(0, 8)} on ${workspace.branch} in the selected local directory. No push was made.`,
-      });
-    }
+    // On-premise pushes to the remote the selected repository already carries,
+    // rather than to a URL the platform cloned from (ADR-028). It reaches the same
+    // approval gate as every other mode: the commit is local until a person says
+    // it may leave.
+    const onPremise = snapshot.executionMode === 'on_premise';
 
     if (snapshot.grantedApprovals.includes('git_push')) {
       return this.tasks.transition(snapshot.taskId, 'committing', 'pushing');
@@ -989,17 +982,25 @@ export class AgentWorkflow {
     // s1). An approval that cannot lead to the act it names teaches people that
     // approvals are decoration, so the task completes instead and says why.
     if (!this.config.git.pushEnabled) {
+      // Where the commit now sits differs by mode, and saying it wrongly sends
+      // somebody looking in the wrong place: on-premise committed in the
+      // directory they selected, every other mode in a workspace the platform
+      // will destroy.
+      const where = onPremise
+        ? 'the commit stays in the selected local directory'
+        : 'the branch stays in the workspace';
+
       await this.narrate(
         snapshot,
         `Committed on ${workspace.branch}. Pushing is disabled on this server ` +
-          '(GIT_PUSH_ENABLED=false), so the branch stays in the workspace and the ' +
+          `(GIT_PUSH_ENABLED=false), so ${where} and the ` +
           'diff is on the task. Review it there, or ask an operator to enable ' +
           'pushing if this platform should write to the repository.',
       );
 
       return this.tasks.transition(snapshot.taskId, 'committing', 'completed', {
         message:
-          `Branch ${workspace.branch} is ready in the workspace. Pushing is disabled ` +
+          `Commit ${commit.slice(0, 8)} is ready on ${workspace.branch}. Pushing is disabled ` +
           'on this server, so nothing was sent to the repository.',
       });
     }

@@ -108,6 +108,20 @@ export class ModelImplementationLoop {
     const provider = await this.providers.forOrganization(input.organizationId);
     const tools = this.offeredTools(input.agentPermissions, input.executionMode ?? null);
 
+    // An empty tool list means the model is asked to change a repository with no
+    // way to touch it. It answers that it cannot, changes nothing, and the run
+    // fails one model call later as "made no change to the working tree" - which
+    // points at the model rather than at the configuration that caused it. The
+    // cause is always here: a permission set that grants nothing, or a caller
+    // that omitted executionMode so every mode-gated tool was filtered out.
+    if (tools.length === 0) {
+      throw new Error(
+        'No tools are available to the model for this task ' +
+          `(execution mode: ${input.executionMode ?? 'not set'}). ` +
+          'Check the project\'s agent permissions.',
+      );
+    }
+
     const system = buildSystemPrompt({
       projectName: input.projectName,
       odooVersion: input.odooVersion,

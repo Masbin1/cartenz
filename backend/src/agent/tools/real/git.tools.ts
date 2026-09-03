@@ -174,10 +174,21 @@ export class RealGitTools {
     execute: async (_input, context) => {
       assertRepository(context);
 
-      if (!context.workspace.repositoryUrl) {
+      /**
+       * On-premise has no repository URL of its own: the workspace is a directory
+       * a person selected, not a clone the platform made (ADR-028). The remote to
+       * push to is the one the repository already carries, read from its own
+       * config and validated by `assertSafeRemoteUrl` inside `push` like any
+       * other. Every other mode pushes to the URL the platform cloned from.
+       */
+      const remoteUrl =
+        context.workspace.repositoryUrl ??
+        (await this.git.originUrl(context.workspace.repositoryPath));
+
+      if (!remoteUrl) {
         throw new Error(
-          'This workspace has no repository URL to push to. On-premise push to the ' +
-            "customer's own remote is not yet supported.",
+          'There is no remote to push to: this workspace has no repository URL and ' +
+            'the repository has no "origin" remote.',
         );
       }
 
@@ -191,7 +202,7 @@ export class RealGitTools {
 
       const result = await this.git.push({
         repositoryPath: context.workspace.repositoryPath,
-        remoteUrl: context.workspace.repositoryUrl,
+        remoteUrl,
         branch: context.workspace.branch,
         credentialDirectory: context.workspace.metadataPath,
         credential,
@@ -199,7 +210,7 @@ export class RealGitTools {
 
       return {
         branch: result.branch,
-        remote: context.workspace.repositoryUrl,
+        remote: remoteUrl,
         pushed: result.pushed,
       };
     },
