@@ -3,7 +3,7 @@ import { type PromptPart } from '../model/model-provider.interface';
 import { ModelProviderResolver } from '../model/model-provider-resolver';
 import { buildSystemPrompt } from '../model/prompt-assembly';
 import type { BoundaryFinding } from '../../core/ai-boundary/boundary-types';
-import { implementationPlanSchema } from './plan-schema';
+import { implementationPlanSchema, odooOnlinePlanSchema } from './plan-schema';
 import type { ImplementationPlan } from './agent-plan';
 import type { ProjectAnalysis } from '../analysis/odoo-project-analyser';
 import type { CodeSearchMatch } from '../analysis/code-search';
@@ -33,6 +33,28 @@ export interface ModelPlanningInput {
   readonly rankedCandidates: readonly { path: string; relevance: ModelRelevance }[];
   /** File contents the model should see, already read by the analysis step. */
   readonly excerpts: readonly { readonly path: string; readonly content: string }[];
+  readonly grantedTools: readonly string[];
+}
+
+/** A field as the plan needs to see it: enough to be true to the model, no rows. */
+export interface OdooFieldSummary {
+  readonly name: string;
+  readonly label: string;
+  readonly type: string;
+}
+
+/** What planning an Odoo Online change needs. No repository, so no analysis. */
+export interface OdooOnlinePlanningInput {
+  readonly organizationId: string;
+  readonly prompt: string;
+  readonly projectName: string;
+  readonly taskReference: string;
+  readonly odooVersion: string | null;
+  readonly instanceUrl: string | null;
+  /** The model the request is about, as inferred from the prompt. */
+  readonly targetModel: string;
+  /** The model's current fields, read from the live instance. */
+  readonly fields: readonly OdooFieldSummary[];
   readonly grantedTools: readonly string[];
 }
 
@@ -96,6 +118,82 @@ export class ModelAgentPlanner {
     this.logger.log(
       `Planned ${input.taskReference} via ${plan.generatedBy}: ${plan.steps.length} step(s), ` +
         `${plan.filesToModify.length} file(s), ${result.redactionCount} boundary redaction(s)`,
+    );
+
+    return {
+      plan,
+      usage: result.usage,
+      boundaryFindings: result.boundaryFindings,
+      redactionCount: result.redactionCount,
+      providerId: provider.id,
+      model: provider.model,
+      calledExternalService: provider.callsExternalService,
+    };
+  }
+
+  /**
+   * Produces the plan for an Odoo Online change (ADR-028).
+   *
+   * Separate from `createPlan` because the two reason about different things: that
+   * one is given repository files and asks which to modify, this one is given the
+   * live model's fields and asks what to create on the instance. Sharing a method
+   * would mean a prompt that describes a repository to a model that has none.
+   *
+   * The two fields the schema omits are filled in here, so a plan reads the same
+   * whatever produced it and the portal needs no special case.
+   */
+  async createOdooOnlinePlan(input: OdooOnlinePlanningInput): Promise<PlanningOutcome> {
+    const provider = await this.providers.forOrganization(input.organizationId);
+
+    const system = buildSystemPrompt({
+      projectName: input.projectName,
+      odooVersion: input.odooVersion,
+      branch: 'the live Odoo Online instance',
+      grantedTools: input.grantedTools,
+    });
+
+    const result = await provider.generateStructured({
+      system: `${system}\n\n${ODOO_ONLINE_PLANNING_INSTRUCTION}`,
+      parts: [
+        { label: 'Development request', content: input.prompt, untrusted: false },
+        {
+          label: 'The Odoo Online instance',
+          content: JSON.stringify(
+            {
+              // The URL, not the credentials. A model is never given the API key:
+              // the tools hold it and the model only names what it wants done.
+              instance: input.instanceUrl,
+              odooVersion: input.odooVersion,
+              targetModel: input.targetModel,
+              existingFields: input.fields.map((field) => ({
+                name: field.name,
+                label: field.label,
+                type: field.type,
+              })),
+            },
+            null,
+            2,
+          ),
+          untrusted: false,
+        },
+      ],
+      schema: odooOnlinePlanSchema,
+      schemaName: 'OdooOnlinePlan',
+    });
+
+    const plan: ImplementationPlan = {
+      ...result.value,
+      // No file changes and no repository validation exist in this mode. Empty
+      // rather than absent, so every consumer of a plan sees one shape.
+      filesToModify: [],
+      validation: [],
+      generatedBy: provider.callsExternalService
+        ? `${provider.id}/${provider.model}`
+        : `scripted-provider (${provider.model}, no model call)`,
+    };
+
+    this.logger.log(
+      `Planned ${input.taskReference} for Odoo Online via ${plan.generatedBy}: ${plan.steps.length} step(s)`,
     );
 
     return {
@@ -222,4 +320,34 @@ const PLANNING_INSTRUCTION = [
   '  is.',
   '- validation should name the validation tools to run: run_linter, run_python_test,',
   '  run_odoo_test.',
+].join('\n');
+
+/**
+ * The Odoo Online planning instruction.
+ *
+ * What earns its place here is the difference from the repository modes: there is
+ * no code and no file, so a plan that names one cannot be carried out. The rest
+ * states what the tools can actually do, because a plan proposing anything else
+ * is a plan a person approves and the platform then refuses.
+ */
+const ODOO_ONLINE_PLANNING_INSTRUCTION = [
+  '# This request',
+  'Produce a plan for the request below. This project is an Odoo Online instance:',
+  'there is no repository, no source code and no file to edit. Customization happens',
+  'on the live instance, the way Odoo Studio does it.',
+  '',
+  'What you will be able to do when the plan is approved:',
+  '- odoo_create_field: create a custom field on a model. Odoo prefixes it with "x_".',
+  '- odoo_add_field_to_view: place an existing field on the form view, below another field.',
+  '- odoo_list_models and odoo_list_fields: read schema.',
+  '',
+  'Requirements for the plan:',
+  '- Do not name files, modules, branches or commits. None exist here.',
+  '- Name the target model, the field to create and its type, and the existing field',
+  '  it should appear below. Use the field list you were given: the "after" field must',
+  '  be one that already exists.',
+  '- Do not propose creating a field that the list shows already exists.',
+  '- The risks must be specific to this instance. Note that this changes live data',
+  '  structures on a running system, and that a custom field is not removed by',
+  '  undoing the task.',
 ].join('\n');

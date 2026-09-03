@@ -116,14 +116,24 @@ export class TasksService {
     );
 
     /**
-     * Odoo.sh projects are never worked on the `main` branch (ADR-028). The branch
-     * is the live business there, so it is refused outright rather than gated: if
-     * the repository only has `main`, the person must ask the project administrator
-     * to create another branch before anything can be submitted.
+     * Neither Odoo.sh nor on-premise is worked on the `main` branch (ADR-028: "the
+     * platform never pushes to main"). The branch is the live business, so it is
+     * refused outright rather than gated: if the repository only has `main`, the
+     * person must ask the project administrator to create another branch before
+     * anything can be submitted.
+     *
+     * On-premise is included because it commits directly in the directory a person
+     * selected, on the environment's own branch. There is no separate AI branch
+     * standing between the agent's commit and `main`, which makes the restriction
+     * matter more there than on Odoo.sh, not less.
      */
-    if (project.projectType === 'odoo_sh' && environment.branch === 'main') {
+    if (
+      (project.projectType === 'odoo_sh' || project.projectType === 'on_premise') &&
+      environment.branch === 'main'
+    ) {
       throw new BadRequestException(
-        'Odoo.sh projects cannot target the main branch. Ask the project administrator to create another branch.',
+        `${project.projectType === 'odoo_sh' ? 'Odoo.sh' : 'On-premise'} projects cannot target ` +
+          'the main branch. Ask the project administrator to create another branch.',
       );
     }
 

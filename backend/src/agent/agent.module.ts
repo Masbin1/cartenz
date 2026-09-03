@@ -80,6 +80,7 @@ import { ApprovalsModule } from '../modules/approvals/approvals.module';
   ],
   exports: [
     TaskRepository,
+    OdooOnlineClient,
     ToolRegistry,
     ToolExecutionService,
     AgentWorkflow,

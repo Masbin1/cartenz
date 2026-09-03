@@ -147,6 +147,17 @@ export class WorkspaceManager {
       return this.allocateOnPremise(input);
     }
 
+    /**
+     * Odoo Online has no filesystem at all (ADR-028), so there is nothing to
+     * allocate: the agent operates on the instance through JSON-RPC. A metadata
+     * directory is still created, because the tool layer takes a workspace and
+     * behaving identically is what keeps the mediated path single. Nothing is
+     * cloned into it and no file tool is legal against it.
+     */
+    if (input.executionMode === 'odoo_online') {
+      return this.allocateOdooOnline(input);
+    }
+
     const workspaceId = `ws-${randomUUID().slice(0, 8)}`;
     const root = join(this.root, `task-${sanitiseSegment(input.taskReference)}-${workspaceId}`);
     const repositoryPath = join(root, 'repository');
@@ -293,6 +304,59 @@ export class WorkspaceManager {
    * The selected directory must be inside the configured ON_PREMISE_ROOT and must
    * be a Git repository. Both are refused here rather than discovered mid-task.
    */
+  /**
+   * A workspace record for a mode with no filesystem (ADR-028).
+   *
+   * Marked `simulated` for the same reason an `ai_project` is: no clone exists, so
+   * any caller reasoning about a repository must take the other branch. The
+   * directory holds only the task metadata; the repository path it names is never
+   * created, and the file tools are refused in this mode by the validator before
+   * they could look for it.
+   */
+  private async allocateOdooOnline(input: AllocateWorkspaceInput): Promise<Workspace> {
+    const workspaceId = `ws-${randomUUID().slice(0, 8)}`;
+    const root = join(this.root, `task-${sanitiseSegment(input.taskReference)}-${workspaceId}`);
+    const metadataPath = join(root, 'metadata');
+    const logsPath = join(root, 'logs');
+
+    await mkdir(metadataPath, { recursive: true });
+    await mkdir(logsPath, { recursive: true });
+
+    await this.database.db.insert(agentWorkspaces).values({
+      workspaceRef: workspaceId,
+      taskId: input.taskId,
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      rootPath: root,
+      branch: 'odoo-online',
+      status: 'ready',
+    });
+
+    this.logger.log(
+      `Workspace ${workspaceId} for ${input.taskReference}: odoo_online, nothing cloned`,
+    );
+
+    return {
+      workspaceId,
+      taskReference: input.taskReference,
+      root,
+      repositoryPath: join(root, 'repository'),
+      metadataPath,
+      logsPath,
+      branch: 'odoo-online',
+      baseBranch: 'odoo-online',
+      baseCommit: null,
+      repositoryUrl: null,
+      odooVersion: input.odooVersion,
+      simulated: true,
+      readOnlyRoots: [],
+      learnedHostKey: null,
+      credentialRef: null,
+      credentialKind: input.credentialKind,
+      sshHostKey: null,
+    };
+  }
+
   private async allocateOnPremise(input: AllocateWorkspaceInput): Promise<Workspace> {
     const root = this.config.onPremise.root;
     if (!root) {

@@ -9,6 +9,7 @@ import {
 import { buildSystemPrompt } from '../model/prompt-assembly';
 import { ModelProviderResolver } from '../model/model-provider-resolver';
 import { ToolRegistry } from '../tools/tool-registry';
+import type { ExecutionMode } from '../executors/execution-mode';
 import type { BoundaryFinding } from '../../core/ai-boundary/boundary-types';
 import type { ImplementationPlan } from './agent-plan';
 
@@ -54,6 +55,14 @@ export interface ImplementationLoopInput {
   readonly plan: ImplementationPlan;
   /** Deciding whether a tool may be offered at all. */
   readonly agentPermissions: Record<string, boolean>;
+  /**
+   * The execution mode this task runs in (ADR-028). Offering a tool that is
+   * illegal in the mode is not a security problem - the validator refuses it
+   * either way - but a model spending its budget being told no produces a worse
+   * result, and on `odoo_online` it would be offered a whole filesystem it does
+   * not have.
+   */
+  readonly executionMode?: ExecutionMode | null;
   readonly run: LoopToolRunner;
 }
 
@@ -97,7 +106,21 @@ export class ModelImplementationLoop {
 
   async run(input: ImplementationLoopInput): Promise<ImplementationLoopOutcome> {
     const provider = await this.providers.forOrganization(input.organizationId);
-    const tools = this.offeredTools(input.agentPermissions);
+    const tools = this.offeredTools(input.agentPermissions, input.executionMode ?? null);
+
+    // An empty tool list means the model is asked to change a repository with no
+    // way to touch it. It answers that it cannot, changes nothing, and the run
+    // fails one model call later as "made no change to the working tree" - which
+    // points at the model rather than at the configuration that caused it. The
+    // cause is always here: a permission set that grants nothing, or a caller
+    // that omitted executionMode so every mode-gated tool was filtered out.
+    if (tools.length === 0) {
+      throw new Error(
+        'No tools are available to the model for this task ' +
+          `(execution mode: ${input.executionMode ?? 'not set'}). ` +
+          'Check the project\'s agent permissions.',
+      );
+    }
 
     const system = buildSystemPrompt({
       projectName: input.projectName,
@@ -146,7 +169,11 @@ export class ModelImplementationLoop {
     };
 
     const result = await provider.runToolLoop({
-      system: `${system}\n\n${IMPLEMENTATION_INSTRUCTION}`,
+      system: `${system}\n\n${
+        input.executionMode === 'odoo_online'
+          ? ODOO_ONLINE_INSTRUCTION
+          : IMPLEMENTATION_INSTRUCTION
+      }`,
       parts: this.buildParts(input),
       tools,
       execute,
@@ -187,10 +214,18 @@ export class ModelImplementationLoop {
    * validator refuses it either way. It is a quality problem: a model that spends
    * its budget being told no produces a worse result.
    */
-  private offeredTools(agentPermissions: Record<string, boolean>): ModelTool[] {
+  private offeredTools(
+    agentPermissions: Record<string, boolean>,
+    executionMode: ExecutionMode | null,
+  ): ModelTool[] {
     return this.registry
       .all()
       .filter((tool) => tool.availableToModel)
+      .filter(
+        (tool) =>
+          tool.modes === undefined ||
+          (executionMode !== null && tool.modes.includes(executionMode)),
+      )
       .filter((tool) => agentPermissions[tool.permission] === true)
       .map((tool) => ({
         name: tool.name,
@@ -247,4 +282,32 @@ const IMPLEMENTATION_INSTRUCTION = [
   '',
   'Finish with a short summary of what you changed and anything the reviewer should',
   'look at. Do not claim to have changed a file unless a tool result shows that you did.',
+].join('\n');
+
+/**
+ * The Odoo Online implementation instruction (ADR-028).
+ *
+ * The repository instruction above is about files - read before you write, do not
+ * commit - and none of it applies here: there is no file to destroy and no commit
+ * to make. What replaces it is the fact that matters in this mode, which is that
+ * the effects are immediate and on a live system. There is no branch to discard.
+ */
+const ODOO_ONLINE_INSTRUCTION = [
+  '# This request',
+  'A person has approved the plan below. Carry it out on the live Odoo Online',
+  'instance using the tools available to you.',
+  '',
+  'How to work:',
+  '- There is no repository, no file and no commit here. Do not look for one.',
+  '- Every change you make takes effect immediately on a running system. There is no',
+  '  branch and no undo: create exactly what the plan describes and nothing else.',
+  '- odoo_create_field takes the field name WITHOUT the "x_" prefix; Odoo adds it.',
+  '  odoo_add_field_to_view takes the full name INCLUDING "x_", which the create',
+  '  result gives you.',
+  '- Read with odoo_list_fields before you create, so you do not create a field that',
+  '  already exists or place one after a field that does not.',
+  '- Stop when the plan is carried out. Do not look for further improvements.',
+  '',
+  'Finish with a short summary of what you changed. Do not claim to have created',
+  'anything unless a tool result returned its id.',
 ].join('\n');

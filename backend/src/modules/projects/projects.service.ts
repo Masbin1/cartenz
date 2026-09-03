@@ -36,6 +36,11 @@ import { WorkspaceManager } from '../../agent/workspace/workspace-manager';
 import { TERMINAL_TASK_STATUSES } from '../../agent/task-state';
 import { assertSafeRemoteUrl, UnsafeRemoteUrlError } from '../../agent/git/git-url';
 import { GitService } from '../../agent/git/git.service';
+import {
+  databaseFromUrl,
+  instanceRootOf,
+  OdooOnlineClient,
+} from '../../agent/odoo-online/odoo-online-client';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
 import { listOnPremiseFolders, type OnPremiseFolder } from './on-premise-locations';
@@ -68,6 +73,7 @@ export class ProjectsService {
     private readonly environments: ProjectEnvironmentsService,
     private readonly workspaces: WorkspaceManager,
     private readonly git: GitService,
+    private readonly odooOnline: OdooOnlineClient,
   ) {}
 
   /**
@@ -691,6 +697,21 @@ export class ProjectsService {
 
     const credentialKind = dto.credentialKind ?? 'token';
 
+    /**
+     * An Odoo Online connection is normalised and proven before it is stored.
+     *
+     * Both halves matter. The URL is normalised because what people paste is the
+     * web client (`.../odoo`), which answers JSON-RPC with a CSRF error naming
+     * nothing they did wrong; the database defaults to the subdomain, which is
+     * what it is on odoo.com. And the credentials are authenticated once here, so
+     * a wrong key is a message on the form rather than a task that fails at its
+     * first read - after a person has already written a prompt and waited.
+     */
+    const metadata =
+      dto.connectionType === 'odoo_api'
+        ? await this.verifiedOdooOnlineMetadata(dto)
+        : (dto.metadata ?? {});
+
     let secretRef: string | null = null;
     if (dto.credential && dto.credential.length > 0) {
       const reference = await this.secrets.write({
@@ -713,7 +734,7 @@ export class ProjectsService {
         // through the secret manager (ADR-021).
         sshHostKey: dto.sshHostKey ?? null,
         status: secretRef ? 'connected' : 'pending',
-        metadata: redactMetadata(dto.metadata ?? {}),
+        metadata: redactMetadata(metadata),
         lastCheckedAt: secretRef ? new Date() : null,
       })
       .returning({
@@ -738,6 +759,64 @@ export class ProjectsService {
     });
 
     return { ...connection, hasCredentials: secretRef !== null };
+  }
+
+  /**
+   * Normalises and authenticates an Odoo Online connection (ADR-028).
+   *
+   * Returns the metadata to store. Throws a message a person can act on when the
+   * instance refuses the credentials, because the alternative is a project that
+   * looks connected and fails on every task.
+   */
+  private async verifiedOdooOnlineMetadata(
+    dto: CreateConnectionDto,
+  ): Promise<Record<string, unknown>> {
+    const supplied = dto.metadata ?? {};
+    const read = (key: string): string => {
+      const value = supplied[key];
+      return typeof value === 'string' ? value.trim() : '';
+    };
+
+    const rawUrl = read('url');
+    const login = read('login');
+
+    if (!rawUrl || !login) {
+      throw new BadRequestException(
+        'An Odoo Online connection needs the instance url and the login in its metadata.',
+      );
+    }
+
+    let url: string;
+    try {
+      url = instanceRootOf(rawUrl);
+    } catch (error) {
+      throw new BadRequestException((error as Error).message);
+    }
+
+    const db = read('db') || databaseFromUrl(url);
+    if (!db) {
+      throw new BadRequestException(
+        `The database could not be determined from "${url}". Supply it explicitly.`,
+      );
+    }
+
+    if (!dto.credential || dto.credential.length === 0) {
+      throw new BadRequestException('An Odoo Online connection needs an API key.');
+    }
+
+    // The one call that proves all four values at once. The key is used here and
+    // not retained: what is stored is the sealed reference the caller writes.
+    const uid = await this.odooOnline
+      .authenticate({ url, db, login, apiKey: dto.credential })
+      .catch((error: unknown) => {
+        throw new BadRequestException(
+          `The Odoo Online instance refused these credentials: ${(error as Error).message}`,
+        );
+      });
+
+    this.logger.log(`Odoo Online connection verified against ${url} (${db}), uid ${uid}`);
+
+    return { url, db, login };
   }
 
   async deleteConnection(user: AuthenticatedUser, projectId: string, connectionId: string) {

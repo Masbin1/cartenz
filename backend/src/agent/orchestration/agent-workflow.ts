@@ -24,6 +24,7 @@ import type { ExecutionMode } from '../executors/execution-mode';
 import type { CodeSearchMatch } from '../analysis/code-search';
 import { rankCandidates, type ModelRelevance } from '../analysis/odoo-model-index';
 import { inferOdooTarget } from './odoo-target';
+import type { OdooFieldSummary } from './model-agent-planner';
 import { OdooValidationRunner } from '../validation/odoo-validation-runner';
 import { changedModules } from '../validation/changed-modules';
 
@@ -125,19 +126,27 @@ export class AgentWorkflow {
         return this.tasks.transition(snapshot.taskId, 'queued', 'analyzing');
 
       case 'analyzing':
-        return this.analyze(snapshot);
+        return snapshot.executionMode === 'odoo_online'
+          ? this.analyzeOdooOnline(snapshot)
+          : this.analyze(snapshot);
 
       case 'planning':
-        return this.plan(snapshot);
+        return snapshot.executionMode === 'odoo_online'
+          ? this.planOdooOnline(snapshot)
+          : this.plan(snapshot);
 
       case 'waiting_approval':
         return this.resumeFromApproval(snapshot);
 
       case 'implementing':
-        return this.implement(snapshot);
+        return snapshot.executionMode === 'odoo_online'
+          ? this.implementOdooOnline(snapshot)
+          : this.implement(snapshot);
 
       case 'testing':
-        return this.validate(snapshot);
+        return snapshot.executionMode === 'odoo_online'
+          ? this.validateOdooOnline(snapshot)
+          : this.validate(snapshot);
 
       case 'committing':
         return this.commit(snapshot);
@@ -305,6 +314,273 @@ export class AgentWorkflow {
     return this.tasks.transition(snapshot.taskId, 'analyzing', 'planning');
   }
 
+  // -------------------------------------------------------------------------
+  // Odoo Online (ADR-028)
+  //
+  // The same four states as every other mode - analyse, plan, approve, implement -
+  // against a different surface. There is no clone, no diff and no commit here, so
+  // these steps do not share the Git ones: what makes the mode safe is that its
+  // tools are the only ones the validator permits, and those reach schema and
+  // views only.
+  // -------------------------------------------------------------------------
+
+  /**
+   * ANALYZING, on Odoo Online. Reads the instance's own schema for the model the
+   * request is about.
+   *
+   * Through the tool layer rather than the client directly, so the reads appear in
+   * the action log and pass the permission validator exactly as any other agent
+   * action does. A credential that does not authenticate fails here, before a
+   * person is asked to approve anything.
+   */
+  private async analyzeOdooOnline(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    const workspace = await this.acquireWorkspace(snapshot);
+    const target = inferOdooTarget(snapshot.prompt).model;
+
+    await this.narrate(
+      snapshot,
+      `Reading the Odoo Online instance for ${snapshot.projectName}. No repository is cloned: ` +
+        'this project is customised on the instance itself.',
+    );
+
+    const fields = await this.callTool(snapshot, workspace, 'odoo_list_fields', { model: target });
+
+    if (fields.status !== 'succeeded') {
+      const reason =
+        typeof fields.output.error === 'string'
+          ? fields.output.error
+          : `The Odoo Online instance could not be read for "${target}".`;
+      await this.narrate(snapshot, `The instance could not be read: ${reason}`);
+      return this.tasks.transition(snapshot.taskId, 'analyzing', 'failed', {
+        failureReason: reason,
+      });
+    }
+
+    await this.narrate(
+      snapshot,
+      `${fields.output.count ?? 0} field(s) read from ${target} on the live instance.`,
+    );
+
+    return this.tasks.transition(snapshot.taskId, 'analyzing', 'planning');
+  }
+
+  /**
+   * PLANNING, on Odoo Online.
+   *
+   * The plan omits `filesToModify` and `validation` because neither exists in this
+   * mode; they are filled with empty arrays so the persisted plan keeps one shape.
+   * The approval gate is unchanged: a change to a live instance is put to a person
+   * before it happens, exactly as a change to a repository is.
+   */
+  private async planOdooOnline(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    await this.narrate(snapshot, 'Creating implementation plan...');
+
+    const workspace = await this.acquireWorkspace(snapshot);
+    const target = inferOdooTarget(snapshot.prompt).model;
+
+    // The schema the plan must be true to, read from the instance rather than
+    // assumed: a plan naming a field that does not exist cannot be carried out.
+    const fields = await this.callTool(snapshot, workspace, 'odoo_list_fields', { model: target });
+
+    let outcome;
+    try {
+      outcome = await this.planner.createOdooOnlinePlan({
+        organizationId: snapshot.organizationId,
+        prompt: snapshot.prompt,
+        projectName: snapshot.projectName,
+        taskReference: snapshot.reference,
+        odooVersion: snapshot.odooVersion,
+        instanceUrl: snapshot.odooOnlineUrl,
+        targetModel: target,
+        fields: (fields.output.fields as OdooFieldSummary[] | undefined) ?? [],
+        grantedTools: this.grantedToolNames(snapshot),
+      });
+    } catch (error) {
+      return this.failOnModelError(snapshot, 'planning', 'planning', error);
+    }
+
+    await this.modelCalls.record({
+      taskId: snapshot.taskId,
+      organizationId: snapshot.organizationId,
+      operation: 'planning',
+      providerId: outcome.providerId,
+      model: outcome.model,
+      calledExternalService: outcome.calledExternalService,
+      inputTokens: outcome.usage.inputTokens,
+      outputTokens: outcome.usage.outputTokens,
+      durationMs: outcome.usage.durationMs,
+      steps: 1,
+      boundaryFindings: outcome.boundaryFindings,
+      redactionCount: outcome.redactionCount,
+    });
+
+    const plan = outcome.plan;
+    await this.tasks.savePlan(snapshot.taskId, plan);
+
+    await this.narrate(
+      snapshot,
+      outcome.calledExternalService
+        ? `Plan produced by ${outcome.providerId}/${outcome.model}.`
+        : 'Plan produced without a model call: this deployment has no AI provider configured.',
+    );
+
+    await this.approvals.request({
+      taskId: snapshot.taskId,
+      taskReference: snapshot.reference,
+      organizationId: snapshot.organizationId,
+      action: 'implementation_plan',
+      requiredReason:
+        'This plan changes a live Odoo Online instance. It must be approved before anything is created there.',
+      context: {
+        summary: plan.summary,
+        stepCount: plan.steps.length,
+        targetModel: target,
+        instance: snapshot.odooOnlineUrl,
+        producedBy: plan.generatedBy,
+      },
+      taskStatus: 'planning',
+    });
+
+    await this.narrate(snapshot, 'Waiting for approval.');
+
+    return this.tasks.transition(snapshot.taskId, 'planning', 'waiting_approval', {
+      message: 'The implementation plan is awaiting approval.',
+    });
+  }
+
+  /**
+   * IMPLEMENTING, on Odoo Online. The model carries out the approved plan against
+   * the instance through the Odoo tools.
+   *
+   * There is no diff to check the model against here, which the repository modes
+   * rely on. The substitute is the tool log: `odoo_create_field` and
+   * `odoo_add_field_to_view` each return the id Odoo assigned, so a change either
+   * has a recorded id or did not happen. A run that changed nothing is a failure
+   * rather than a completion, for the same reason it is in the other modes.
+   */
+  private async implementOdooOnline(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    if (!snapshot.plan) {
+      return this.tasks.transition(snapshot.taskId, 'implementing', 'failed', {
+        failureReason: 'The task reached implementation with no approved plan.',
+      });
+    }
+
+    const workspace = await this.acquireWorkspace(snapshot);
+    await this.narrate(snapshot, 'Applying the approved plan to the Odoo Online instance...');
+
+    const applied: string[] = [];
+
+    let outcome;
+    try {
+      outcome = await this.implementationLoop.run({
+        organizationId: snapshot.organizationId,
+        prompt: snapshot.prompt,
+        projectName: snapshot.projectName,
+        taskReference: snapshot.reference,
+        branch: 'the live instance',
+        odooVersion: snapshot.odooVersion,
+        plan: snapshot.plan,
+        agentPermissions: snapshot.agentPermissions,
+        executionMode: 'odoo_online',
+        run: async (call) => {
+          const result = await this.callTool(snapshot, workspace, call.name, call.input);
+          if (result.status === 'succeeded' && CHANGING_ODOO_TOOLS.includes(call.name)) {
+            applied.push(describeOdooChange(call.name, result.output));
+          }
+          return { status: toLoopResult(result.status), output: result.output };
+        },
+      });
+    } catch (error) {
+      return this.failOnModelError(snapshot, 'implementing', 'implementation', error);
+    }
+
+    await this.modelCalls.record({
+      taskId: snapshot.taskId,
+      organizationId: snapshot.organizationId,
+      operation: 'implementation',
+      providerId: outcome.providerId,
+      model: outcome.model,
+      calledExternalService: outcome.calledExternalService,
+      inputTokens: outcome.usage.inputTokens,
+      outputTokens: outcome.usage.outputTokens,
+      durationMs: outcome.usage.durationMs,
+      steps: outcome.steps,
+      toolCalls: outcome.toolCalls,
+      boundaryFindings: outcome.boundaryFindings,
+      redactionCount: outcome.redactionCount,
+      haltReason: outcome.haltReason,
+    });
+
+    if (outcome.summary.trim().length > 0) {
+      await this.narrate(snapshot, outcome.summary.trim());
+    }
+
+    if (outcome.suspended) return false;
+
+    if (outcome.haltReason) {
+      await this.narrate(snapshot, `The agent stopped early: ${outcome.haltReason}.`);
+    }
+
+    if (applied.length === 0) {
+      // The tool log, not the model's account of itself. A summary claiming a
+      // field was created is contradicted by the absence of an id.
+      return this.tasks.transition(snapshot.taskId, 'implementing', 'failed', {
+        failureReason:
+          outcome.haltReason
+            ? `Nothing was changed on the instance: ${outcome.haltReason}.`
+            : 'The agent reported completion but changed nothing on the Odoo Online instance.',
+      });
+    }
+
+    for (const change of applied) {
+      await this.narrate(snapshot, change);
+    }
+
+    /**
+     * Through `testing`, not straight to `completed`.
+     *
+     * The state table has no `implementing -> completed` edge, and taking one
+     * anyway is not a cosmetic error: the transition throws *after* the instance
+     * has already been written, the job fails, and the queue retries the whole
+     * step - which applied the same change three times to a live instance before
+     * the task was cancelled. The lifecycle is the authority on what may follow
+     * what; a new mode routes through it rather than around it.
+     */
+    return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
+      message: `${applied.length} change(s) applied to the Odoo Online instance across ${outcome.toolCalls} tool call(s).`,
+    });
+  }
+
+  /**
+   * TESTING, on Odoo Online.
+   *
+   * There is nothing to run. Odoo validated each write as it applied it - an
+   * unknown field type or a malformed view arch is an RPC error, not a silent
+   * success - and there is no repository test suite to run against a live
+   * instance. The state is still passed through rather than skipped, because it
+   * is how the lifecycle reaches `completed`, and saying plainly that no test ran
+   * is better than a validation step that could only simulate one.
+   */
+  private async validateOdooOnline(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    await this.tasks.saveTestResults(snapshot.taskId, {
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      suites: [],
+      simulated: false,
+    });
+
+    await this.narrate(
+      snapshot,
+      'No test suite was run: this project has no repository. Each change was accepted by ' +
+        'Odoo as it was applied, which is the only validation this mode has.',
+    );
+
+    return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
+      message: 'The change was applied to the Odoo Online instance.',
+    });
+  }
+
   /**
    * PLANNING. Asks the model for a plan, persists it, and requests the approval
    * that gates implementation.
@@ -453,6 +729,7 @@ export class AgentWorkflow {
         odooVersion: snapshot.odooVersion,
         plan: snapshot.plan,
         agentPermissions: snapshot.agentPermissions,
+        executionMode: snapshot.executionMode,
         run: async (call) => {
           const outcome = await this.callTool(snapshot, workspace, call.name, call.input);
           return { status: toLoopResult(outcome.status), output: outcome.output };
@@ -690,19 +967,11 @@ export class AgentWorkflow {
     await this.tasks.saveCommitHash(snapshot.taskId, commit);
     await this.narrate(snapshot, `Committed ${commit.slice(0, 8)} on ${workspace.branch}.`);
 
-    // On-premise commits in the customer's own repository, which already has its
-    // own remote and its own credentials. Pushing that remote is not the
-    // platform's to do yet, so the commit stays local and the task completes.
-    if (snapshot.executionMode === 'on_premise') {
-      await this.narrate(
-        snapshot,
-        'On-premise: the change is committed in the selected local directory. ' +
-          'Pushing to its remote is not yet supported, so nothing was sent.',
-      );
-      return this.tasks.transition(snapshot.taskId, 'committing', 'completed', {
-        message: `Committed ${commit.slice(0, 8)} on ${workspace.branch} in the selected local directory. No push was made.`,
-      });
-    }
+    // On-premise pushes to the remote the selected repository already carries,
+    // rather than to a URL the platform cloned from (ADR-028). It reaches the same
+    // approval gate as every other mode: the commit is local until a person says
+    // it may leave.
+    const onPremise = snapshot.executionMode === 'on_premise';
 
     if (snapshot.grantedApprovals.includes('git_push')) {
       return this.tasks.transition(snapshot.taskId, 'committing', 'pushing');
@@ -713,17 +982,25 @@ export class AgentWorkflow {
     // s1). An approval that cannot lead to the act it names teaches people that
     // approvals are decoration, so the task completes instead and says why.
     if (!this.config.git.pushEnabled) {
+      // Where the commit now sits differs by mode, and saying it wrongly sends
+      // somebody looking in the wrong place: on-premise committed in the
+      // directory they selected, every other mode in a workspace the platform
+      // will destroy.
+      const where = onPremise
+        ? 'the commit stays in the selected local directory'
+        : 'the branch stays in the workspace';
+
       await this.narrate(
         snapshot,
         `Committed on ${workspace.branch}. Pushing is disabled on this server ` +
-          '(GIT_PUSH_ENABLED=false), so the branch stays in the workspace and the ' +
+          `(GIT_PUSH_ENABLED=false), so ${where} and the ` +
           'diff is on the task. Review it there, or ask an operator to enable ' +
           'pushing if this platform should write to the repository.',
       );
 
       return this.tasks.transition(snapshot.taskId, 'committing', 'completed', {
         message:
-          `Branch ${workspace.branch} is ready in the workspace. Pushing is disabled ` +
+          `Commit ${commit.slice(0, 8)} is ready on ${workspace.branch}. Pushing is disabled ` +
           'on this server, so nothing was sent to the repository.',
       });
     }
@@ -1124,3 +1401,22 @@ function toolAllowedInMode(tool: AnyToolDefinition, mode: ExecutionMode | null):
 
 /** Re-exported so the worker can narrow on the status union. */
 export type { AgentTaskStatus };
+
+/**
+ * The Odoo Online tools that change the instance, as opposed to reading it.
+ *
+ * The implementation step counts these rather than trusting the model's summary,
+ * which is the same rule the repository modes apply by trusting `git diff`.
+ */
+const CHANGING_ODOO_TOOLS = ['odoo_create_field', 'odoo_add_field_to_view'];
+
+/** One applied change, in the terms a reviewer reads in the activity log. */
+function describeOdooChange(toolName: string, output: Record<string, unknown>): string {
+  if (toolName === 'odoo_create_field') {
+    return `Created field ${String(output.field)} on ${String(output.model)} (id ${String(output.fieldId)}).`;
+  }
+  return (
+    `Placed ${String(output.field)} after ${String(output.after)} on the ${String(output.model)} ` +
+    `form view (inherited view id ${String(output.viewId)}).`
+  );
+}

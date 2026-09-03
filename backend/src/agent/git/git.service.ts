@@ -565,6 +565,27 @@ export class GitService {
     return line ?? null;
   }
 
+  /**
+   * The URL of a repository's own `origin`, or null when it has none.
+   *
+   * On-premise operates on a directory a person selected, not on a clone the
+   * platform made, so the platform has no remote URL of its own to push to
+   * (ADR-028). The repository already carries one in `.git/config`, which the
+   * hardened environment can still read: GIT_CONFIG_NOSYSTEM and
+   * GIT_CONFIG_GLOBAL suppress the system and user files, not the repository's.
+   *
+   * Returned unvalidated. The caller passes it to `push`, where
+   * `assertSafeRemoteUrl` applies the same checks it applies to every other
+   * remote - a URL out of a customer's config file is untrusted input.
+   */
+  async originUrl(repositoryPath: string): Promise<string | null> {
+    const result = await this.run(repositoryPath, ['remote', 'get-url', 'origin']);
+    if (result.exitCode !== 0) return null;
+
+    const url = result.stdout.trim();
+    return url.length > 0 ? url : null;
+  }
+
   /** Runs a git command inside a repository, with the hardening flags applied. */
   private run(
     repositoryPath: string,

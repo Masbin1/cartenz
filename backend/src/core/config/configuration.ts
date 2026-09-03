@@ -87,6 +87,21 @@ const environmentSchema = z.object({
   /** 0 for the most deterministic output, which is what a code change wants. */
   AI_TEMPERATURE: z.coerce.number().min(0).max(2).default(0),
 
+  /**
+   * Whether the model endpoint enforces a JSON schema itself.
+   *
+   * True (the default) sends `response_format: json_schema`, which Claude and
+   * OpenAI support and enforce server-side. False sends `json_object` mode
+   * instead, which DeepSeek supports — DeepSeek rejects `json_schema`. The plan
+   * is a structured value either way; with false the schema is enforced by the
+   * SDK's own validation rather than by the endpoint, which is why the default
+   * stays true.
+   */
+  AI_STRUCTURED_OUTPUTS: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+
   AGENT_STEP_DELAY_MS: z.coerce.number().int().min(0).max(60000).default(900),
   AGENT_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
 
@@ -254,6 +269,7 @@ export interface AppConfig {
     readonly model: string;
     readonly baseUrl?: string;
     readonly apiKey?: string;
+    readonly structuredOutputs: boolean;
     readonly maxSteps: number;
     readonly maxToolCalls: number;
     readonly maxOutputTokens: number;
@@ -446,6 +462,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       model: env.AI_MODEL,
       baseUrl: emptyToUndefined(env.AI_BASE_URL),
       apiKey: emptyToUndefined(env.AI_API_KEY),
+      structuredOutputs: env.AI_STRUCTURED_OUTPUTS,
       maxSteps: env.AI_MAX_STEPS,
       maxToolCalls: env.AI_MAX_TOOL_CALLS,
       maxOutputTokens: env.AI_MAX_OUTPUT_TOKENS,

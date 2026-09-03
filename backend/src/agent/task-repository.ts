@@ -67,6 +67,13 @@ export interface TaskExecutionSnapshot {
    * (ADR-028). Null for every other mode.
    */
   readonly onPremiseProjectPath: string | null;
+  /**
+   * For odoo_online: the instance root, from the project's `odoo_api` connection.
+   *
+   * The URL only. The API key stays sealed and is unsealed by the Odoo tools at
+   * the moment they call, so it never enters a snapshot, a prompt or a log.
+   */
+  readonly odooOnlineUrl: string | null;
   readonly plan: ImplementationPlan | null;
   readonly agentPermissions: Record<AgentPermission, boolean>;
   readonly grantedApprovals: readonly string[];
@@ -137,6 +144,7 @@ export class TaskRepository {
         secretRef: projectConnections.secretRef,
         credentialKind: projectConnections.credentialKind,
         sshHostKey: projectConnections.sshHostKey,
+        metadata: projectConnections.metadata,
       })
       .from(projectConnections)
       .where(
@@ -205,6 +213,7 @@ export class TaskRepository {
         ? { name: environment.name, kind: environment.kind }
         : null,
       onPremiseProjectPath: readOnPremisePath(row.environmentConfig),
+      odooOnlineUrl: readOdooOnlineUrl(connection?.metadata),
       plan: (row.plan as ImplementationPlan | null) ?? null,
       agentPermissions: resolveAgentPermissions(row.agentPermissions),
       grantedApprovals: granted.map((entry) => entry.action),
@@ -494,5 +503,18 @@ function readOnPremisePath(
 ): string | null {
   if (!environmentConfig || typeof environmentConfig !== 'object') return null;
   const value = environmentConfig.onPremisePath;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
+ * The Odoo Online instance root, from the connection's metadata.
+ *
+ * The URL is not secret and the plan needs it, so a reviewer can see which
+ * instance a change is about to be made on. The API key alongside it is a sealed
+ * reference and is deliberately not read here.
+ */
+function readOdooOnlineUrl(metadata: Record<string, unknown> | null | undefined): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const value = metadata.url;
   return typeof value === 'string' && value.length > 0 ? value : null;
 }

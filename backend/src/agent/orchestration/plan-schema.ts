@@ -64,3 +64,18 @@ export const implementationPlanSchema = z.object({
 });
 
 export type ModelImplementationPlan = z.infer<typeof implementationPlanSchema>;
+
+/**
+ * The plan schema for a mode with no filesystem (ADR-028).
+ *
+ * `filesToModify` and `validation` are removed rather than relaxed, because an
+ * Odoo Online change modifies no file and runs no repository test: asked for at
+ * least one of each, a model invents both, and a person then approves a plan
+ * naming files that do not exist. The steps carry the whole of the plan here, and
+ * the platform fills the two fields with empty arrays so the persisted plan keeps
+ * one shape across every mode.
+ */
+export const odooOnlinePlanSchema = implementationPlanSchema.omit({
+  filesToModify: true,
+  validation: true,
+});
