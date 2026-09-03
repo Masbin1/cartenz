@@ -60,6 +60,7 @@ export default function AgentWorkspacePage() {
   const [environments, setEnvironments] = useState<ProjectEnvironment[]>([]);
   const [environmentId, setEnvironmentId] = useState<string>('');
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   const { events, connected } = useTaskStream(selectedTaskId);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -71,14 +72,21 @@ export default function AgentWorkspacePage() {
 
   const loadProject = useCallback(async () => {
     try {
-      const [detail, taskList, environmentList] = await Promise.all([
+      const [detail, taskList, environmentList, sessionList] = await Promise.all([
         api.projects.get(projectId),
         api.tasks.listForProject(projectId),
         api.projects.environments(projectId),
+        api.tasks.sessions(projectId),
       ]);
       setProject(detail);
       setTasks(taskList);
       setSelectedTaskId((current) => current ?? taskList[0]?.id ?? null);
+
+      // Continue in the most recent session by default: a prompt attaches to it
+      // instead of opening a brand-new session every time. A new session is only
+      // opened when the user explicitly chooses to start one from scratch.
+      const latestSession = sessionList.find((entry) => entry.status === 'active') ?? sessionList[0];
+      setSessionId((current) => current ?? latestSession?.id ?? null);
 
       // Production environments are listed but never selectable: the server
       // refuses them, and offering one would only produce a refusal.
@@ -170,8 +178,10 @@ export default function AgentWorkspacePage() {
     try {
       const created = await api.tasks.create(projectId, {
         prompt: prompt.trim(),
+        sessionId: sessionId || undefined,
         environmentId: environmentId || undefined,
       });
+      setSessionId(created.sessionId);
       setPrompt('');
       setSelectedTaskId(created.id);
       router.replace(`/projects/${projectId}/agent?task=${created.id}`);
@@ -344,13 +354,32 @@ export default function AgentWorkspacePage() {
             ) : null}
 
             <div className="mt-3 flex items-center justify-between gap-3">
-              <p className="text-2xs text-content-subtle">
-                The agent analyses the project, produces a plan and waits for your approval before
-                changing anything.
-                {capabilities && !capabilities.git.pushEnabled
-                  ? ' This server cannot push: the branch stays in the workspace for you to review.'
-                  : null}
-              </p>
+              <div className="flex min-w-0 items-center gap-3">
+                <p className="text-2xs text-content-subtle">
+                  The agent analyses the project, produces a plan and waits for your approval before
+                  changing anything.
+                  {capabilities && !capabilities.git.pushEnabled
+                    ? ' This server cannot push: the branch stays in the workspace for you to review.'
+                    : null}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSessionId(null);
+                    setPrompt('');
+                    promptRef.current?.focus();
+                  }}
+                  disabled={submitting || !sessionId}
+                  className="btn-ghost shrink-0 px-2 py-1 text-2xs"
+                  title={
+                    sessionId
+                      ? 'Start a new session on the next request'
+                      : 'The next request will already start a new session'
+                  }
+                >
+                  {sessionId ? 'New session' : 'New session (next request)'}
+                </button>
+              </div>
               <button type="submit" disabled={submitting} className="btn-primary shrink-0">
                 {submitting ? <Spinner /> : null}
                 {submitting ? 'Submitting' : 'Submit request'}
