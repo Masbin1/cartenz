@@ -369,6 +369,237 @@ export default function OrganizationSettingsPage() {
   const needsBaseUrl = form.providerId === 'openai-compatible';
   const editing = formId !== null;
 
+  // One form, two contexts: editing an existing row (rendered inside that row)
+  // and adding a new one (rendered below the list). They are mutually exclusive
+  // - startEdit clears `adding`, startAdd clears `expandedId` - so the ids below
+  // never collide.
+  const renderProviderForm = () => (
+    <div className="space-y-4 border-t border-surface-border px-3 py-3">
+      <div>
+        <span className="field-label">Preset</span>
+        <select
+          value=""
+          onChange={(event) => {
+            const preset = PRESETS.find((entry) => entry.id === event.target.value);
+            if (preset) applyPreset(preset);
+          }}
+          className="field-input"
+        >
+          <option value="" disabled>
+            Choose a preset to fill the form…
+          </option>
+          {PRESETS.map((preset) => (
+            <option key={preset.id} value={preset.id}>
+              {preset.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label htmlFor="form-label" className="field-label">
+          Label
+        </label>
+        <input
+          id="form-label"
+          value={form.label}
+          onChange={(event) => setForm({ ...form, label: event.target.value })}
+          disabled={busy}
+          placeholder="9router Paket-Hemat"
+          className="field-input"
+        />
+      </div>
+
+      <div>
+        <span className="field-label">Provider</span>
+        <select
+          value={form.providerId}
+          onChange={(event) =>
+            setForm({
+              ...form,
+              providerId: event.target.value as ModelProviderId,
+              discoveredModels: null,
+              customModel: false,
+            })
+          }
+          disabled={busy}
+          className="field-input"
+        >
+          {PROVIDERS.map((entry) => (
+            <option key={entry.id} value={entry.id}>
+              {entry.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {needsBaseUrl ? (
+        <div>
+          <label htmlFor="form-baseUrl" className="field-label">
+            Base URL
+          </label>
+          <input
+            id="form-baseUrl"
+            value={form.baseUrl}
+            onChange={(event) =>
+              setForm({
+                ...form,
+                baseUrl: event.target.value,
+                discoveredModels: null,
+              })
+            }
+            disabled={busy}
+            placeholder="https://api.openai.com/v1"
+            className="field-input font-mono text-xs"
+          />
+          <p className="mt-1.5 text-2xs text-content-subtle">
+            Must be https. The prompt carries repository source code and the key
+            travels with it, so plain http is accepted only for localhost.
+          </p>
+        </div>
+      ) : null}
+
+      {needsKey ? (
+        <>
+          <div>
+            <span className="field-label">Model</span>
+            {form.discoveredModels && form.discoveredModels.length > 0 ? (
+              <>
+                <select
+                  value={form.customModel ? '__custom__' : form.model}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (value === '__custom__') {
+                      setForm({ ...form, customModel: true, model: '' });
+                    } else {
+                      setForm({ ...form, customModel: false, model: value });
+                    }
+                  }}
+                  disabled={busy}
+                  className="field-input font-mono text-xs"
+                >
+                  {form.discoveredModels.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                  <option value="__custom__">Use a different name…</option>
+                </select>
+                {form.customModel ? (
+                  <input
+                    value={form.model}
+                    onChange={(event) => setForm({ ...form, model: event.target.value })}
+                    disabled={busy}
+                    placeholder="model name"
+                    className="field-input mt-2 font-mono text-xs"
+                  />
+                ) : null}
+              </>
+            ) : (
+              <input
+                value={form.model}
+                onChange={(event) => setForm({ ...form, model: event.target.value })}
+                disabled={busy}
+                placeholder={
+                  form.providerId === 'anthropic' ? 'claude-sonnet-4-5' : 'model name'
+                }
+                className="field-input font-mono text-xs"
+              />
+            )}
+            {needsBaseUrl ? (
+              <button
+                type="button"
+                onClick={() => void loadModels()}
+                disabled={busy || loadingModels || !form.baseUrl.trim()}
+                className="btn-secondary mt-2 px-2.5 py-1 text-xs"
+              >
+                {loadingModels ? <Spinner /> : null}
+                {loadingModels ? 'Loading' : 'Load models'}
+              </button>
+            ) : null}
+          </div>
+
+          <div>
+            <label htmlFor="form-apiKey" className="field-label">
+              API token
+            </label>
+            <input
+              id="form-apiKey"
+              type="password"
+              value={form.apiKey}
+              onChange={(event) => setForm({ ...form, apiKey: event.target.value })}
+              disabled={busy}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={
+                editing && rowHasKey(formId, list)
+                  ? 'A key is stored — type to replace it'
+                  : 'Paste the token'
+              }
+              className="field-input font-mono text-xs"
+            />
+            <p className="mt-1.5 text-2xs text-content-subtle">
+              Sealed by the secrets provider on arrival. It is never returned by any
+              endpoint, never written to the audit trail, and never sent to the
+              browser. Leave this blank to keep the stored key.
+            </p>
+          </div>
+        </>
+      ) : null}
+
+      <div>
+        <span className="field-label">JSON schema</span>
+        <select
+          value={form.structuredOutputs === null ? '' : String(form.structuredOutputs)}
+          onChange={(event) => {
+            const value = event.target.value;
+            setForm({
+              ...form,
+              structuredOutputs: value === '' ? null : value === 'true',
+            });
+          }}
+          disabled={busy}
+          className="field-input"
+        >
+          <option value="">Follow the server default</option>
+          <option value="true">The endpoint enforces a schema itself</option>
+          <option value="false">JSON objects only (no schema)</option>
+        </select>
+        <p className="mt-1.5 text-2xs text-content-subtle">
+          DeepSeek rejects response_format json_schema and accepts only json_object,
+          so it must be "no schema" and the SDK checks the shape instead.
+        </p>
+      </div>
+
+      {editing ? (
+        <label className="flex items-center gap-2 text-xs text-content-muted">
+          <input
+            type="checkbox"
+            checked={form.enabled}
+            onChange={(event) => setForm({ ...form, enabled: event.target.checked })}
+            disabled={busy}
+          />
+          enabled
+        </label>
+      ) : null}
+
+      <div className="flex items-center gap-2 border-t border-surface-border pt-3">
+        <button
+          type="button"
+          onClick={() => void saveForm()}
+          disabled={busy}
+          className="btn-primary"
+        >
+          {busy ? <Spinner /> : null}
+          {busy ? 'Saving' : editing ? 'Save' : 'Add provider'}
+        </button>
+        <button type="button" onClick={closeForm} disabled={busy} className="btn-ghost">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <AppShell>
       <header className="mb-6">
@@ -500,240 +731,7 @@ export default function OrganizationSettingsPage() {
                   </Alert>
                 ) : null}
 
-                {expanded && canEdit ? (
-                  <div className="space-y-4 border-t border-surface-border px-3 py-3">
-                    <div>
-                      <span className="field-label">Preset</span>
-                      <select
-                        value=""
-                        onChange={(event) => {
-                          const preset = PRESETS.find((entry) => entry.id === event.target.value);
-                          if (preset) applyPreset(preset);
-                        }}
-                        className="field-input"
-                      >
-                        <option value="" disabled>
-                          Choose a preset to fill the form…
-                        </option>
-                        {PRESETS.map((preset) => (
-                          <option key={preset.id} value={preset.id}>
-                            {preset.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label htmlFor="form-label" className="field-label">
-                        Label
-                      </label>
-                      <input
-                        id="form-label"
-                        value={form.label}
-                        onChange={(event) => setForm({ ...form, label: event.target.value })}
-                        disabled={busy}
-                        placeholder="9router Paket-Hemat"
-                        className="field-input"
-                      />
-                    </div>
-
-                    <div>
-                      <span className="field-label">Provider</span>
-                      <select
-                        value={form.providerId}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            providerId: event.target.value as ModelProviderId,
-                            discoveredModels: null,
-                            customModel: false,
-                          })
-                        }
-                        disabled={busy}
-                        className="field-input"
-                      >
-                        {PROVIDERS.map((entry) => (
-                          <option key={entry.id} value={entry.id}>
-                            {entry.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {needsBaseUrl ? (
-                      <div>
-                        <label htmlFor="form-baseUrl" className="field-label">
-                          Base URL
-                        </label>
-                        <input
-                          id="form-baseUrl"
-                          value={form.baseUrl}
-                          onChange={(event) =>
-                            setForm({
-                              ...form,
-                              baseUrl: event.target.value,
-                              discoveredModels: null,
-                            })
-                          }
-                          disabled={busy}
-                          placeholder="https://api.openai.com/v1"
-                          className="field-input font-mono text-xs"
-                        />
-                        <p className="mt-1.5 text-2xs text-content-subtle">
-                          Must be https. The prompt carries repository source code and the key
-                          travels with it, so plain http is accepted only for localhost.
-                        </p>
-                      </div>
-                    ) : null}
-
-                    {needsKey ? (
-                      <>
-                        <div>
-                          <span className="field-label">Model</span>
-                          {form.discoveredModels && form.discoveredModels.length > 0 ? (
-                            <>
-                              <select
-                                value={form.customModel ? '__custom__' : form.model}
-                                onChange={(event) => {
-                                  const value = event.target.value;
-                                  if (value === '__custom__') {
-                                    setForm({ ...form, customModel: true, model: '' });
-                                  } else {
-                                    setForm({ ...form, customModel: false, model: value });
-                                  }
-                                }}
-                                disabled={busy}
-                                className="field-input font-mono text-xs"
-                              >
-                                {form.discoveredModels.map((name) => (
-                                  <option key={name} value={name}>
-                                    {name}
-                                  </option>
-                                ))}
-                                <option value="__custom__">Use a different name…</option>
-                              </select>
-                              {form.customModel ? (
-                                <input
-                                  value={form.model}
-                                  onChange={(event) =>
-                                    setForm({ ...form, model: event.target.value })
-                                  }
-                                  disabled={busy}
-                                  placeholder="model name"
-                                  className="field-input mt-2 font-mono text-xs"
-                                />
-                              ) : null}
-                            </>
-                          ) : (
-                            <input
-                              value={form.model}
-                              onChange={(event) => setForm({ ...form, model: event.target.value })}
-                              disabled={busy}
-                              placeholder={
-                                form.providerId === 'anthropic' ? 'claude-sonnet-4-5' : 'model name'
-                              }
-                              className="field-input font-mono text-xs"
-                            />
-                          )}
-                          {needsBaseUrl ? (
-                            <button
-                              type="button"
-                              onClick={() => void loadModels()}
-                              disabled={busy || loadingModels || !form.baseUrl.trim()}
-                              className="btn-secondary mt-2 px-2.5 py-1 text-xs"
-                            >
-                              {loadingModels ? <Spinner /> : null}
-                              {loadingModels ? 'Loading' : 'Load models'}
-                            </button>
-                          ) : null}
-                        </div>
-
-                        <div>
-                          <label htmlFor="form-apiKey" className="field-label">
-                            API token
-                          </label>
-                          <input
-                            id="form-apiKey"
-                            type="password"
-                            value={form.apiKey}
-                            onChange={(event) => setForm({ ...form, apiKey: event.target.value })}
-                            disabled={busy}
-                            autoComplete="off"
-                            spellCheck={false}
-                            placeholder={
-                              editing && rowHasKey(formId, list)
-                                ? 'A key is stored — type to replace it'
-                                : 'Paste the token'
-                            }
-                            className="field-input font-mono text-xs"
-                          />
-                          <p className="mt-1.5 text-2xs text-content-subtle">
-                            Sealed by the secrets provider on arrival. It is never returned by any
-                            endpoint, never written to the audit trail, and never sent to the
-                            browser. Leave this blank to keep the stored key.
-                          </p>
-                        </div>
-                      </>
-                    ) : null}
-
-                    <div>
-                      <span className="field-label">JSON schema</span>
-                      <select
-                        value={form.structuredOutputs === null ? '' : String(form.structuredOutputs)}
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          setForm({
-                            ...form,
-                            structuredOutputs:
-                              value === '' ? null : value === 'true',
-                          });
-                        }}
-                        disabled={busy}
-                        className="field-input"
-                      >
-                        <option value="">Follow the server default</option>
-                        <option value="true">The endpoint enforces a schema itself</option>
-                        <option value="false">JSON objects only (no schema)</option>
-                      </select>
-                      <p className="mt-1.5 text-2xs text-content-subtle">
-                        DeepSeek rejects response_format json_schema and accepts only json_object,
-                        so it must be "no schema" and the SDK checks the shape instead.
-                      </p>
-                    </div>
-
-                    {editing ? (
-                      <label className="flex items-center gap-2 text-xs text-content-muted">
-                        <input
-                          type="checkbox"
-                          checked={form.enabled}
-                          onChange={(event) => setForm({ ...form, enabled: event.target.checked })}
-                          disabled={busy}
-                        />
-                        enabled
-                      </label>
-                    ) : null}
-
-                    <div className="flex items-center gap-2 border-t border-surface-border pt-3">
-                      <button
-                        type="button"
-                        onClick={() => void saveForm()}
-                        disabled={busy}
-                        className="btn-primary"
-                      >
-                        {busy ? <Spinner /> : null}
-                        {busy ? 'Saving' : editing ? 'Save' : 'Add provider'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={closeForm}
-                        disabled={busy}
-                        className="btn-ghost"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
+                {expanded && canEdit ? renderProviderForm() : null}
               </div>
             );
           })}
@@ -765,6 +763,12 @@ export default function OrganizationSettingsPage() {
               alter it.
             </p>
           )}
+
+          {adding && canEdit ? (
+            <div className="rounded border border-surface-border bg-surface-raised">
+              {renderProviderForm()}
+            </div>
+          ) : null}
 
           {detachedResults
             ? detachedResults.map((result, index) => (
