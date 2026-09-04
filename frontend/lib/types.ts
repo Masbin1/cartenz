@@ -372,26 +372,61 @@ export type EnvironmentKind = 'production' | 'staging' | 'development';
 export type ModelProviderId = 'mock' | 'anthropic' | 'openai-compatible';
 
 /**
- * The provider configuration, as the portal is allowed to see it.
+ * One configured provider (ADR-023 extended).
  *
- * There is no field for the API key, and that is deliberate: the key is
- * write-only across this boundary, so `hasApiKey` is all that is said about it.
+ * The key is write-only across this boundary, so `hasApiKey` is all that is said
+ * about it - there is no field here it could occupy, which is what makes that
+ * guarantee structural rather than a habit.
  */
-export interface ModelProviderSettings {
+export interface ModelProviderRow {
+  id: string;
+  priority: number;
+  label: string;
+  enabled: boolean;
   providerId: ModelProviderId;
   model: string | null;
   baseUrl: string | null;
   hasApiKey: boolean;
-  callsExternalService: boolean;
-  /** True when this comes from the server's environment, not from a saved row. */
-  fromEnvironment: boolean;
-  updatedAt: string | null;
-  /** Set when the configuration is accepted but likely to fail. */
+  /** Null follows the server default. False for DeepSeek, which rejects json_schema. */
+  structuredOutputs: boolean | null;
+  /** Set when the row is accepted but likely to fail, e.g. a keyless local gateway. */
   warning: string | null;
+  updatedAt: string | null;
+}
+
+/** An organisation's configured providers, or the environment it falls back to. */
+export interface ModelProviderList {
+  rows: ModelProviderRow[];
+  /** True when the list is empty and the server's own configuration is in use. */
+  fromEnvironment: boolean;
+  /** What that configuration is, for display. Null when rows are configured. */
+  environmentSummary: string | null;
+}
+
+/**
+ * A ready-made configuration offered in the portal.
+ *
+ * A preset fills the form; it is not a provider kind, and each one stores as an
+ * existing `ModelProviderId`. What it is worth naming for is the two fields
+ * nobody can guess: the base URL, and whether the endpoint enforces a schema
+ * itself.
+ */
+export interface ModelProviderPreset {
+  id: string;
+  label: string;
+  providerId: ModelProviderId;
+  baseUrl: string;
+  model: string;
+  structuredOutputs: boolean;
+  detail: string;
 }
 
 export interface ModelProviderTestResult {
   ok: boolean;
+  /** Null when the environment fallback was tested rather than a stored row. */
+  rowId: string | null;
+  priority: number;
+  label: string;
   providerId: ModelProviderId;
   model: string;
   calledExternalService: boolean;
