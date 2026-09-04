@@ -16,6 +16,7 @@ import type {
   TaskDetail,
   TaskDiff,
   TaskEvent,
+  TaskKind,
   TaskSummary,
 } from './types';
 
@@ -396,7 +397,7 @@ export const api = {
 
     create: (
       projectId: string,
-      body: { prompt: string; sessionId?: string; environmentId?: string },
+      body: { prompt: string; sessionId?: string; environmentId?: string; kind?: TaskKind },
     ) =>
       request<{ task_id: string; id: string; status: string; sessionId: string }>(
         `/projects/${projectId}/tasks`,

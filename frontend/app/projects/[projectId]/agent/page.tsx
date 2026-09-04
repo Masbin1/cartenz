@@ -23,6 +23,7 @@ import type {
   ProjectEnvironment,
   TaskDetail,
   TaskDiff,
+  TaskKind,
   TaskSummary,
 } from '@/lib/types';
 
@@ -55,6 +56,7 @@ export default function AgentWorkspacePage() {
   const [diff, setDiff] = useState<TaskDiff | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
+  const [kind, setKind] = useState<TaskKind>('change');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [environments, setEnvironments] = useState<ProjectEnvironment[]>([]);
@@ -180,6 +182,7 @@ export default function AgentWorkspacePage() {
         prompt: prompt.trim(),
         sessionId: sessionId || undefined,
         environmentId: environmentId || undefined,
+        kind,
       });
       setSessionId(created.sessionId);
       setPrompt('');
@@ -305,6 +308,41 @@ export default function AgentWorkspacePage() {
             <label htmlFor="prompt" className="panel-title mb-2 block">
               Development request
             </label>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-2xs text-content-subtle">Mode</span>
+              <div
+                role="group"
+                aria-label="Task mode"
+                className="flex overflow-hidden rounded-md border border-surface-border"
+              >
+                <button
+                  type="button"
+                  onClick={() => setKind('change')}
+                  disabled={submitting}
+                  aria-pressed={kind === 'change'}
+                  className={`px-3 py-1 text-2xs font-medium transition-colors ${
+                    kind === 'change'
+                      ? 'bg-accent text-white'
+                      : 'bg-transparent text-content-muted hover:text-content'
+                  }`}
+                >
+                  Change
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setKind('chat')}
+                  disabled={submitting}
+                  aria-pressed={kind === 'chat'}
+                  className={`px-3 py-1 text-2xs font-medium transition-colors ${
+                    kind === 'chat'
+                      ? 'bg-accent text-white'
+                      : 'bg-transparent text-content-muted hover:text-content'
+                  }`}
+                >
+                  Chat
+                </button>
+              </div>
+            </div>
             <textarea
               id="prompt"
               ref={promptRef}
@@ -321,6 +359,12 @@ export default function AgentWorkspacePage() {
               placeholder="Add a customer reference field to Sales Order and Invoice."
               className="field-input resize-none"
             />
+            {kind === 'chat' ? (
+              <p className="mt-2 text-2xs leading-relaxed text-content-subtle">
+                Chat reads the project and answers in natural language. Writing a file will ask for
+                your approval first.
+              </p>
+            ) : null}
             {environments.length > 0 ? (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label htmlFor="environment" className="text-2xs text-content-subtle">
@@ -395,6 +439,21 @@ export default function AgentWorkspacePage() {
               onDecide={decide}
               canDecide={canDecide}
             />
+          ) : null}
+
+          {task?.kind === 'chat' && task.answer ? (
+            <div className="panel">
+              <div className="panel-header">
+                <h2 className="panel-title">Answer</h2>
+              </div>
+              <div className="px-4 py-3">
+                <div className="max-w-[90%] rounded-2xl rounded-tl-sm bg-surface-overlay px-4 py-3">
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-content">
+                    {task.answer}
+                  </p>
+                </div>
+              </div>
+            </div>
           ) : null}
 
           <div className="panel">

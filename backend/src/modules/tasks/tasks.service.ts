@@ -28,7 +28,7 @@ import {
   type AgentOrchestrator,
 } from '../../agent/orchestration/agent-orchestrator.interface';
 import { isTerminalStatus, type AgentTaskStatus } from '../../agent/task-state';
-import { REPOSITORY_BACKED_PROJECT_TYPES, type ProjectType } from '../../core/enums';
+import { REPOSITORY_BACKED_PROJECT_TYPES, type AgentTaskKind, type ProjectType } from '../../core/enums';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import type { CreateTaskDto } from './dto/task.dto';
 
@@ -54,6 +54,10 @@ export class TasksService {
   ) {}
 
   async create(user: AuthenticatedUser, projectId: string, dto: CreateTaskDto) {
+    // Which product shape this task is (ADR-029). `change` is the existing
+    // development run; `chat` answers a question and never commits or pushes.
+    const kind: AgentTaskKind = dto.kind ?? 'change';
+
     const context = await this.authz.requireProjectAccess(user, projectId, 'developer');
 
     const [project] = await this.database.db
@@ -80,8 +84,13 @@ export class TasksService {
      * operates on a local directory, the second on the Odoo instance. They fall
      * through; their own surface is validated at workspace allocation or by the
      * Odoo Online tools.
+     *
+     * A `chat` task on an `ai_project` is allowed despite the missing repository
+     * (ADR-029): it needs nothing to clone, and answers from the project
+     * specification. A `chat` on a repository-backed project still requires the
+     * repository, because reading it is how the agent answers.
      */
-    if (!project.repositoryUrl && project.projectType === 'ai_project') {
+    if (kind !== 'chat' && !project.repositoryUrl && project.projectType === 'ai_project') {
       throw new BadRequestException(
         'This project was created from a specification and has no repository yet. ' +
           'Connect one before submitting a development request.',
@@ -126,8 +135,12 @@ export class TasksService {
      * selected, on the environment's own branch. There is no separate AI branch
      * standing between the agent's commit and `main`, which makes the restriction
      * matter more there than on Odoo.sh, not less.
+     *
+     * A `chat` task skips this refusal (ADR-029): it never commits or pushes, so
+     * targeting the branch a person is on is harmless - the agent only reads it.
      */
     if (
+      kind !== 'chat' &&
       (project.projectType === 'odoo_sh' || project.projectType === 'on_premise') &&
       environment.branch === 'main'
     ) {
@@ -167,6 +180,7 @@ export class TasksService {
       sessionId,
       createdByUserId: user.userId,
       prompt: dto.prompt,
+      kind,
       environmentId: environment.id,
     });
 
@@ -210,6 +224,7 @@ export class TasksService {
         id: agentTasks.id,
         reference: agentTasks.reference,
         prompt: agentTasks.prompt,
+        kind: agentTasks.kind,
         status: agentTasks.status,
         branch: agentTasks.branch,
         commitHash: agentTasks.commitHash,
@@ -282,9 +297,11 @@ export class TasksService {
       projectId: task.projectId,
       sessionId: task.sessionId,
       prompt: task.prompt,
+      kind: task.kind,
       status: task.status,
       branch: task.branch,
       commitHash: task.commitHash,
+      answer: task.answer,
       plan: task.plan,
       modifiedFiles: task.modifiedFiles,
       baseCommit: task.baseCommit,
@@ -496,6 +513,7 @@ export class TasksService {
     sessionId: string;
     createdByUserId: string;
     prompt: string;
+    kind: AgentTaskKind;
     environmentId: string;
   }) {
     for (let attempt = 0; attempt < 5; attempt += 1) {

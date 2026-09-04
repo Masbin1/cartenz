@@ -91,7 +91,7 @@ export class ApprovalService {
       status: 'pending',
       requiredReason: input.requiredReason,
       context: redactMetadata(input.context),
-    });
+    }).onConflictDoNothing();
 
     await this.events.publish({
       taskId: input.taskId,

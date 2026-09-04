@@ -17,6 +17,7 @@ import {
   AGENT_ACTION_STATUSES,
   AGENT_ACTION_TYPES,
   AGENT_SESSION_STATUSES,
+  AGENT_TASK_KINDS,
   APPROVAL_ACTIONS,
   APPROVAL_STATUSES,
   CONNECTION_STATUSES,
@@ -400,6 +401,10 @@ export const agentTasks = pgTable(
       onDelete: 'set null',
     }),
     prompt: text('prompt').notNull(),
+    /** Which product shape this task is: a development run or a conversation (ADR-029). */
+    kind: text('kind', { enum: asEnum(AGENT_TASK_KINDS) }).notNull().default('change'),
+    /** The natural-language answer a chat task produced (ADR-029). Null for a change task. */
+    answer: text('answer'),
     status: text('status', { enum: asEnum(AGENT_TASK_STATUSES) }).notNull().default('created'),
     branch: text('branch'),
     commitHash: text('commit_hash'),
@@ -551,6 +556,12 @@ export const approvals = pgTable(
   (table) => ({
     byTask: index('approvals_task_idx').on(table.taskId),
     byStatus: index('approvals_org_status_idx').on(table.organizationId, table.status),
+    // At most one pending approval per (task, action): the request path dedupes
+    // with a read-modify-write, and this partial index makes the dedup a schema
+    // fact so two parallel requests cannot both insert a pending row (ADR-029).
+    pendingUnique: uniqueIndex('approvals_task_action_pending_unique')
+      .on(table.taskId, table.action)
+      .where(sql`${table.status} = 'pending'`),
   }),
 );
 
@@ -774,7 +785,7 @@ export const agentModelCalls = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
-    /** `planning` or `implementation`. */
+    /** `planning`, `implementation` or `chat`. */
     operation: text('operation').notNull(),
     providerId: text('provider_id').notNull(),
     model: text('model').notNull(),

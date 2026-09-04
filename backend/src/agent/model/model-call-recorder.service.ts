@@ -7,7 +7,7 @@ import type { BoundaryFinding } from '../../core/ai-boundary/boundary-types';
 export interface RecordModelCallInput {
   readonly taskId: string;
   readonly organizationId: string;
-  readonly operation: 'planning' | 'implementation';
+  readonly operation: 'planning' | 'implementation' | 'chat';
   readonly providerId: string;
   readonly model: string;
   readonly calledExternalService: boolean;

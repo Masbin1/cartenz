@@ -7,6 +7,7 @@ import { TaskRepository, type TaskExecutionSnapshot } from '../task-repository';
 import { searchTermsFor } from './odoo-target';
 import { ModelAgentPlanner } from './model-agent-planner';
 import { ModelImplementationLoop, type LoopToolResult } from './model-implementation-loop';
+import { ChatLoop } from './model-chat-loop';
 import { ModelCallRecorder } from '../model/model-call-recorder.service';
 import { ModelProviderError } from '../model/model-provider.interface';
 import { AiBoundaryRefusalError } from '../../core/ai-boundary/boundary-types';
@@ -77,6 +78,7 @@ export class AgentWorkflow {
     private readonly tasks: TaskRepository,
     private readonly planner: ModelAgentPlanner,
     private readonly implementationLoop: ModelImplementationLoop,
+    private readonly chatLoop: ChatLoop,
     private readonly modelCalls: ModelCallRecorder,
     private readonly workspaceManager: WorkspaceManager,
     private readonly tools: ToolExecutionService,
@@ -139,11 +141,13 @@ export class AgentWorkflow {
         return this.resumeFromApproval(snapshot);
 
       case 'implementing':
+        if (snapshot.kind === 'chat') return this.implementChat(snapshot);
         return snapshot.executionMode === 'odoo_online'
           ? this.implementOdooOnline(snapshot)
           : this.implement(snapshot);
 
       case 'testing':
+        if (snapshot.kind === 'chat') return this.completeChat(snapshot);
         return snapshot.executionMode === 'odoo_online'
           ? this.validateOdooOnline(snapshot)
           : this.validate(snapshot);
@@ -209,6 +213,11 @@ export class AgentWorkflow {
           message: 'The file deletion was approved. Continuing implementation.',
         });
 
+      case 'chat_edit':
+        return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'implementing', {
+          message: 'Approved. Continuing.',
+        });
+
       default:
         return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'failed', {
           failureReason: `No resumption is defined for an approved ${decision.action}.`,
@@ -256,9 +265,15 @@ export class AgentWorkflow {
     if (workspace.simulated) {
       await this.narrate(
         snapshot,
-        'This project has no repository connected, so there is nothing to clone. Planning from the project specification.',
+        snapshot.kind === 'chat'
+          ? 'This project has no repository connected, so there is nothing to clone. Answering from the project specification.'
+          : 'This project has no repository connected, so there is nothing to clone. Planning from the project specification.',
       );
-      return this.tasks.transition(snapshot.taskId, 'analyzing', 'planning');
+      return this.tasks.transition(
+        snapshot.taskId,
+        'analyzing',
+        snapshot.kind === 'chat' ? 'implementing' : 'planning',
+      );
     }
 
     await this.narrate(
@@ -311,7 +326,13 @@ export class AgentWorkflow {
 
     await this.narrate(snapshot, 'Searching related modules...');
 
-    return this.tasks.transition(snapshot.taskId, 'analyzing', 'planning');
+    // A chat task has no plan gate (ADR-029): analysis leads straight into the
+    // conversational loop rather than into planning.
+    return this.tasks.transition(
+      snapshot.taskId,
+      'analyzing',
+      snapshot.kind === 'chat' ? 'implementing' : 'planning',
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -817,6 +838,124 @@ export class AgentWorkflow {
   }
 
   /**
+   * IMPLEMENTING, for a chat task (ADR-029).
+   *
+   * Runs the conversational loop instead of the plan-carrying one. There is no
+   * plan and no diff to check the model against: the deliverable is the
+   * natural-language answer, saved on the task and narrated so it survives the
+   * destroyed workspace. A write tool pauses the task for the `chat_edit`
+   * approval through the same callTool path a change task uses, and the run
+   * resumes into implementing once a person decides.
+   */
+  private async implementChat(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    const workspace = await this.acquireWorkspace(snapshot);
+    await this.narrate(snapshot, 'Thinking about your request...');
+
+    let outcome;
+    try {
+      outcome = await this.chatLoop.run({
+        organizationId: snapshot.organizationId,
+        prompt: snapshot.prompt,
+        projectName: snapshot.projectName,
+        taskReference: snapshot.reference,
+        branch: workspace.branch,
+        odooVersion: snapshot.odooVersion,
+        agentPermissions: snapshot.agentPermissions,
+        executionMode: snapshot.executionMode,
+        run: async (call) => {
+          const result = await this.callTool(snapshot, workspace, call.name, call.input);
+          return { status: toLoopResult(result.status), output: result.output };
+        },
+      });
+    } catch (error) {
+      return this.failOnModelError(snapshot, 'implementing', 'chat', error);
+    }
+
+    await this.modelCalls.record({
+      taskId: snapshot.taskId,
+      organizationId: snapshot.organizationId,
+      operation: 'chat',
+      providerId: outcome.providerId,
+      model: outcome.model,
+      calledExternalService: outcome.calledExternalService,
+      inputTokens: outcome.usage.inputTokens,
+      outputTokens: outcome.usage.outputTokens,
+      durationMs: outcome.usage.durationMs,
+      steps: outcome.steps,
+      toolCalls: outcome.toolCalls,
+      boundaryFindings: outcome.boundaryFindings,
+      redactionCount: outcome.redactionCount,
+      haltReason: outcome.haltReason,
+    });
+
+    // A write tool needed the `chat_edit` approval. callTool has already
+    // requested the approval and moved the task to waiting_approval, so the run
+    // simply ends here and resumes once a person decides.
+    if (outcome.suspended) return false;
+
+    const answer = outcome.answer.trim();
+
+    if (answer.length > 0) {
+      await this.tasks.saveAnswer(snapshot.taskId, answer);
+      await this.narrate(snapshot, answer);
+    }
+
+    if (outcome.haltReason) {
+      await this.narrate(snapshot, `The agent stopped early: ${outcome.haltReason}.`);
+    }
+
+    // A chat task does not commit or push, but an approved write still has to be
+    // reviewable. The workspace is destroyed when the run ends, so the diff is
+    // computed and retained with the task exactly as a change task retains it —
+    // the only difference is that no commit exists and nothing can be pushed.
+    const diff = await this.git.diff(workspace.repositoryPath, workspace.baseCommit ?? 'HEAD');
+
+    if (diff.files.length > 0) {
+      const modified: ModifiedFile[] = diff.files.map((file) => ({
+        path: file.path,
+        change: file.change === 'renamed' ? 'modified' : file.change,
+        summary: 'Changed in conversation, with your approval',
+        linesAdded: file.linesAdded,
+        linesRemoved: file.linesRemoved,
+      }));
+
+      await this.tasks.saveModifiedFiles(snapshot.taskId, modified);
+      await this.tasks.saveDiffStats(snapshot.taskId, {
+        filesChanged: diff.files.length,
+        linesAdded: diff.linesAdded,
+        linesRemoved: diff.linesRemoved,
+        patchTruncated: diff.patchTruncated,
+        toolCalls: outcome.toolCalls,
+      });
+      await this.tasks.saveDiffPatch(snapshot.taskId, diff.patch);
+    }
+
+    // A chat task that answered a question and changed nothing completes
+    // successfully. There is no "made no change to the working tree" failure
+    // here - that is a change-task rule, and a chat's deliverable is the answer.
+    // The state machine has no implementing -> completed edge (ADR-018), so the
+    // task passes through `testing`, where the chat branch completes it at once:
+    // a conversation has nothing to validate, commit or push.
+    return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
+      message: `Answered in ${outcome.steps} step(s) across ${outcome.toolCalls} tool call(s).`,
+    });
+  }
+
+  /**
+   * TESTING, on a chat task. A conversation has nothing to validate, commit or
+   * push, so the task completes the moment its answer is saved. This branch
+   * exists rather than a `implementing -> completed` edge because the state
+   * machine deliberately keeps that edge absent: `odoo_online` must pass
+   * through validation (a real defect it guards), and a chat task passing
+   * through `testing` keeps the machine intact for every kind.
+   */
+  private async completeChat(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
+      message: 'Answered.',
+    });
+  }
+
+  /**
    * TESTING. Runs the validation tools named in the plan.
    *
    * These remain simulated (ADR-019): each executes repository code, which is the
@@ -1123,7 +1262,7 @@ export class AgentWorkflow {
   private async failOnModelError(
     snapshot: TaskExecutionSnapshot,
     from: AgentTaskStatus,
-    operation: 'planning' | 'implementation',
+    operation: 'planning' | 'implementation' | 'chat',
     error: unknown,
   ): Promise<boolean> {
     const boundaryRefusal = error instanceof AiBoundaryRefusalError;
@@ -1289,6 +1428,7 @@ export class AgentWorkflow {
           agentPermissions: snapshot.agentPermissions,
           grantedApprovals: snapshot.grantedApprovals,
           executionMode: snapshot.executionMode,
+          taskKind: snapshot.kind,
         },
         taskStatus: snapshot.status,
       });

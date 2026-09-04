@@ -19,6 +19,7 @@ describe('the odoo_online execution mode', () => {
     agentPermissions: { ...DEFAULT_AGENT_PERMISSIONS },
     grantedApprovals: [] as string[],
     executionMode,
+    taskKind: 'change' as const,
   });
 
   const permittedIn = (mode: 'odoo_online' | 'odoo_sh') =>

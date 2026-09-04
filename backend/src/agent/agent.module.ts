@@ -15,6 +15,7 @@ import { OdooProjectAnalyser } from './analysis/odoo-project-analyser';
 import { ProjectMemoryService } from './analysis/project-memory.service';
 import { ModelAgentPlanner } from './orchestration/model-agent-planner';
 import { ModelImplementationLoop } from './orchestration/model-implementation-loop';
+import { ChatLoop } from './orchestration/model-chat-loop';
 import { ModelCallRecorder } from './model/model-call-recorder.service';
 import { ModelModule } from './model/model.module';
 import { AgentWorkflow } from './orchestration/agent-workflow';
@@ -60,6 +61,7 @@ import { ApprovalsModule } from '../modules/approvals/approvals.module';
     ToolExecutionService,
     ModelAgentPlanner,
     ModelImplementationLoop,
+    ChatLoop,
     ModelCallRecorder,
     AgentWorkflow,
     ExecutorRegistry,

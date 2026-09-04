@@ -15,7 +15,7 @@ import { AuditService } from '../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../core/audit/audit-events';
 import { TaskEventPublisher } from '../core/events/task-event-publisher.service';
 import { resolveAgentPermissions, type AgentPermission } from '../core/authz/agent-permissions';
-import type { ProjectType } from '../core/enums';
+import type { AgentTaskKind, ProjectType } from '../core/enums';
 import { assertTransition, isTerminalStatus, type AgentTaskStatus } from './task-state';
 import { executionModeFor, type ExecutionMode } from './executors/execution-mode';
 import type { ImplementationPlan, ModifiedFile, TaskTestResults } from './orchestration/agent-plan';
@@ -34,6 +34,8 @@ export interface TaskExecutionSnapshot {
    */
   readonly executionMode: ExecutionMode | null;
   readonly prompt: string;
+  /** Which product shape this task is: a development run or a conversation (ADR-029). */
+  readonly kind: AgentTaskKind;
   readonly status: AgentTaskStatus;
   readonly branch: string | null;
   /**
@@ -119,6 +121,7 @@ export class TaskRepository {
         projectId: agentTasks.projectId,
         projectName: projects.name,
         prompt: agentTasks.prompt,
+        kind: agentTasks.kind,
         status: agentTasks.status,
         branch: agentTasks.branch,
         baseCommit: agentTasks.baseCommit,
@@ -200,6 +203,7 @@ export class TaskRepository {
       projectType: row.projectType as ProjectType,
       executionMode: executionModeFor(row.projectType as ProjectType),
       prompt: row.prompt,
+      kind: row.kind as AgentTaskKind,
       status: row.status as AgentTaskStatus,
       branch: row.branch,
       baseCommit: row.baseCommit,
@@ -304,6 +308,14 @@ export class TaskRepository {
     await this.database.db
       .update(agentTasks)
       .set({ plan: plan as unknown as Record<string, unknown>, updatedAt: new Date() })
+      .where(eq(agentTasks.id, taskId));
+  }
+
+  /** Stores the natural-language answer a chat task produced (ADR-029). */
+  async saveAnswer(taskId: string, answer: string): Promise<void> {
+    await this.database.db
+      .update(agentTasks)
+      .set({ answer, updatedAt: new Date() })
       .where(eq(agentTasks.id, taskId));
   }
 
