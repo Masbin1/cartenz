@@ -11,6 +11,7 @@ import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Alert } from '@/components/ui/alert';
 import { ActivityTimeline } from '@/components/agent/activity-timeline';
+import { ChatMarkdown } from '@/components/agent/chat-markdown';
 import { PlanView } from '@/components/agent/plan-view';
 import { ApprovalPanel } from '@/components/agent/approval-panel';
 import { TaskInspector } from '@/components/agent/task-inspector';
@@ -448,9 +449,7 @@ export default function AgentWorkspacePage() {
               </div>
               <div className="px-4 py-3">
                 <div className="max-w-[90%] rounded-2xl rounded-tl-sm bg-surface-overlay px-4 py-3">
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-content">
-                    {task.answer}
-                  </p>
+                  <ChatMarkdown content={task.answer} />
                 </div>
               </div>
             </div>
