@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { DatabaseService } from '../core/database/database.service';
+import { withSequenceRetry } from '../core/database/task-sequence';
 import {
   agentActions,
   agentTasks,
@@ -380,18 +381,22 @@ export class TaskRepository {
     taskStatus: AgentTaskStatus,
     message: string,
   ): Promise<void> {
-    await this.database.db.insert(agentActions).values({
-      taskId,
-      sequence: sql`(
-        select coalesce(max(a.sequence), 0) + 1
-        from agent_actions a
-        where a.task_id = ${taskId}
-      )`,
-      actionType: 'reasoning',
-      status: 'succeeded',
-      output: { message },
-      simulated: true,
-    });
+    await withSequenceRetry(
+      () =>
+        this.database.db.insert(agentActions).values({
+          taskId,
+          sequence: sql`(
+            select coalesce(max(a.sequence), 0) + 1
+            from agent_actions a
+            where a.task_id = ${taskId}
+          )`,
+          actionType: 'reasoning',
+          status: 'succeeded',
+          output: { message },
+          simulated: true,
+        }),
+      'agent_actions_task_sequence_unique',
+    );
 
     await this.events.publish({
       taskId,
@@ -419,19 +424,23 @@ export class TaskRepository {
     from: AgentTaskStatus,
     to: AgentTaskStatus,
   ): Promise<void> {
-    await this.database.db.insert(agentActions).values({
-      taskId,
-      sequence: sql`(
-        select coalesce(max(a.sequence), 0) + 1
-        from agent_actions a
-        where a.task_id = ${taskId}
-      )`,
-      actionType: 'transition',
-      status: 'succeeded',
-      input: { from },
-      output: { to },
-      simulated: false,
-    });
+    await withSequenceRetry(
+      () =>
+        this.database.db.insert(agentActions).values({
+          taskId,
+          sequence: sql`(
+            select coalesce(max(a.sequence), 0) + 1
+            from agent_actions a
+            where a.task_id = ${taskId}
+          )`,
+          actionType: 'transition',
+          status: 'succeeded',
+          input: { from },
+          output: { to },
+          simulated: false,
+        }),
+      'agent_actions_task_sequence_unique',
+    );
   }
 
   /** Only pending tasks may be listed for cancellation and resumption. */

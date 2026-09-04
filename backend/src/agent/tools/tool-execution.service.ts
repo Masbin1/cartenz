@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import { agentActions } from '../../core/database/schema';
+import { withSequenceRetry } from '../../core/database/task-sequence';
 import { redactMetadata } from '../../core/audit/redact';
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
@@ -244,21 +245,25 @@ export class ToolExecutionService {
     simulated?: boolean;
     durationMs?: number | null;
   }): Promise<void> {
-    await this.database.db.insert(agentActions).values({
-      taskId: entry.taskId,
-      sequence: sql`(
-        select coalesce(max(a.sequence), 0) + 1
-        from agent_actions a
-        where a.task_id = ${entry.taskId}
-      )`,
-      actionType: entry.actionType,
-      toolName: entry.toolName ?? null,
-      input: entry.input ? redactMetadata(entry.input) : null,
-      output: entry.output ? redactMetadata(entry.output) : null,
-      status: entry.status,
-      denialReason: entry.denialReason ?? null,
-      simulated: entry.simulated ?? false,
-      durationMs: entry.durationMs ?? null,
-    });
+    await withSequenceRetry(
+      () =>
+        this.database.db.insert(agentActions).values({
+          taskId: entry.taskId,
+          sequence: sql`(
+            select coalesce(max(a.sequence), 0) + 1
+            from agent_actions a
+            where a.task_id = ${entry.taskId}
+          )`,
+          actionType: entry.actionType,
+          toolName: entry.toolName ?? null,
+          input: entry.input ? redactMetadata(entry.input) : null,
+          output: entry.output ? redactMetadata(entry.output) : null,
+          status: entry.status,
+          denialReason: entry.denialReason ?? null,
+          simulated: entry.simulated ?? false,
+          durationMs: entry.durationMs ?? null,
+        }),
+      'agent_actions_task_sequence_unique',
+    );
   }
 }
