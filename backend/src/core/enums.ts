@@ -152,6 +152,20 @@ export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
  */
 export const MODEL_PROVIDER_PRESETS = [
   {
+    id: 'hermes',
+    label: 'Hermes (Claude engine)',
+    providerId: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:20128/v1',
+    model: 'cc/claude-sonnet-5',
+    // Claude through the gateway enforces the plan's JSON schema itself
+    // (response_format: json_schema), so structured outputs stay on. Verified
+    // against the live gateway returning clean JSON with no reasoning wrapper.
+    structuredOutputs: true,
+    detail:
+      'Claude as the agent engine, through the local gateway. Set this as priority 1 and ' +
+      'add a second provider below it as the maintenance fallback.',
+  },
+  {
     id: 'local-gateway',
     label: 'Local gateway (9router / Hermes)',
     providerId: 'openai-compatible',

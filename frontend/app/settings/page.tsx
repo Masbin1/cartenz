@@ -22,6 +22,17 @@ import type {
  */
 const PRESETS: ModelProviderPreset[] = [
   {
+    id: 'hermes',
+    label: 'Hermes (Claude engine)',
+    providerId: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:20128/v1',
+    model: 'cc/claude-sonnet-5',
+    structuredOutputs: true,
+    detail:
+      'Claude as the agent engine, through the local gateway. Set this as priority 1 and ' +
+      'add a second provider below it as the maintenance fallback.',
+  },
+  {
     id: 'local-gateway',
     label: 'Local gateway (9router / Hermes)',
     providerId: 'openai-compatible',
