@@ -130,6 +130,24 @@ export class OrganizationsController {
     return row;
   }
 
+  /**
+   * Declared before the :rowId routes, and it has to stay there. Nest matches in
+   * declaration order, so with :rowId first this path binds rowId to the literal
+   * "order" and reorder becomes unreachable - a route that answers rather than
+   * 404s, which is the kind of dead endpoint nobody notices.
+   */
+  @Patch(':organizationId/model-providers/order')
+  async reorderModelProviders(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('organizationId', ParseUUIDPipe) organizationId: string,
+    @Body() dto: ReorderModelProvidersDto,
+  ) {
+    await this.authz.requireOrganizationMember(user, organizationId, 'admin');
+    const result = await this.modelSettings.reorder(organizationId, user.userId, dto.order);
+    this.providers.invalidate(organizationId);
+    return result;
+  }
+
   @Patch(':organizationId/model-providers/:rowId')
   async updateModelProvider(
     @CurrentUser() user: AuthenticatedUser,
@@ -153,18 +171,6 @@ export class OrganizationsController {
     await this.authz.requireOrganizationMember(user, organizationId, 'admin');
     await this.modelSettings.removeRow(organizationId, rowId, user.userId);
     this.providers.invalidate(organizationId);
-  }
-
-  @Patch(':organizationId/model-providers/order')
-  async reorderModelProviders(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('organizationId', ParseUUIDPipe) organizationId: string,
-    @Body() dto: ReorderModelProvidersDto,
-  ) {
-    await this.authz.requireOrganizationMember(user, organizationId, 'admin');
-    const result = await this.modelSettings.reorder(organizationId, user.userId, dto.order);
-    this.providers.invalidate(organizationId);
-    return result;
   }
 
   /**
