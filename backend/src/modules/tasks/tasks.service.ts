@@ -131,6 +131,26 @@ export class TasksService {
       (project.projectType === 'odoo_sh' || project.projectType === 'on_premise') &&
       environment.branch === 'main'
     ) {
+      // The refusal is audited before it is raised (ADR-028: "the task is
+      // refused before any row is written, and the refusal is audited"). Written
+      // first so that a refusal nobody can see is not indistinguishable from a
+      // request nobody made; mirrors ADR-021's production refusal, reusing the
+      // same event with a reason that names this decision.
+      await this.audit.record({
+        event: AUDIT_EVENTS.ENVIRONMENT_TARGET_REFUSED,
+        organizationId: context.organizationId,
+        projectId,
+        userId: user.userId,
+        metadata: {
+          environmentId: environment.id,
+          environmentName: environment.name,
+          environmentKind: environment.kind,
+          branch: environment.branch,
+          projectType: project.projectType,
+          reason: 'the main branch is the live business and is not targetable (ADR-028)',
+        },
+      });
+
       throw new BadRequestException(
         `${project.projectType === 'odoo_sh' ? 'Odoo.sh' : 'On-premise'} projects cannot target ` +
           'the main branch. Ask the project administrator to create another branch.',

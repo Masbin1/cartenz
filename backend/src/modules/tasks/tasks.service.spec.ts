@@ -25,6 +25,13 @@ describe('TasksService.create — main branch restriction', () => {
   const makeService = (branch: string, projectType = 'odoo_sh') => {
     const project = { projectType, repositoryUrl: 'git@git.odoo.com:p.git', name: 'P' };
 
+    const auditRecords: Array<Record<string, unknown>> = [];
+    const audit = {
+      record: async (entry: Record<string, unknown>) => {
+        auditRecords.push(entry);
+      },
+    } as unknown as AuditService;
+
     const database = {
       db: {
         select: () => ({
@@ -54,37 +61,57 @@ describe('TasksService.create — main branch restriction', () => {
       }),
     } as unknown as ProjectEnvironmentsService;
 
-    return new TasksService(
+    const service = new TasksService(
       database,
       authz,
-      {} as AuditService,
+      audit,
       {} as TaskRepository,
       {} as ToolRegistry,
       {} as ModelCallRecorder,
       environments,
       {} as AgentOrchestrator,
     );
+
+    return { service, auditRecords };
   };
 
   const submit = (service: TasksService) =>
     service.create({ userId: 'u' } as never, 'project-1', { prompt: 'add a field' } as never);
 
   it('refuses a task targeting the main branch on an odoo_sh project', async () => {
-    await expect(submit(makeService('main', 'odoo_sh'))).rejects.toThrow(BadRequestException);
+    await expect(submit(makeService('main', 'odoo_sh').service)).rejects.toThrow(BadRequestException);
   });
 
   it('refuses a task targeting the main branch on an on_premise project', async () => {
-    await expect(submit(makeService('main', 'on_premise'))).rejects.toThrow(BadRequestException);
+    await expect(submit(makeService('main', 'on_premise').service)).rejects.toThrow(
+      BadRequestException,
+    );
   });
 
   it('names the project type in the refusal, so the message fits what was submitted', async () => {
-    await expect(submit(makeService('main', 'on_premise'))).rejects.toThrow(/On-premise/);
-    await expect(submit(makeService('main', 'odoo_sh'))).rejects.toThrow(/Odoo\.sh/);
+    await expect(submit(makeService('main', 'on_premise').service)).rejects.toThrow(/On-premise/);
+    await expect(submit(makeService('main', 'odoo_sh').service)).rejects.toThrow(/Odoo\.sh/);
+  });
+
+  it('audits the main-branch refusal before raising it (ADR-028)', async () => {
+    // The ADR states the refusal "is audited". A refusal nobody can see is
+    // indistinguishable from a request nobody made, so the record must be
+    // written even though no task row is.
+    const { service, auditRecords } = makeService('main', 'odoo_sh');
+    await expect(submit(service)).rejects.toThrow(BadRequestException);
+
+    expect(auditRecords).toHaveLength(1);
+    expect(auditRecords[0]).toMatchObject({
+      event: 'environment.target_refused',
+      projectId: 'project-1',
+      userId: 'u',
+      metadata: expect.objectContaining({ branch: 'main', projectType: 'odoo_sh' }),
+    });
   });
 
   it('permits another branch on an on_premise project', async () => {
     // The guard must not be a blanket refusal: Staging is the branch this is for.
-    await expect(submit(makeService('Staging', 'on_premise'))).rejects.not.toThrow(
+    await expect(submit(makeService('Staging', 'on_premise').service)).rejects.not.toThrow(
       BadRequestException,
     );
   });
