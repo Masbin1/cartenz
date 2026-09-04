@@ -6,7 +6,8 @@ import type {
   CurrentUser,
   EnvironmentKind,
   ModelProviderId,
-  ModelProviderSettings,
+  ModelProviderList,
+  ModelProviderRow,
   ModelProviderTestResult,
   PendingApprovalSummary,
   ProjectDetail,
@@ -199,35 +200,85 @@ export const api = {
         `/organizations/${organizationId}/audit-logs?limit=${limit}`,
       ),
 
-    modelProvider: (organizationId: string) =>
-      request<ModelProviderSettings>(`/organizations/${organizationId}/model-provider`),
+    modelProviders: (organizationId: string) =>
+      request<ModelProviderList>(`/organizations/${organizationId}/model-providers`),
 
     /**
-     * Saves the provider. `apiKey` is write-only: omit it to keep the stored key,
-     * send an empty string to remove it. No endpoint returns it.
+     * Adds a provider. `apiKey` is write-only: no endpoint returns it, and there
+     * is no response field it could arrive in.
      */
-    setModelProvider: (
+    addModelProvider: (
       organizationId: string,
       body: {
+        label?: string;
         providerId: ModelProviderId;
         model?: string;
         baseUrl?: string;
         apiKey?: string;
+        structuredOutputs?: boolean;
+        enabled?: boolean;
       },
-    ) => request<ModelProviderSettings>(`/organizations/${organizationId}/model-provider`, {
-      method: 'PUT',
-      body,
-    }),
+    ) =>
+      request<ModelProviderRow>(`/organizations/${organizationId}/model-providers`, {
+        method: 'POST',
+        body,
+      }),
 
-    clearModelProvider: (organizationId: string) =>
-      request<ModelProviderSettings>(`/organizations/${organizationId}/model-provider`, {
+    /** Omit `apiKey` to keep the stored key; send an empty string to remove it. */
+    updateModelProvider: (
+      organizationId: string,
+      rowId: string,
+      body: {
+        label?: string;
+        enabled?: boolean;
+        providerId?: ModelProviderId;
+        model?: string;
+        baseUrl?: string;
+        apiKey?: string;
+        structuredOutputs?: boolean | null;
+      },
+    ) =>
+      request<ModelProviderRow>(
+        `/organizations/${organizationId}/model-providers/${rowId}`,
+        { method: 'PATCH', body },
+      ),
+
+    removeModelProvider: (organizationId: string, rowId: string) =>
+      request<void>(`/organizations/${organizationId}/model-providers/${rowId}`, {
         method: 'DELETE',
       }),
 
-    testModelProvider: (organizationId: string) =>
+    /**
+     * PATCH rather than PUT: the API's CORS configuration never allowed PUT, and
+     * this call is cross-origin with an Authorization header, so the preflight
+     * would block it before it was sent - which presents as reorder doing nothing.
+     */
+    reorderModelProviders: (organizationId: string, order: string[]) =>
+      request<ModelProviderList>(`/organizations/${organizationId}/model-providers/order`, {
+        method: 'PATCH',
+        body: { order },
+      }),
+
+    testModelProviderRow: (organizationId: string, rowId: string) =>
       request<ModelProviderTestResult>(
-        `/organizations/${organizationId}/model-provider/test`,
+        `/organizations/${organizationId}/model-providers/${rowId}/test`,
         { method: 'POST' },
+      ),
+
+    testModelProviderChain: (organizationId: string) =>
+      request<ModelProviderTestResult[]>(
+        `/organizations/${organizationId}/model-providers/test`,
+        { method: 'POST' },
+      ),
+
+    /**
+     * What models an endpoint serves. Goes through the server because the browser
+     * has no key and must not be given one.
+     */
+    discoverModels: (organizationId: string, body: { baseUrl: string; apiKey?: string }) =>
+      request<{ models: string[] }>(
+        `/organizations/${organizationId}/model-providers/discover-models`,
+        { method: 'POST', body },
       ),
   },
 

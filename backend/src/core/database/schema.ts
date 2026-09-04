@@ -228,35 +228,64 @@ export const projects = pgTable(
 );
 
 /**
- * The model provider an organisation has configured (ADR-023).
+ * The model providers an organisation has configured (ADR-023).
  *
- * One row per organisation, so the configuration is one thing a person can look
- * at and change rather than a set of environment variables an operator has to be
- * asked about. The API key is not here: `secret_ref` points into secret_records,
+ * One row per provider, ordered by `priority`, so an organisation's failover
+ * chain is a list it can see and reorder rather than a single environment
+ * variable. The API key is not here: `secret_ref` points into secret_records,
  * the same way a repository credential does.
  */
-export const organizationModelSettings = pgTable('organization_model_settings', {
-  organizationId: uuid('organization_id')
-    .primaryKey()
-    .references(() => organizations.id, { onDelete: 'cascade' }),
-  providerId: text('provider_id', { enum: asEnum(MODEL_PROVIDER_IDS) }).notNull(),
-  /** Null means "the provider's default", resolved when the provider is built. */
-  model: text('model'),
-  /** Required for openai-compatible, meaningless for the others. */
-  baseUrl: text('base_url'),
-  /** Reference into secret_records. Null for mock, which calls nothing. */
-  secretRef: text('secret_ref'),
-  /**
-   * Bumped on every write. The resolver caches a built provider against this, so
-   * a changed key takes effect on the next task rather than on the next restart.
-   */
-  revision: integer('revision').notNull().default(1),
-  updatedByUserId: uuid('updated_by_user_id').references(() => users.id, {
-    onDelete: 'set null',
+export const organizationModelSettings = pgTable(
+  'organization_model_settings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    /**
+     * Tried in ascending order. Unique per organisation, so "which is first" has
+     * one answer rather than a tie the database would break arbitrarily.
+     */
+    priority: integer('priority').notNull().default(1),
+    /** What a person calls this entry: "9router Paket-Hemat", "DeepSeek fallback". */
+    label: text('label'),
+    /** False takes it out of the chain without discarding its stored key. */
+    enabled: boolean('enabled').notNull().default(true),
+    providerId: text('provider_id', { enum: asEnum(MODEL_PROVIDER_IDS) }).notNull(),
+    /** Null means "the provider's default", resolved when the provider is built. */
+    model: text('model'),
+    /** Required for openai-compatible, meaningless for the others. */
+    baseUrl: text('base_url'),
+    /**
+     * Whether this endpoint enforces a JSON schema itself.
+     *
+     * Per row rather than per deployment because a fallback chain needs both
+     * answers at once: DeepSeek rejects response_format json_schema, the local
+     * gateway accepts it, and a chain crossing the two cannot work off a single
+     * environment value. Null follows AI_STRUCTURED_OUTPUTS.
+     */
+    structuredOutputs: boolean('structured_outputs'),
+    /** Reference into secret_records. Null for mock, which calls nothing. */
+    secretRef: text('secret_ref'),
+    /**
+     * Bumped on every write. The resolver caches built providers against the sum
+     * of an organisation's revisions, so any edit, addition or removal changes it
+     * and the chain is rebuilt on the next task rather than on the next restart.
+     */
+    revision: integer('revision').notNull().default(1),
+    updatedByUserId: uuid('updated_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    byOrganizationPriority: uniqueIndex('organization_model_settings_priority_idx').on(
+      table.organizationId,
+      table.priority,
+    ),
   }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+);
 
 export const projectConnections = pgTable(
   'project_connections',

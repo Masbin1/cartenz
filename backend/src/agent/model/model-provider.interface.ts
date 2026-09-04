@@ -114,6 +114,14 @@ export class ModelProviderError extends Error {
     readonly provider: string,
     message: string,
     readonly retryable: boolean = false,
+    /**
+     * The HTTP status, when the failure had one.
+     *
+     * Kept because the failover chain decides move-on from stop by it, and this
+     * class is where the status stops being available: toProviderError reads it,
+     * uses it, and used to construct this error without it.
+     */
+    readonly statusCode?: number,
   ) {
     super(message);
     this.name = 'ModelProviderError';

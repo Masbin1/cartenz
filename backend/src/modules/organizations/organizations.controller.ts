@@ -9,7 +9,6 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
-  Put,
 } from '@nestjs/common';
 import { OrganizationsService } from './organizations.service';
 import {
@@ -17,7 +16,12 @@ import {
   CreateOrganizationDto,
   UpdateMemberRoleDto,
 } from './dto/organization.dto';
-import { WriteModelSettingsDto } from './dto/model-settings.dto';
+import {
+  AddModelProviderDto,
+  DiscoverModelsDto,
+  ReorderModelProvidersDto,
+  UpdateModelProviderDto,
+} from './dto/model-settings.dto';
 import { ModelSettingsService } from './model-settings.service';
 import { ModelProviderResolver } from '../../agent/model/model-provider-resolver';
 import { AuthorizationService } from '../../core/authz/authorization.service';
@@ -92,65 +96,124 @@ export class OrganizationsController {
   }
 
   /**
-   * The organisation's model provider (ADR-023).
+   * The organisation's model providers, tried in priority order (ADR-023,
+   * extended to a failover chain).
    *
-   * Readable by any member, because "which AI is answering, and does it call out"
-   * is something everyone submitting a task should be able to see. Writable only
-   * by an owner or admin, because it spends money and it sends repository source
-   * to a third party.
+   * Readable by any member, because "which AIs are tried, in what order, and do
+   * they call out" is something everyone submitting a task should be able to
+   * see. Writable, reorderable and testable only by an owner or admin, because
+   * it spends money and it sends repository source to a third party.
+   *
+   * Every write and reorder invalidates the resolver's cache: it is keyed on the
+   * summed revision of the enabled rows, and dropping it here means a change
+   * applies to the next task rather than whenever that revision is next read.
    */
-  @Get(':organizationId/model-provider')
-  async modelProvider(
+  @Get(':organizationId/model-providers')
+  async listModelProviders(
     @CurrentUser() user: AuthenticatedUser,
     @Param('organizationId', ParseUUIDPipe) organizationId: string,
   ) {
     await this.authz.requireOrganizationMember(user, organizationId);
-    return this.modelSettings.describe(organizationId);
+    return this.modelSettings.list(organizationId);
   }
 
-  @Put(':organizationId/model-provider')
-  async setModelProvider(
+  @Post(':organizationId/model-providers')
+  @HttpCode(HttpStatus.CREATED)
+  async addModelProvider(
     @CurrentUser() user: AuthenticatedUser,
     @Param('organizationId', ParseUUIDPipe) organizationId: string,
-    @Body() dto: WriteModelSettingsDto,
+    @Body() dto: AddModelProviderDto,
   ) {
     await this.authz.requireOrganizationMember(user, organizationId, 'admin');
-    const result = await this.modelSettings.write(organizationId, user.userId, dto);
-
-    // The resolver caches a built provider per organisation. Dropping it here
-    // means the change applies to the next task rather than after the revision
-    // happens to be re-read.
+    const row = await this.modelSettings.addRow(organizationId, user.userId, dto);
     this.providers.invalidate(organizationId);
-
-    return result;
-  }
-
-  @Delete(':organizationId/model-provider')
-  async clearModelProvider(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('organizationId', ParseUUIDPipe) organizationId: string,
-  ) {
-    await this.authz.requireOrganizationMember(user, organizationId, 'admin');
-    const result = await this.modelSettings.clear(organizationId, user.userId);
-    this.providers.invalidate(organizationId);
-    return result;
+    return row;
   }
 
   /**
-   * Calls the configured provider once, with a trivial prompt, and reports what
-   * happened.
+   * Declared before the :rowId routes, and it has to stay there. Nest matches in
+   * declaration order, so with :rowId first this path binds rowId to the literal
+   * "order" and reorder becomes unreachable - a route that answers rather than
+   * 404s, which is the kind of dead endpoint nobody notices.
+   */
+  @Patch(':organizationId/model-providers/order')
+  async reorderModelProviders(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('organizationId', ParseUUIDPipe) organizationId: string,
+    @Body() dto: ReorderModelProvidersDto,
+  ) {
+    await this.authz.requireOrganizationMember(user, organizationId, 'admin');
+    const result = await this.modelSettings.reorder(organizationId, user.userId, dto.order);
+    this.providers.invalidate(organizationId);
+    return result;
+  }
+
+  @Patch(':organizationId/model-providers/:rowId')
+  async updateModelProvider(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('organizationId', ParseUUIDPipe) organizationId: string,
+    @Param('rowId', ParseUUIDPipe) rowId: string,
+    @Body() dto: UpdateModelProviderDto,
+  ) {
+    await this.authz.requireOrganizationMember(user, organizationId, 'admin');
+    const row = await this.modelSettings.updateRow(organizationId, rowId, user.userId, dto);
+    this.providers.invalidate(organizationId);
+    return row;
+  }
+
+  @Delete(':organizationId/model-providers/:rowId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeModelProvider(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('organizationId', ParseUUIDPipe) organizationId: string,
+    @Param('rowId', ParseUUIDPipe) rowId: string,
+  ) {
+    await this.authz.requireOrganizationMember(user, organizationId, 'admin');
+    await this.modelSettings.removeRow(organizationId, rowId, user.userId);
+    this.providers.invalidate(organizationId);
+  }
+
+  /**
+   * Calls every enabled provider once, in priority order, and reports on each.
    *
    * Worth an endpoint because the alternative way to discover a wrong key is a
    * task that fails after cloning a repository and producing a plan. The prompt
    * carries no repository content, so this is safe to run before any project is
    * connected.
    */
-  @Post(':organizationId/model-provider/test')
-  async testModelProvider(
+  @Post(':organizationId/model-providers/test')
+  async testModelProviderChain(
     @CurrentUser() user: AuthenticatedUser,
     @Param('organizationId', ParseUUIDPipe) organizationId: string,
   ) {
     await this.authz.requireOrganizationMember(user, organizationId, 'admin');
-    return this.providers.test(organizationId, user.userId);
+    return this.providers.testChain(organizationId, user.userId);
+  }
+
+  /**
+   * Asks an OpenAI-compatible endpoint what models it serves.
+   *
+   * Declared before `:rowId/test` below: both are POST under
+   * `model-providers/`, and a route declared later never gets a chance to match
+   * a request the earlier one already claims.
+   */
+  @Post(':organizationId/model-providers/discover-models')
+  async discoverModels(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('organizationId', ParseUUIDPipe) organizationId: string,
+    @Body() dto: DiscoverModelsDto,
+  ) {
+    await this.authz.requireOrganizationMember(user, organizationId, 'admin');
+    return { models: await this.providers.discoverModels(dto.baseUrl, dto.apiKey) };
+  }
+
+  @Post(':organizationId/model-providers/:rowId/test')
+  async testModelProviderRow(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('organizationId', ParseUUIDPipe) organizationId: string,
+    @Param('rowId', ParseUUIDPipe) rowId: string,
+  ) {
+    await this.authz.requireOrganizationMember(user, organizationId, 'admin');
+    return this.providers.testRow(organizationId, rowId, user.userId);
   }
 }

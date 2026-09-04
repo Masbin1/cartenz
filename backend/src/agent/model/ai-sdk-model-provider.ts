@@ -54,6 +54,16 @@ export class AiSdkModelProvider implements ModelProvider {
   private readonly logger = new Logger(AiSdkModelProvider.name);
   private readonly language: LanguageModel;
 
+  /**
+   * True when no key was configured and a loopback placeholder was sent instead.
+   *
+   * Kept so a 401 can distinguish "your key was refused" from "there was no key
+   * to send". They read identically otherwise, and the second is the common case
+   * on a host running 9router or Hermes, which authenticate — unlike ollama and
+   * llama.cpp, for which a keyless row is correct.
+   */
+  private usingPlaceholderKey = false;
+
   readonly id: string;
   readonly model: string;
   readonly callsExternalService = true;
@@ -95,6 +105,7 @@ export class AiSdkModelProvider implements ModelProvider {
     // better failure than refusing to start.
     const local = isLoopbackUrl(settings.baseUrl);
     const apiKey = settings.apiKey || (local ? 'not-required-for-a-local-gateway' : '');
+    this.usingPlaceholderKey = !settings.apiKey && local;
 
     if (!apiKey) {
       throw new ModelProviderError(
@@ -308,7 +319,12 @@ export class AiSdkModelProvider implements ModelProvider {
         `${status ? ` [HTTP ${status}]` : ''}: ${message}`,
     );
 
-    return new ModelProviderError(this.id, this.explain(status, retryable, error), retryable);
+    return new ModelProviderError(
+      this.id,
+      this.explain(status, retryable, error),
+      retryable,
+      status,
+    );
   }
 
   /**
@@ -336,7 +352,11 @@ export class AiSdkModelProvider implements ModelProvider {
 
     switch (status) {
       case 401:
-        return `${this.id} rejected the API key.${suffix}`;
+        return this.usingPlaceholderKey
+          ? `${this.id} refused the request because no key is stored. A placeholder is ` +
+            'sent for a local endpoint, and this gateway authenticates. Enter a token ' +
+            `in the organisation settings.${suffix}`
+          : `${this.id} rejected the API key.${suffix}`;
       case 403:
         return `The API key was accepted but is not allowed to use ${this.model}.${suffix}`;
       case 402:

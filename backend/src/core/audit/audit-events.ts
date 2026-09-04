@@ -49,6 +49,7 @@ export const AUDIT_EVENTS = {
   MODEL_PROVIDER_CONFIGURED: 'model_provider.configured',
   MODEL_PROVIDER_CLEARED: 'model_provider.cleared',
   MODEL_PROVIDER_TESTED: 'model_provider.tested',
+  MODEL_PROVIDER_REORDERED: 'model_provider.reordered',
 
   AUTHORIZATION_DENIED: 'authorization.denied',
 } as const;
