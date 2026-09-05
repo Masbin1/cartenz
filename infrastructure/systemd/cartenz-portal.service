@@ -1,0 +1,36 @@
+[Unit]
+# Cartenz portal — the Next.js production server.
+Description=Cartenz portal
+Documentation=file:///opt/cartenz/docs/INSTALL-SERVER.md
+After=network-online.target cartenz-api.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=cartenz
+Group=cartenz
+WorkingDirectory=/opt/cartenz/frontend
+EnvironmentFile=/opt/cartenz/.env
+Environment=NODE_ENV=production
+# `next start` serves the build produced by `npm run build`. The port comes from
+# the same .env the API reads; systemd expands it after EnvironmentFile is read.
+ExecStart=/usr/bin/npx next start -p ${FRONTEND_PORT}
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cartenz/frontend/.next /var/log/cartenz
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=append:/var/log/cartenz/portal.log
+StandardError=append:/var/log/cartenz/portal.log
+
+[Install]
+WantedBy=multi-user.target

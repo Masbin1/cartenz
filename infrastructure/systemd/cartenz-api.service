@@ -1,0 +1,38 @@
+[Unit]
+# Cartenz API — REST and the WebSocket event stream.
+Description=Cartenz API
+Documentation=file:///opt/cartenz/docs/INSTALL-SERVER.md
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+# A boot that cannot reach Postgres should retry forever rather than give up
+# after systemd's default burst limit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=cartenz
+Group=cartenz
+WorkingDirectory=/opt/cartenz/backend
+# The repository-root .env is the single source of configuration (ADR-012).
+EnvironmentFile=/opt/cartenz/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/main.js
+Restart=always
+RestartSec=5
+
+# Hardening. The platform writes only to its workspace root and its logs.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cartenz/.runtime /var/log/cartenz
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=append:/var/log/cartenz/api.log
+StandardError=append:/var/log/cartenz/api.log
+
+[Install]
+WantedBy=multi-user.target
