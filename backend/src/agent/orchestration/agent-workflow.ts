@@ -407,6 +407,7 @@ export class AgentWorkflow {
     try {
       outcome = await this.planner.createOdooOnlinePlan({
         organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -495,6 +496,7 @@ export class AgentWorkflow {
     try {
       outcome = await this.implementationLoop.run({
         organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -635,6 +637,7 @@ export class AgentWorkflow {
     try {
       outcome = await this.planner.createPlan({
         organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -743,6 +746,7 @@ export class AgentWorkflow {
     try {
       outcome = await this.implementationLoop.run({
         organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -855,6 +859,7 @@ export class AgentWorkflow {
     try {
       outcome = await this.chatLoop.run({
         organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,

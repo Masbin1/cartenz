@@ -34,6 +34,8 @@ export type LoopToolResult = 'succeeded' | 'failed' | 'denied' | 'approval_requi
 
 export interface ChatLoopInput {
   readonly organizationId: string;
+  /** Scopes an agent-backed endpoint's memory to this project, when known. */
+  readonly projectId?: string;
   readonly prompt: string;
   readonly projectName: string;
   readonly taskReference: string;
@@ -91,7 +93,7 @@ export class ChatLoop {
   ) {}
 
   async run(input: ChatLoopInput): Promise<ChatLoopOutcome> {
-    const provider = await this.providers.forOrganization(input.organizationId);
+    const provider = await this.providers.forOrganization(input.organizationId, input.projectId);
     const tools = this.offeredTools(input.agentPermissions, input.executionMode ?? null);
 
     // An empty tool list is legitimate for a chat task: an `ai_project` has no

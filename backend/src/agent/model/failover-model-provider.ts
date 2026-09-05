@@ -160,9 +160,22 @@ function movesOn(error: unknown): boolean {
   const name = error instanceof Error ? error.name : '';
   if (name === 'TimeoutError') return true;
 
-  // A schema mismatch is this row's structuredOutputs being wrong, which the
-  // next provider does not fix and which the person configuring it must see.
-  if (name === 'ZodError' || name === 'NoObjectGeneratedError') return false;
+  /**
+   * A schema mismatch used to end the chain here, on the reasoning that the next
+   * provider would answer the same way. That holds between raw model endpoints
+   * and does not hold across kinds: an agent-backed endpoint answers a large
+   * schema in prose no matter how it is asked, while an ordinary model endpoint
+   * returns the object. Failing over turns "this provider cannot produce the
+   * object" into the next provider's problem, which is the whole purpose of a
+   * chain whose members have different capabilities. A chain of one still
+   * surfaces the error, because there is nothing to fail over to.
+   *
+   * Read from the domain error's own flag as well as the SDK's error name: by
+   * the time the chain sees a failure the provider has already wrapped it, and
+   * the name is gone.
+   */
+  if (error instanceof ModelProviderError && error.schemaMismatch) return true;
+  if (name === 'ZodError' || name === 'NoObjectGeneratedError') return true;
 
   const message = error instanceof Error ? error.message : String(error);
   return /rate.?limit|overloaded|unavailable|ECONNREFUSED|ECONNRESET|ETIMEDOUT/i.test(message);

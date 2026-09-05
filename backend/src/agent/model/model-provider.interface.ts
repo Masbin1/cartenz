@@ -122,6 +122,18 @@ export class ModelProviderError extends Error {
      * uses it, and used to construct this error without it.
      */
     readonly statusCode?: number,
+    /**
+     * True when the provider answered but its response could not be parsed or
+     * validated against the requested schema.
+     *
+     * Kept for the same reason as `statusCode`: the failover chain decides
+     * move-on from stop by it, and this class is where the SDK's own error name
+     * (`NoObjectGeneratedError`) stops being visible. Endpoints differ in this
+     * capability — an agent-backed endpoint answers a large schema in prose
+     * where a model endpoint returns the object — so it is a fact about this
+     * provider rather than about the request.
+     */
+    readonly schemaMismatch: boolean = false,
   ) {
     super(message);
     this.name = 'ModelProviderError';

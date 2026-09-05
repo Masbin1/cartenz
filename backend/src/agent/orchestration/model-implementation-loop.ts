@@ -47,6 +47,8 @@ export interface ImplementationLoopInput {
    * a single provider bound at boot.
    */
   readonly organizationId: string;
+  /** Scopes an agent-backed endpoint's memory to this project, when known. */
+  readonly projectId?: string;
   readonly prompt: string;
   readonly projectName: string;
   readonly taskReference: string;
@@ -105,7 +107,7 @@ export class ModelImplementationLoop {
   ) {}
 
   async run(input: ImplementationLoopInput): Promise<ImplementationLoopOutcome> {
-    const provider = await this.providers.forOrganization(input.organizationId);
+    const provider = await this.providers.forOrganization(input.organizationId, input.projectId);
     const tools = this.offeredTools(input.agentPermissions, input.executionMode ?? null);
 
     // An empty tool list means the model is asked to change a repository with no

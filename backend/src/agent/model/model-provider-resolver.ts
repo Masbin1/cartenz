@@ -87,10 +87,17 @@ export class ModelProviderResolver {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
-  async forOrganization(organizationId: string): Promise<ModelProvider> {
+  /**
+   * `projectId` is optional and only affects an agent-backed endpoint: it becomes
+   * the session key that scopes that agent's long-term memory, so two projects in
+   * one organisation do not accumulate into the same memory. Because the built
+   * providers then carry different headers, it is part of the cache key.
+   */
+  async forOrganization(organizationId: string, projectId?: string): Promise<ModelProvider> {
     const chain = await this.settings.resolveChain(organizationId);
+    const cacheKey = `${organizationId}:${projectId ?? '-'}`;
 
-    const cached = this.cache.get(organizationId);
+    const cached = this.cache.get(cacheKey);
     if (cached && cached.revision === chain.revision) return cached.provider;
 
     // Mock is not a chain: it calls nothing, so there is nothing to fail over
@@ -100,7 +107,7 @@ export class ModelProviderResolver {
         new ScriptedModelProvider(this.config),
         this.boundary,
       );
-      this.cache.set(organizationId, { revision: chain.revision, provider });
+      this.cache.set(cacheKey, { revision: chain.revision, provider });
       return provider;
     }
 
@@ -109,7 +116,7 @@ export class ModelProviderResolver {
       members.push({
         priority: settings.priority,
         label: settings.label,
-        provider: await this.buildOne(organizationId, settings),
+        provider: await this.buildOne(organizationId, settings, projectId),
       });
     }
 
@@ -121,13 +128,21 @@ export class ModelProviderResolver {
       this.boundary,
     );
 
-    this.cache.set(organizationId, { revision: chain.revision, provider });
+    this.cache.set(cacheKey, { revision: chain.revision, provider });
     return provider;
   }
 
-  /** Drops a cached provider, so the next call rebuilds it. */
+  /**
+   * Drops an organisation's cached providers, so the next call rebuilds them.
+   *
+   * Every per-project entry is removed, not just the organisation-wide one: they
+   * were all built from the settings that just changed.
+   */
   invalidate(organizationId: string): void {
-    this.cache.delete(organizationId);
+    const prefix = `${organizationId}:`;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) this.cache.delete(key);
+    }
   }
 
   /**
@@ -349,6 +364,7 @@ export class ModelProviderResolver {
   private async buildOne(
     organizationId: string,
     settings: ResolvedModelSettings,
+    projectId?: string,
   ): Promise<ModelProvider> {
     if (settings.providerId === 'mock') {
       this.logger.log(
@@ -381,6 +397,9 @@ export class ModelProviderResolver {
       // authenticate rejects it and says so, which is the useful failure.
       apiKey: apiKey ?? '',
       structuredOutputs: settings.structuredOutputs ?? undefined,
+      // Only meaningful to an agent-backed endpoint, which scopes its long-term
+      // memory by this key. Absent when the caller named no project.
+      sessionKey: projectId ? `cartenz-project-${projectId}` : undefined,
     });
 
     this.logger.log(
