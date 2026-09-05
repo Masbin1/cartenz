@@ -358,6 +358,40 @@ export const projectSpecifications = pgTable(
   }),
 );
 
+export const projectDocuments = pgTable(
+  'project_documents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    uploadedByUserId: uuid('uploaded_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    /** Original filename as uploaded; shown to people, never used as a path. */
+    filename: text('filename').notNull(),
+    /** Declared MIME type, allowlisted at upload (ADR-030). */
+    mimeType: text('mime_type').notNull(),
+    /** Uploaded byte size, before extraction. */
+    byteSize: integer('byte_size').notNull(),
+    /**
+     * The document as extracted text (ADR-030). The original binary is not
+     * stored. Bounded on write; a document whose extraction yields no text is
+     * refused rather than stored empty.
+     */
+    textContent: text('text_content').notNull(),
+    ...timestamps,
+  },
+  (table) => ({
+    byProject: index('project_documents_project_idx').on(table.projectId),
+  }),
+);
+
+export type ProjectDocumentRow = typeof projectDocuments.$inferSelect;
+
 export const agentSessions = pgTable(
   'agent_sessions',
   {
@@ -415,6 +449,13 @@ export const agentTasks = pgTable(
     /** Validation and test outcome for the task. */
     testResults: jsonb('test_results').$type<Record<string, unknown> | null>(),
     failureReason: text('failure_reason'),
+    /**
+     * Documents attached to the task (ADR-030), referenced by id. The workflow
+     * loads them and passes each as a prompt part; they are never concatenated
+     * into `prompt`. A task runs with the text captured at creation time even if
+     * a document is later deleted, so the ids are what is stored here.
+     */
+    attachedDocumentIds: jsonb('attached_document_ids').$type<string[]>().notNull().default([]),
     /**
      * The environment this task targets (ADR-021).
      *

@@ -53,6 +53,11 @@ export interface ChatLoopInput {
    * them. Rendered after the current prompt so the model answers in context.
    */
   readonly conversationContext?: readonly PromptPart[];
+  /**
+   * Documents attached to the task (ADR-030). Each is rendered as a prompt part
+   * labelled with its filename and marked untrusted so the boundary redacts it.
+   */
+  readonly documents?: readonly { name: string; content: string }[];
   readonly run: ChatLoopToolRunner;
 }
 
@@ -217,6 +222,14 @@ export class ChatLoop {
 
     for (const part of input.conversationContext ?? []) {
       parts.push(part);
+    }
+
+    for (const document of input.documents ?? []) {
+      parts.push({
+        label: `Attached document: ${document.name}`,
+        content: document.content,
+        untrusted: true,
+      });
     }
 
     return parts;

@@ -15,6 +15,7 @@ import { WorkspaceManager, type Workspace } from '../workspace/workspace-manager
 import { ApprovalRequiredError, ToolExecutionService } from '../tools/tool-execution.service';
 import { ToolRegistry } from '../tools/tool-registry';
 import { ApprovalService } from '../../modules/approvals/approval.service';
+import { DocumentsService } from '../../modules/documents/documents.service';
 import { OdooProjectAnalyser } from '../analysis/odoo-project-analyser';
 import { ProjectMemoryService } from '../analysis/project-memory.service';
 import { GitService } from '../git/git.service';
@@ -88,8 +89,24 @@ export class AgentWorkflow {
     private readonly projectMemory: ProjectMemoryService,
     private readonly git: GitService,
     private readonly validation: OdooValidationRunner,
+    private readonly documents: DocumentsService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
+
+  /**
+   * Loads the text of the task's attached documents (ADR-030), in attachment
+   * order, for the planner and chat loop to render as prompt parts.
+   */
+  private async attachedDocuments(
+    snapshot: TaskExecutionSnapshot,
+  ): Promise<readonly { name: string; content: string }[]> {
+    if (snapshot.attachedDocumentIds.length === 0) return [];
+    const rows = await this.documents.loadForTask(
+      snapshot.projectId,
+      snapshot.attachedDocumentIds,
+    );
+    return rows.map((row) => ({ name: row.filename, content: row.content }));
+  }
 
   /** Advances a task as far as it can go, returning when it settles or suspends. */
   async run(taskId: string): Promise<void> {
@@ -416,6 +433,7 @@ export class AgentWorkflow {
         targetModel: target,
         fields: (fields.output.fields as OdooFieldSummary[] | undefined) ?? [],
         grantedTools: this.grantedToolNames(snapshot),
+        documents: await this.attachedDocuments(snapshot),
       });
     } catch (error) {
       return this.failOnModelError(snapshot, 'planning', 'planning', error);
@@ -648,6 +666,7 @@ export class AgentWorkflow {
         excerpts: candidates.excerpts,
         rankedCandidates: candidates.ranked,
         grantedTools: this.grantedToolNames(snapshot),
+        documents: await this.attachedDocuments(snapshot),
       });
     } catch (error) {
       return this.failOnModelError(snapshot, 'planning', 'planning', error);
@@ -867,6 +886,7 @@ export class AgentWorkflow {
         odooVersion: snapshot.odooVersion,
         agentPermissions: snapshot.agentPermissions,
         executionMode: snapshot.executionMode,
+        documents: await this.attachedDocuments(snapshot),
         run: async (call) => {
           const result = await this.callTool(snapshot, workspace, call.name, call.input);
           return { status: toLoopResult(result.status), output: result.output };

@@ -11,6 +11,8 @@ import type {
   ModelProviderTestResult,
   PendingApprovalSummary,
   ProjectDetail,
+  ProjectDocument,
+  ProjectDocumentDetail,
   ProjectEnvironment,
   ProjectSummary,
   TaskDetail,
@@ -131,6 +133,56 @@ function safeParse(text: string): unknown {
   } catch {
     return null;
   }
+}
+
+/**
+ * Uploads one file as multipart/form-data and parses the JSON response.
+ *
+ * Separate from `request` because a FormData body must not carry a JSON
+ * Content-Type, and the browser sets the multipart boundary itself. The token
+ * and refresh handling mirror `request`.
+ */
+async function uploadRequest<T>(path: string, file: File): Promise<T> {
+  const send = async (): Promise<Response> => {
+    const headers: Record<string, string> = {};
+    const token = tokenStore.access;
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const form = new FormData();
+    form.append('file', file, file.name);
+
+    return fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers,
+      body: form,
+      cache: 'no-store',
+    });
+  };
+
+  let response = await send();
+
+  if (response.status === 401 && tokenStore.refresh) {
+    refreshInFlight = refreshInFlight ?? attemptRefresh();
+    const refreshed = await refreshInFlight;
+    refreshInFlight = null;
+    if (refreshed) response = await send();
+  }
+
+  const text = await response.text();
+  const payload = text.length > 0 ? safeParse(text) : null;
+
+  if (!response.ok) {
+    const message =
+      (payload as { message?: string } | null)?.message ??
+      `The upload failed with status ${response.status}.`;
+    throw new ApiError(
+      response.status,
+      message,
+      (payload as { correlationId?: string } | null)?.correlationId,
+    );
+  }
+
+  return payload as T;
 }
 
 async function attemptRefresh(): Promise<boolean> {
@@ -397,7 +449,13 @@ export const api = {
 
     create: (
       projectId: string,
-      body: { prompt: string; sessionId?: string; environmentId?: string; kind?: TaskKind },
+      body: {
+        prompt: string;
+        sessionId?: string;
+        environmentId?: string;
+        kind?: TaskKind;
+        documentIds?: string[];
+      },
     ) =>
       request<{ task_id: string; id: string; status: string; sessionId: string }>(
         `/projects/${projectId}/tasks`,
@@ -434,6 +492,22 @@ export const api = {
 
     sessions: (projectId: string) =>
       request<AgentSession[]>(`/projects/${projectId}/sessions`),
+  },
+
+  documents: {
+    list: (projectId: string) =>
+      request<ProjectDocument[]>(`/projects/${projectId}/documents`),
+
+    read: (projectId: string, documentId: string) =>
+      request<ProjectDocumentDetail>(`/projects/${projectId}/documents/${documentId}`),
+
+    upload: (projectId: string, file: File) =>
+      uploadRequest<ProjectDocument>(`/projects/${projectId}/documents`, file),
+
+    remove: (projectId: string, documentId: string) =>
+      request<{ id: string }>(`/projects/${projectId}/documents/${documentId}`, {
+        method: 'DELETE',
+      }),
   },
 
   approvals: {

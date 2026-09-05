@@ -26,6 +26,10 @@ export const AUDIT_EVENTS = {
   PROJECT_SPECIFICATION_CREATED: 'project.specification_created',
   PROJECT_AGENT_PERMISSIONS_CHANGED: 'project.agent_permissions_changed',
 
+  /** A document was uploaded to a project for the agent to read (ADR-030). */
+  PROJECT_DOCUMENT_UPLOADED: 'project.document_uploaded',
+  PROJECT_DOCUMENT_DELETED: 'project.document_deleted',
+
   TASK_CREATED: 'task.created',
   TASK_STARTED: 'task.started',
   TASK_TRANSITIONED: 'task.transitioned',

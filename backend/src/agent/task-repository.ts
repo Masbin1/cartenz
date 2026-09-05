@@ -34,6 +34,12 @@ export interface TaskExecutionSnapshot {
    */
   readonly executionMode: ExecutionMode | null;
   readonly prompt: string;
+  /**
+   * Documents attached to the task (ADR-030). Their text is passed to the model
+   * as prompt parts; the workflow resolves the ids to text, the snapshot only
+   * carries the ids so a later deletion does not change what was submitted.
+   */
+  readonly attachedDocumentIds: readonly string[];
   /** Which product shape this task is: a development run or a conversation (ADR-029). */
   readonly kind: AgentTaskKind;
   readonly status: AgentTaskStatus;
@@ -121,6 +127,7 @@ export class TaskRepository {
         projectId: agentTasks.projectId,
         projectName: projects.name,
         prompt: agentTasks.prompt,
+        attachedDocumentIds: agentTasks.attachedDocumentIds,
         kind: agentTasks.kind,
         status: agentTasks.status,
         branch: agentTasks.branch,
@@ -203,6 +210,7 @@ export class TaskRepository {
       projectType: row.projectType as ProjectType,
       executionMode: executionModeFor(row.projectType as ProjectType),
       prompt: row.prompt,
+      attachedDocumentIds: row.attachedDocumentIds ?? [],
       kind: row.kind as AgentTaskKind,
       status: row.status as AgentTaskStatus,
       branch: row.branch,

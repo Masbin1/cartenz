@@ -1,6 +1,17 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 import { AGENT_TASK_KINDS } from '../../../core/enums';
+import { MAX_ATTACHED_DOCUMENTS } from '../../documents/document-extraction';
 
 export class CreateTaskDto {
   @IsString()
@@ -34,6 +45,19 @@ export class CreateTaskDto {
   @IsOptional()
   @IsUUID()
   environmentId?: string;
+
+  /**
+   * Documents already uploaded to the project, attached to this task (ADR-030).
+   * The workflow passes each one's text to the model as a prompt part; they are
+   * never concatenated into `prompt`. Cap keeps the prompt bounded.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_ATTACHED_DOCUMENTS, {
+    message: `At most ${MAX_ATTACHED_DOCUMENTS} documents can be attached to one task`,
+  })
+  @IsUUID('4', { each: true })
+  documentIds?: string[];
 }
 
 export class CancelTaskDto {

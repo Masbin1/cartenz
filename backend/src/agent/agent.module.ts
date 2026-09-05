@@ -27,6 +27,7 @@ import { OnPremiseExecutor } from './executors/on-premise.executor';
 import { OdooSHExecutor } from './executors/odoo-sh.executor';
 import { OdooOnlineExecutor } from './executors/odoo-online.executor';
 import { ApprovalsModule } from '../modules/approvals/approvals.module';
+import { DocumentsModule } from '../modules/documents/documents.module';
 
 /**
  * The agent layer: orchestration, tools, git, analysis and the workspace seam
@@ -43,7 +44,7 @@ import { ApprovalsModule } from '../modules/approvals/approvals.module';
  * would make the sequence harder to follow.
  */
 @Module({
-  imports: [ModelModule, forwardRef(() => ApprovalsModule)],
+  imports: [ModelModule, forwardRef(() => ApprovalsModule), DocumentsModule],
   providers: [
     TaskRepository,
     GitService,

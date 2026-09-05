@@ -456,6 +456,19 @@ export interface ProjectEnvironment {
   isDefaultTarget?: boolean;
 }
 
+/** A document attached to a project for the agent to read (ADR-030). */
+export interface ProjectDocument {
+  id: string;
+  filename: string;
+  mimeType: string;
+  byteSize: number;
+  createdAt: string;
+}
+
+export interface ProjectDocumentDetail extends ProjectDocument {
+  textContent: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   eventType: string;

@@ -5,13 +5,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import {
   agentActions,
   agentSessions,
   agentTaskEvents,
   agentTasks,
+  projectDocuments,
   projectEnvironments,
   approvals,
   projects,
@@ -112,6 +113,16 @@ export class TasksService {
     }
 
     /**
+     * Documents attached to this task (ADR-030) must already exist on this
+     * project. Validated at submission so a mistyped id fails the request rather
+     * than silently running without the document the person meant to attach.
+     */
+    const attachedDocumentIds = await this.resolveAttachedDocuments(
+      projectId,
+      dto.documentIds ?? [],
+    );
+
+    /**
      * The environment this task will work against (ADR-021).
      *
      * Resolved and refused here, before a session is opened or a task row is
@@ -182,6 +193,7 @@ export class TasksService {
       prompt: dto.prompt,
       kind,
       environmentId: environment.id,
+      attachedDocumentIds,
     });
 
     await this.audit.record({
@@ -507,6 +519,38 @@ export class TasksService {
    * generated rather than sequential, so a collision is possible but rare; the
    * unique index is the authority.
    */
+  /**
+   * Confirms every attached document id belongs to this project (ADR-030), and
+   * returns them in the order given. A mistyped id fails the request instead of
+   * silently running without the document.
+   */
+  private async resolveAttachedDocuments(
+    projectId: string,
+    documentIds: string[],
+  ): Promise<string[]> {
+    if (documentIds.length === 0) return [];
+
+    const rows = await this.database.db
+      .select({ id: projectDocuments.id })
+      .from(projectDocuments)
+      .where(
+        and(
+          eq(projectDocuments.projectId, projectId),
+          inArray(projectDocuments.id, documentIds),
+        ),
+      );
+
+    const found = new Set(rows.map((row) => row.id));
+    const missing = documentIds.filter((id) => !found.has(id));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Attached document not found on this project: ${missing.join(', ')}`,
+      );
+    }
+
+    return documentIds;
+  }
+
   private async insertTask(values: {
     organizationId: string;
     projectId: string;
@@ -515,6 +559,7 @@ export class TasksService {
     prompt: string;
     kind: AgentTaskKind;
     environmentId: string;
+    attachedDocumentIds: string[];
   }) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
