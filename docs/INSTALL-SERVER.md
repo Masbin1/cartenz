@@ -42,6 +42,18 @@ clone, not the total.
 
 ## 2. Prerequisites
 
+> **Shortcut:** `infrastructure/scripts/install-server.sh` performs sections 2
+> through 6, 9 and part of 5 in one run. Sections 7 (reverse proxy and TLS), 8
+> (Odoo validation) and 9 (first run) still need a person. Preview it first:
+>
+> ```bash
+> sudo DRY_RUN=1 ./infrastructure/scripts/install-server.sh   # changes nothing
+> sudo ./infrastructure/scripts/install-server.sh
+> ```
+>
+> The script is idempotent and never overwrites an existing `.env` or database.
+> The manual steps below remain the reference for what it does and why.
+
 ### 2.1 System packages
 
 ```bash
