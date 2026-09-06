@@ -350,6 +350,26 @@ export class ProjectsService {
         })
         .returning();
 
+      /**
+       * The same default environment `create` builds (ADR-034).
+       *
+       * Without it every task submission fails environment resolution
+       * (ADR-021) with "no environments declared, so there is no branch to work
+       * on" — the branch a task targets is not an optional extra, so it is
+       * created in the same transaction as the project rather than left to a
+       * later edit.
+       */
+      await tx
+        .insert(projectEnvironments)
+        .values(
+          this.environments.buildForCreation(
+            project.id,
+            dto.organizationId,
+            'main',
+            undefined,
+          ),
+        );
+
       const [spec] = await tx
         .insert(projectSpecifications)
         .values({

@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Client } from 'pg';
 import { APP_CONFIG } from '../../core/config/config.module';
@@ -109,13 +109,27 @@ export class OdooValidationRunner {
     const confDirectory = join(request.metadataPath, 'validation');
     const confPath = join(confDirectory, 'odoo.conf');
 
+    /**
+     * Where this project's modules actually live (ADR-034).
+     *
+     * A project created by the platform holds them in `addons/` (ADR-033);
+     * a repository the platform did not create usually holds them at its root.
+     * Detected rather than configured, so both work without a setting — and
+     * pointing Odoo at the directory *containing* `addons/` would find no
+     * module at all.
+     */
+    const addonsDirectory = join(request.repositoryPath, 'addons');
+    const workspaceAddonsPath = (await stat(addonsDirectory).catch(() => null))?.isDirectory()
+      ? addonsDirectory
+      : request.repositoryPath;
+
     await mkdir(confDirectory, { recursive: true });
     await writeFile(
       confPath,
       buildOdooConf({
         coreAddonsPath: join(runtime.corePath, 'addons'),
         sharedAddonPaths: runtime.sharedAddonPaths,
-        workspaceAddonsPath: request.repositoryPath,
+        workspaceAddonsPath,
         databaseName: database,
         databaseHost: this.config.validation.databaseHost,
         databasePort: this.config.validation.databasePort,
@@ -130,7 +144,10 @@ export class OdooValidationRunner {
       await this.createDatabase(database);
 
       const result = await this.commands.run(
-        'python3',
+        // The configured interpreter (ADR-034): Odoo needs a Python with its
+        // dependencies installed, which is usually a virtualenv rather than the
+        // system one.
+        this.config.validation.python,
         [join(runtime.corePath, 'odoo-bin'), ...buildTestArguments({
           confPath,
           databaseName: database,

@@ -26,7 +26,17 @@ export function changedModules(paths: readonly string[]): string[] {
     // the dot of ".github", turning a directory that is never an addon into one
     // called "github".
     const normalised = path.replace(/^(?:\.\/|\/)+/, '');
-    const segments = normalised.split('/').filter((segment) => segment.length > 0);
+    const rawSegments = normalised.split('/').filter((segment) => segment.length > 0);
+
+    /**
+     * Skip a leading `addons/` (ADR-034).
+     *
+     * A project created by the platform holds its modules in `addons/`
+     * (ADR-033), so without this every changed file maps to the literal
+     * "addons" and the run tries to install a module by that name. A repository
+     * whose modules sit at the root is unaffected: it has no such segment.
+     */
+    const segments = rawSegments[0] === 'addons' ? rawSegments.slice(1) : rawSegments;
 
     // A file at the repository root belongs to no addon.
     if (segments.length < 2) continue;
