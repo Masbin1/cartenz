@@ -667,6 +667,7 @@ export class AgentWorkflow {
         rankedCandidates: candidates.ranked,
         grantedTools: this.grantedToolNames(snapshot),
         documents: await this.attachedDocuments(snapshot),
+        odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
       });
     } catch (error) {
       return this.failOnModelError(snapshot, 'planning', 'planning', error);
@@ -774,6 +775,7 @@ export class AgentWorkflow {
         plan: snapshot.plan,
         agentPermissions: snapshot.agentPermissions,
         executionMode: snapshot.executionMode,
+        odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
         run: async (call) => {
           const outcome = await this.callTool(snapshot, workspace, call.name, call.input);
           return { status: toLoopResult(outcome.status), output: outcome.output };
@@ -887,6 +889,7 @@ export class AgentWorkflow {
         agentPermissions: snapshot.agentPermissions,
         executionMode: snapshot.executionMode,
         documents: await this.attachedDocuments(snapshot),
+        odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
         run: async (call) => {
           const result = await this.callTool(snapshot, workspace, call.name, call.input);
           return { status: toLoopResult(result.status), output: result.output };

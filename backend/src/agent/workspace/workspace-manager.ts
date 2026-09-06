@@ -277,7 +277,7 @@ export class WorkspaceManager {
         repositoryUrl: input.repositoryUrl,
         odooVersion: input.odooVersion,
         simulated: false,
-        readOnlyRoots: [],
+        readOnlyRoots: this.odooSourceRoots(),
         learnedHostKey: this.learnedHostKeys.get(workspaceId) ?? null,
         credentialRef: input.credentialRef,
         credentialKind: input.credentialKind,
@@ -470,12 +470,31 @@ export class WorkspaceManager {
       repositoryUrl: null,
       odooVersion: input.odooVersion,
       simulated: false,
-      readOnlyRoots: readOnlyRootsFromPaths(this.config.onPremise.readOnlyPaths),
+      readOnlyRoots: this.odooSourceRoots(),
       learnedHostKey: null,
       credentialRef: input.credentialRef,
       credentialKind: input.credentialKind,
       sshHostKey: input.sshHostKey,
     };
+  }
+
+  /**
+   * The Odoo source exposed to a task as read-only roots (ADR-031).
+   *
+   * Every Odoo project benefits from reading base and enterprise — a change to
+   * `sale.order` is planned against how Odoo declares it — so this is no longer
+   * on-premise only. The roots are read-only in the execution layer:
+   * `resolveWritePath` refuses a path that lands in one, which is what makes
+   * this safe rather than the prompt saying so.
+   *
+   * Empty when nothing is configured, in which case every read resolves inside
+   * the workspace exactly as before.
+   */
+  private odooSourceRoots(): readonly ReadOnlyRoot[] {
+    // Tolerate a configuration object without the section: the workspace layer
+    // is constructed in tests and by callers that predate ADR-031, and an
+    // absent reference means "no shared source", not a crash mid-task.
+    return readOnlyRootsFromPaths(this.config.odooSource?.paths ?? []);
   }
 
   /**

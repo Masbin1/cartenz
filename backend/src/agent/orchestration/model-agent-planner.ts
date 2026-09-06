@@ -41,6 +41,8 @@ export interface ModelPlanningInput {
    * so the boundary redacts them like repository content.
    */
   readonly documents?: readonly { name: string; content: string }[];
+  /** Read-only Odoo source prefixes available to this task (ADR-031). */
+  readonly odooSourcePrefixes?: readonly string[];
 }
 
 /** A field as the plan needs to see it: enough to be true to the model, no rows. */
@@ -107,6 +109,7 @@ export class ModelAgentPlanner {
       odooVersion: input.analysis?.detectedOdooVersion ?? input.declaredOdooVersion,
       branch: input.branch,
       grantedTools: input.grantedTools,
+      odooSourcePrefixes: input.odooSourcePrefixes,
     });
 
     const result = await provider.generateStructured({

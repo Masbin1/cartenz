@@ -58,6 +58,8 @@ export interface ChatLoopInput {
    * labelled with its filename and marked untrusted so the boundary redacts it.
    */
   readonly documents?: readonly { name: string; content: string }[];
+  /** Read-only Odoo source prefixes available to this task (ADR-031). */
+  readonly odooSourcePrefixes?: readonly string[];
   readonly run: ChatLoopToolRunner;
 }
 
@@ -118,6 +120,7 @@ export class ChatLoop {
       odooVersion: input.odooVersion,
       branch: input.branch,
       grantedTools: tools.map((tool) => tool.name),
+      odooSourcePrefixes: input.odooSourcePrefixes,
     });
 
     let suspended = false;

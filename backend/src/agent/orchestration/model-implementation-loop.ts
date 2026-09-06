@@ -65,6 +65,8 @@ export interface ImplementationLoopInput {
    * not have.
    */
   readonly executionMode?: ExecutionMode | null;
+  /** Read-only Odoo source prefixes available to this task (ADR-031). */
+  readonly odooSourcePrefixes?: readonly string[];
   readonly run: LoopToolRunner;
 }
 
@@ -129,6 +131,7 @@ export class ModelImplementationLoop {
       odooVersion: input.odooVersion,
       branch: input.branch,
       grantedTools: tools.map((tool) => tool.name),
+      odooSourcePrefixes: input.odooSourcePrefixes,
     });
 
     let suspended = false;

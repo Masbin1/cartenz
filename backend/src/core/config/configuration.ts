@@ -135,6 +135,22 @@ const environmentSchema = z.object({
   ON_PREMISE_ROOT: z.string().default(''),
   ON_PREMISE_READ_ONLY_PATHS: z.string().default(''),
 
+  /**
+   * The Odoo source the agent reads as a reference on every Odoo project
+   * (ADR-031), not only on-premise ones.
+   *
+   * Comma-separated absolute paths, typically the Odoo base checkout and the
+   * enterprise addons. Each becomes a read-only root whose prefix is its
+   * directory name, so the model refers to `odoo/addons/sale/...` rather than a
+   * host path, and the write tools refuse any path that lands inside one.
+   *
+   * Left empty, the paths are derived from what a deployment configured for
+   * validation already has: ON_PREMISE_READ_ONLY_PATHS, ODOO_SHARED_ADDON_PATHS
+   * and the runtime paths in ODOO_RUNTIMES. Set it explicitly to have the
+   * reference without enabling validation.
+   */
+  ODOO_SOURCE_PATHS: z.string().default(''),
+
   // Git. Shallow by default: a task needs a branch and a diff, not history.
   GIT_CLONE_DEPTH: z.coerce.number().int().min(1).max(1000).default(1),
   GIT_AUTHOR_NAME: z.string().min(1).default('LinkedERP AI Agent'),
@@ -292,6 +308,14 @@ export interface AppConfig {
     /** Shared Odoo directories the agent may read but never write. */
     readonly readOnlyPaths: readonly string[];
   };
+  /**
+   * The Odoo source the agent reads as a reference on every Odoo project
+   * (ADR-031). Empty when no Odoo source is configured, in which case every read
+   * resolves inside the workspace.
+   */
+  readonly odooSource: {
+    readonly paths: readonly string[];
+  };
   readonly git: {
     readonly cloneDepth: number;
     readonly authorName: string;
@@ -331,6 +355,19 @@ export class ConfigurationError extends Error {
     );
     this.name = 'ConfigurationError';
   }
+}
+
+/** Splits a comma-separated setting into trimmed, non-empty entries. */
+function splitPaths(value: string): string[] {
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+/** Removes duplicates while preserving first-seen order. */
+function dedupe(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 /**
@@ -394,13 +431,47 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   if (env.ON_PREMISE_ROOT && !isAbsolute(env.ON_PREMISE_ROOT)) {
     throw new ConfigurationError(['ON_PREMISE_ROOT must be an absolute path.']);
   }
-  const readOnlyPaths = env.ON_PREMISE_READ_ONLY_PATHS.split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
+  const readOnlyPaths = splitPaths(env.ON_PREMISE_READ_ONLY_PATHS);
   for (const path of readOnlyPaths) {
     if (!isAbsolute(path)) {
       throw new ConfigurationError([
         `ON_PREMISE_READ_ONLY_PATHS entry "${path}" must be an absolute path.`,
+      ]);
+    }
+  }
+
+  /**
+   * The Odoo source the agent reads as a reference (ADR-031).
+   *
+   * Explicit when ODOO_SOURCE_PATHS is set; otherwise derived from what a
+   * deployment configured for validation already holds, so the reference costs
+   * no new setting on an existing install. Deduplicated while preserving order,
+   * because the read-only prefix is the directory's basename and a duplicate
+   * would make `odoo/...` ambiguous.
+   */
+  const odooSourcePaths = ((): readonly string[] => {
+    const explicit = splitPaths(env.ODOO_SOURCE_PATHS);
+    if (explicit.length > 0) return dedupe(explicit);
+
+    // `series=path` pairs; the path is what the reference needs.
+    const runtimePaths = splitPaths(env.ODOO_RUNTIMES)
+      .map((entry) => {
+        const separator = entry.indexOf('=');
+        return separator === -1 ? entry : entry.slice(separator + 1).trim();
+      })
+      .filter((entry) => entry.length > 0);
+
+    return dedupe([
+      ...readOnlyPaths,
+      ...splitPaths(env.ODOO_SHARED_ADDON_PATHS),
+      ...runtimePaths,
+    ]);
+  })();
+
+  for (const path of odooSourcePaths) {
+    if (!isAbsolute(path)) {
+      throw new ConfigurationError([
+        `Odoo source path "${path}" must be absolute (ODOO_SOURCE_PATHS, ODOO_RUNTIMES or ODOO_SHARED_ADDON_PATHS).`,
       ]);
     }
   }
@@ -482,6 +553,9 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     onPremise: {
       root: emptyToUndefined(env.ON_PREMISE_ROOT) ?? null,
       readOnlyPaths,
+    },
+    odooSource: {
+      paths: odooSourcePaths,
     },
     git: {
       cloneDepth: env.GIT_CLONE_DEPTH,
