@@ -236,6 +236,16 @@ const environmentSchema = z.object({
   /** A run that has not finished by here is killed. Installing modules is slow. */
   VALIDATION_TIMEOUT_MS: z.coerce.number().int().min(60_000).default(900_000),
 
+  /**
+   * The interpreter a validation run uses to start Odoo (ADR-034).
+   *
+   * Odoo needs a Python with its dependencies installed, which on a normal
+   * deployment is a virtualenv rather than the system interpreter — for example
+   * /home/user/venv/bin/python. Defaults to `python3`, which is what the runner
+   * used before this was configurable.
+   */
+  ODOO_PYTHON: z.string().min(1).default('python3'),
+
   // Child process limits, enforced by CommandRunner.
   PROCESS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(60000),
   PROCESS_MAX_TIMEOUT_MS: z.coerce.number().int().min(1000).max(1800000).default(300000),
@@ -333,6 +343,8 @@ export interface AppConfig {
     readonly databaseHost: string;
     readonly databasePort: number;
     readonly timeoutMs: number;
+    /** Interpreter used to start Odoo; a virtualenv on most deployments. */
+    readonly python: string;
   };
   readonly process: {
     readonly timeoutMs: number;
@@ -576,6 +588,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       databaseHost: env.VALIDATION_DB_HOST,
       databasePort: env.VALIDATION_DB_PORT,
       timeoutMs: env.VALIDATION_TIMEOUT_MS,
+      python: env.ODOO_PYTHON,
     },
     process: {
       timeoutMs: env.PROCESS_TIMEOUT_MS,

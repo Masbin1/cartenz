@@ -55,11 +55,16 @@ export function buildOdooConf(input: OdooConfInput): string {
     '; The database list is never exposed, and the database manager is unreachable.',
     'list_db = False',
     '; No demo data: it is large, slow, and its records are not the project.',
-    'without_demo = all',
+    '; Written as a boolean because Odoo 19 rejects the old "all" and warns.',
+    'without_demo = True',
     '; No cron: a scheduled job firing during a test run is noise at best.',
     'max_cron_threads = 0',
     '; Single process, so a failure is a stack trace rather than a dead worker.',
     'workers = 0',
+    '; --stop-after-init means no socket is opened, but the default interface is',
+    '; 0.0.0.0 and a validation run has no business being reachable at all.',
+    'http_enable = False',
+    'http_interface = 127.0.0.1',
     '',
   ].join('\n');
 }
