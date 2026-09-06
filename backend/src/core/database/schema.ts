@@ -288,6 +288,31 @@ export const organizationModelSettings = pgTable(
   }),
 );
 
+/**
+ * Where this organisation's Odoo estate lives (ADR-033).
+ *
+ * One row per organisation. Filesystem locations rather than credentials, so
+ * they are stored in plain columns and displayed in the portal — being able to
+ * see and correct them is the reason they moved out of the environment.
+ */
+export const organizationOdooSettings = pgTable('organization_odoo_settings', {
+  organizationId: uuid('organization_id')
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  /** The Odoo base checkout, read-only to the agent. */
+  basePath: text('base_path'),
+  /** The enterprise addons, read-only to the agent. */
+  enterprisePath: text('enterprise_path'),
+  /** Where a new project's directory is created. */
+  projectsRoot: text('projects_root'),
+  updatedByUserId: uuid('updated_by_user_id').references(() => users.id, {
+    onDelete: 'set null',
+  }),
+  ...timestamps,
+});
+
+export type OrganizationOdooSettingsRow = typeof organizationOdooSettings.$inferSelect;
+
 export const projectConnections = pgTable(
   'project_connections',
   {

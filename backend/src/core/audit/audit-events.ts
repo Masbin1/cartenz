@@ -55,6 +55,9 @@ export const AUDIT_EVENTS = {
   MODEL_PROVIDER_TESTED: 'model_provider.tested',
   MODEL_PROVIDER_REORDERED: 'model_provider.reordered',
 
+  /** The organisation's Odoo paths were configured in the portal (ADR-033). */
+  ODOO_SETTINGS_UPDATED: 'odoo_settings.updated',
+
   AUTHORIZATION_DENIED: 'authorization.denied',
 } as const;
 

@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
 import { OrganizationsService } from './organizations.service';
 import {
@@ -23,6 +24,8 @@ import {
   UpdateModelProviderDto,
 } from './dto/model-settings.dto';
 import { ModelSettingsService } from './model-settings.service';
+import { OdooSettingsService } from './odoo-settings.service';
+import { UpdateOdooSettingsDto } from './dto/odoo-settings.dto';
 import { ModelProviderResolver } from '../../agent/model/model-provider-resolver';
 import { AuthorizationService } from '../../core/authz/authorization.service';
 import { CurrentUser } from '../../core/http/current-user.decorator';
@@ -34,6 +37,7 @@ export class OrganizationsController {
   constructor(
     private readonly organizations: OrganizationsService,
     private readonly modelSettings: ModelSettingsService,
+    private readonly odooSettings: OdooSettingsService,
     private readonly providers: ModelProviderResolver,
     private readonly authz: AuthorizationService,
   ) {}
@@ -115,6 +119,32 @@ export class OrganizationsController {
   ) {
     await this.authz.requireOrganizationMember(user, organizationId);
     return this.modelSettings.list(organizationId);
+  }
+
+  /**
+   * Where this organisation's Odoo estate lives (ADR-033).
+   *
+   * Readable by any member — a person submitting a task should be able to see
+   * which Odoo the agent reads. Writable by an owner or admin, because it
+   * decides what the agent may read and where new projects are created.
+   */
+  @Get(':organizationId/odoo-settings')
+  async getOdooSettings(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('organizationId', ParseUUIDPipe) organizationId: string,
+  ) {
+    await this.authz.requireOrganizationMember(user, organizationId);
+    return this.odooSettings.get(organizationId);
+  }
+
+  @Put(':organizationId/odoo-settings')
+  async updateOdooSettings(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('organizationId', ParseUUIDPipe) organizationId: string,
+    @Body() dto: UpdateOdooSettingsDto,
+  ) {
+    await this.authz.requireOrganizationMember(user, organizationId, 'admin');
+    return this.odooSettings.update(organizationId, user.userId, dto);
   }
 
   @Post(':organizationId/model-providers')

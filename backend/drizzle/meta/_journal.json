@@ -64,6 +64,13 @@
       "when": 1788580000000,
       "tag": "0008_project_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788660000000,
+      "tag": "0009_organization_odoo_settings",
+      "breakpoints": true
     }
   ]
 }

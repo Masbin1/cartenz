@@ -1,132 +1,99 @@
 /**
- * Scaffolding a custom Odoo addon for a new project (ADR-032).
+ * Scaffolding a project's addons directory (ADR-032, amended by ADR-033).
  *
- * Pure functions: the technical name derivation and the file contents. The
- * filesystem work lives in the service, so the part with the rules can be tested
- * without a disk.
+ * Pure functions: the directory-name derivation and the file contents. The
+ * filesystem work lives in the service, so the part with the rules is testable
+ * without touching a disk.
+ *
+ * The scaffold deliberately creates an empty `addons/` directory rather than a
+ * module. What a project needs on day one is somewhere to put addons; the module
+ * name belongs to the first task that describes the work, not to project
+ * creation.
  */
 
-/** Odoo module names are Python package names, so this is a constraint. */
-const MAX_TECHNICAL_NAME_LENGTH = 63;
-
-/**
- * Derives an Odoo module name from a project name.
- *
- * "Vania Sales" -> `vania_sales`. Lowercased because Odoo module directories are
- * lowercase by convention and case-sensitively imported; non-alphanumerics
- * collapse to a single underscore because a module name is a Python identifier;
- * a leading digit is prefixed because an identifier cannot start with one.
- *
- * Returns null when nothing usable survives — a name of only punctuation — so
- * the caller asks for an explicit technical name rather than inventing one.
- */
-export function deriveTechnicalName(projectName: string): string | null {
-  const slug = projectName
-    .normalize('NFKD')
-    // Strip accents so "Café" becomes "cafe" rather than losing the letter.
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-
-  if (slug.length === 0) return null;
-
-  const prefixed = /^[0-9]/.test(slug) ? `m_${slug}` : slug;
-  return prefixed.slice(0, MAX_TECHNICAL_NAME_LENGTH).replace(/_+$/, '');
-}
-
-/**
- * Whether a technical name is one this platform will create a directory for.
- *
- * Deliberately stricter than "a valid Python identifier": no separators, no
- * dots, no leading underscore. The directory is created under the on-premise
- * root by joining this name, so a name that could traverse is refused here as
- * well as by the containment check.
- */
-export function isValidTechnicalName(name: string): boolean {
-  return /^[a-z][a-z0-9_]{0,62}$/.test(name) && !name.endsWith('_');
-}
-
+/** Files written into a new project directory. */
 export interface ScaffoldFile {
-  /** Path relative to the repository root, always with forward slashes. */
+  /** Path relative to the project directory. */
   readonly path: string;
   readonly content: string;
 }
 
 /**
- * The files a scaffolded addon starts with.
+ * Derives a directory name from a project name.
  *
- * Minimal on purpose. A scaffold that ships a demo model produces modules that
- * carry example code for the rest of their life; the agent adds a model when a
- * task asks for one. What is here is what Odoo requires for the module to load
- * and be extendable: the package markers, a manifest, and the access-rules file
- * every new model needs a row in.
+ * "PT Angin Ribut" -> pt_angin_ribut. The addons directory sits on an Odoo
+ * addons path and its children are Python packages, so the same lowercase
+ * identifier rules are applied here: a directory the operator has to rename
+ * before Odoo will load anything from it is not a working default.
+ *
+ * Returns null when nothing usable survives, which the caller reports rather
+ * than inventing a name.
  */
-export function buildScaffoldFiles(input: {
-  readonly technicalName: string;
-  readonly projectName: string;
-  readonly odooVersion: string | null;
-}): readonly ScaffoldFile[] {
-  const { technicalName, projectName } = input;
-  // Odoo manifest versions are `<series>.<module version>`; 1.0.0 is the
-  // conventional starting point for a new module.
-  const series = input.odooVersion ?? '1.0';
-  const version = `${series}.1.0.0`;
+export function deriveDirectoryName(projectName: string): string | null {
+  const ascii = projectName
+    .normalize('NFKD')
+    // Strip accents rather than dropping the letter: "Café" -> "cafe", not "caf".
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
 
+  const collapsed = ascii
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  if (collapsed.length === 0) return null;
+
+  // A leading digit cannot start a Python identifier, and modules created inside
+  // this directory are imported by name.
+  const prefixed = /^[0-9]/.test(collapsed) ? `m_${collapsed}` : collapsed;
+
+  return prefixed.slice(0, 63).replace(/_+$/g, '');
+}
+
+/**
+ * Whether a name is safe to join onto the projects root and usable by Odoo.
+ *
+ * Rejects anything containing a separator, a leading dot or traversal, so the
+ * name alone cannot escape the intended directory. The service checks the
+ * resolved path as well: this is the first of two gates, not the only one.
+ */
+export function isValidDirectoryName(name: string): boolean {
+  return /^[a-z][a-z0-9_]{0,62}$/.test(name) && !name.endsWith('_');
+}
+
+/**
+ * The files written into a new project directory.
+ *
+ * `addons/.gitkeep` because git does not track directories: without it the
+ * addons directory would exist on the machine that created it and vanish for
+ * anyone who cloned the repository.
+ */
+export function buildScaffoldFiles(input: { readonly projectName: string }): ScaffoldFile[] {
   return [
     {
-      path: `${technicalName}/__init__.py`,
-      content: 'from . import models\n',
-    },
-    {
-      path: `${technicalName}/__manifest__.py`,
-      content: [
-        '{',
-        `    "name": ${JSON.stringify(projectName)},`,
-        `    "version": ${JSON.stringify(version)},`,
-        '    "category": "Customisations",',
-        '    "license": "LGPL-3",',
-        '    # base only: a scaffold does not know what the work will need, and the',
-        '    # agent adds a dependency when a change actually requires it.',
-        '    "depends": ["base"],',
-        '    "data": [',
-        '        "security/ir.model.access.csv",',
-        '    ],',
-        '    "installable": True,',
-        '    "application": False,',
-        '}',
-        '',
-      ].join('\n'),
-    },
-    {
-      path: `${technicalName}/models/__init__.py`,
+      path: 'addons/.gitkeep',
       content: '',
-    },
-    {
-      path: `${technicalName}/security/ir.model.access.csv`,
-      content:
-        'id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink\n',
-    },
-    {
-      path: `${technicalName}/README.md`,
-      content: [
-        `# ${projectName}`,
-        '',
-        `Custom Odoo addon \`${technicalName}\`.`,
-        '',
-        'Created by the LinkedERP AI Development Agent (ADR-032).',
-        '',
-        '## Layout',
-        '',
-        '- `models/` — Python models, each imported from `models/__init__.py`',
-        '- `views/` — XML views, each declared in `__manifest__.py`',
-        '- `security/ir.model.access.csv` — one row per model, or it is unusable',
-        '',
-      ].join('\n'),
     },
     {
       path: '.gitignore',
       content: ['__pycache__/', '*.pyc', '*.pyo', '.idea/', '.vscode/', ''].join('\n'),
+    },
+    {
+      path: 'README.md',
+      content: [
+        `# ${input.projectName}`,
+        '',
+        'Custom Odoo addons for this project.',
+        '',
+        'Modules live in `addons/`. That directory is on the Odoo addons path and',
+        'is the only place this project writes: the Odoo base and enterprise',
+        'source are configured as read-only references, so a task can read all of',
+        'Odoo and change only the modules here.',
+        '',
+        'The directory starts empty. Modules are created by the work that needs',
+        'them, so their names come from the change rather than from the project.',
+        '',
+      ].join('\n'),
     },
   ];
 }

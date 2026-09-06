@@ -456,6 +456,22 @@ export interface ProjectEnvironment {
   isDefaultTarget?: boolean;
 }
 
+/** Where an organisation's Odoo estate lives (ADR-033). */
+export interface OdooPathStatus {
+  path: string | null;
+  /** Null when unset; otherwise whether the directory is there on the server. */
+  exists: boolean | null;
+}
+
+export interface OdooSettings {
+  basePath: OdooPathStatus;
+  enterprisePath: OdooPathStatus;
+  projectsRoot: OdooPathStatus;
+  /** True when the deployment's environment configuration is what is in force. */
+  fromEnvironment: boolean;
+  effectiveSourcePaths: string[];
+}
+
 /** A document attached to a project for the agent to read (ADR-030). */
 export interface ProjectDocument {
   id: string;

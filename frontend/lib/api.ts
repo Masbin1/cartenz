@@ -13,6 +13,7 @@ import type {
   ProjectDetail,
   ProjectDocument,
   ProjectDocumentDetail,
+  OdooSettings,
   ProjectEnvironment,
   ProjectSummary,
   TaskDetail,
@@ -255,6 +256,18 @@ export const api = {
 
     modelProviders: (organizationId: string) =>
       request<ModelProviderList>(`/organizations/${organizationId}/model-providers`),
+
+    /** Where this organisation's Odoo estate lives (ADR-033). */
+    odooSettings: (organizationId: string) =>
+      request<OdooSettings>(`/organizations/${organizationId}/odoo-settings`),
+    updateOdooSettings: (
+      organizationId: string,
+      body: { basePath: string; enterprisePath: string; projectsRoot: string },
+    ) =>
+      request<OdooSettings>(`/organizations/${organizationId}/odoo-settings`, {
+        method: 'PUT',
+        body,
+      }),
 
     /**
      * Adds a provider. `apiKey` is write-only: no endpoint returns it, and there

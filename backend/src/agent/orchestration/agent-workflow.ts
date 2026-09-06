@@ -16,6 +16,7 @@ import { ApprovalRequiredError, ToolExecutionService } from '../tools/tool-execu
 import { ToolRegistry } from '../tools/tool-registry';
 import { ApprovalService } from '../../modules/approvals/approval.service';
 import { DocumentsService } from '../../modules/documents/documents.service';
+import { OdooSettingsService } from '../../modules/organizations/odoo-settings.service';
 import { OdooProjectAnalyser } from '../analysis/odoo-project-analyser';
 import { ProjectMemoryService } from '../analysis/project-memory.service';
 import { GitService } from '../git/git.service';
@@ -90,6 +91,7 @@ export class AgentWorkflow {
     private readonly git: GitService,
     private readonly validation: OdooValidationRunner,
     private readonly documents: DocumentsService,
+    private readonly odooSettings: OdooSettingsService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -1361,6 +1363,10 @@ export class AgentWorkflow {
       sshHostKey: snapshot.sshHostKey,
       executionMode: snapshot.executionMode,
       onPremiseProjectPath: snapshot.onPremiseProjectPath,
+      // The organisation's configured Odoo estate, falling back to the
+      // deployment's environment when it has not been set in the portal
+      // (ADR-033).
+      odooSourcePaths: await this.odooSettings.sourcePathsFor(snapshot.organizationId),
       baseCommit: snapshot.baseCommit,
     });
 

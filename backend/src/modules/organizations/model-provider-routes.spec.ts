@@ -4,6 +4,7 @@ import request from 'supertest';
 import { OrganizationsController } from './organizations.controller';
 import { OrganizationsService } from './organizations.service';
 import { ModelSettingsService } from './model-settings.service';
+import { OdooSettingsService } from './odoo-settings.service';
 import { ModelProviderResolver } from '../../agent/model/model-provider-resolver';
 import { AuthorizationService } from '../../core/authz/authorization.service';
 import { AUTH_USER_KEY } from '../../core/http/current-user.decorator';
@@ -31,6 +32,7 @@ describe('model provider route matching', () => {
       providers: [
         { provide: OrganizationsService, useValue: {} },
         { provide: ModelSettingsService, useValue: { reorder, updateRow } },
+        { provide: OdooSettingsService, useValue: { get: jest.fn(), update: jest.fn() } },
         { provide: ModelProviderResolver, useValue: { invalidate: jest.fn() } },
         { provide: AuthorizationService, useValue: { requireOrganizationMember: jest.fn() } },
       ],
