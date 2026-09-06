@@ -45,6 +45,59 @@ describe('loadConfig', () => {
     ]);
   });
 
+  /**
+   * ADR-031. The Odoo source reaches every Odoo project, and a deployment that
+   * already configured validation should not have to configure it twice.
+   */
+  describe('the Odoo source reference (ADR-031)', () => {
+    it('is empty when nothing is configured', () => {
+      expect(loadConfig(valid).odooSource.paths).toEqual([]);
+    });
+
+    it('takes ODOO_SOURCE_PATHS when set', () => {
+      const config = loadConfig({
+        ...valid,
+        ODOO_SOURCE_PATHS: '/srv/odoo, /srv/enterprise',
+      });
+      expect(config.odooSource.paths).toEqual(['/srv/odoo', '/srv/enterprise']);
+    });
+
+    it('derives the paths from the validation settings when it is not set', () => {
+      const config = loadConfig({
+        ...valid,
+        ODOO_RUNTIMES: '19.0=/srv/odoo',
+        ODOO_SHARED_ADDON_PATHS: '/srv/enterprise',
+      });
+      // The runtime entry is `series=path`; the path is what the reference needs.
+      expect(config.odooSource.paths).toEqual(['/srv/enterprise', '/srv/odoo']);
+    });
+
+    it('does not repeat a path configured in two places', () => {
+      const config = loadConfig({
+        ...valid,
+        ON_PREMISE_READ_ONLY_PATHS: '/srv/odoo,/srv/enterprise',
+        ODOO_SHARED_ADDON_PATHS: '/srv/enterprise',
+        ODOO_RUNTIMES: '19.0=/srv/odoo',
+      });
+      expect(config.odooSource.paths).toEqual(['/srv/odoo', '/srv/enterprise']);
+    });
+
+    it('prefers the explicit setting over the derived one', () => {
+      const config = loadConfig({
+        ...valid,
+        ODOO_SOURCE_PATHS: '/srv/only-this',
+        ODOO_RUNTIMES: '19.0=/srv/ignored',
+      });
+      expect(config.odooSource.paths).toEqual(['/srv/only-this']);
+    });
+
+    it('refuses a relative path', () => {
+      expect(() => loadConfig({ ...valid, ODOO_SOURCE_PATHS: 'relative/odoo' })).toThrow(
+        ConfigurationError,
+      );
+    });
+  });
+
   it('refuses a non-absolute on-premise root or read-only path', () => {
     expect(() => loadConfig({ ...valid, ON_PREMISE_ROOT: 'relative/path' })).toThrow(
       ConfigurationError,

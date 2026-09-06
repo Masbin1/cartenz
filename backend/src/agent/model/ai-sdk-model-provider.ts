@@ -48,6 +48,13 @@ export interface ModelProviderSettings {
    * the deployment default unless it says otherwise.
    */
   readonly structuredOutputs?: boolean;
+  /**
+   * Scopes an agent-backed endpoint's long-term memory, sent as
+   * X-Hermes-Session-Key / X-Hermes-Session-Id. An agent that keeps state across
+   * calls accumulates what it learns under this key; an ordinary model endpoint
+   * does not read these headers and is unaffected.
+   */
+  readonly sessionKey?: string;
 }
 
 export class AiSdkModelProvider implements ModelProvider {
@@ -132,6 +139,9 @@ export class AiSdkModelProvider implements ModelProvider {
       );
     }
 
+    const structuredOutputsEnabled =
+      settings.structuredOutputs ?? this.config.ai.structuredOutputs;
+
     const compatible = createOpenAICompatible({
       name: 'linkederp-self-hosted',
       apiKey,
@@ -147,8 +157,23 @@ export class AiSdkModelProvider implements ModelProvider {
        * validation instead. Setting it true against a model that refuses it
        * fails loudly on the first task, which is the honest failure.
        */
-      supportsStructuredOutputs: settings.structuredOutputs ?? this.config.ai.structuredOutputs,
-      transformRequestBody: withExplicitStream,
+      supportsStructuredOutputs: structuredOutputsEnabled,
+      /**
+       * Scopes an agent-backed endpoint's memory to the caller's session key.
+       * An ordinary model endpoint ignores unknown headers, so this is inert
+       * everywhere else and is only sent when a key was supplied.
+       */
+      ...(settings.sessionKey
+        ? {
+            headers: {
+              'X-Hermes-Session-Key': settings.sessionKey,
+              'X-Hermes-Session-Id': settings.sessionKey,
+            },
+          }
+        : {}),
+      transformRequestBody: structuredOutputsEnabled
+        ? withExplicitStream
+        : withJsonObjectMode,
     });
     return compatible(settings.model);
   }
@@ -324,6 +349,7 @@ export class AiSdkModelProvider implements ModelProvider {
       this.explain(status, retryable, error),
       retryable,
       status,
+      NoObjectGeneratedError.isInstance(error) || name === 'ZodError',
     );
   }
 
@@ -445,4 +471,23 @@ function defaultModelFor(provider: ModelProviderSettings['provider']): string | 
  */
 function withExplicitStream(body: Record<string, unknown>): Record<string, unknown> {
   return 'stream' in body ? body : { ...body, stream: false };
+}
+
+/**
+ * Asks for JSON explicitly when the endpoint cannot enforce a schema.
+ *
+ * With `supportsStructuredOutputs: false` the SDK sends no `response_format` at
+ * all and falls back to prompting alone, which an agent-backed endpoint answers
+ * in prose — the object parse then fails and the task dies at planning. The
+ * endpoint may not accept `json_schema`, but `json_object` is the weaker mode
+ * that says "return JSON" without a schema, and the SDK still validates the
+ * parsed value against the schema afterwards. Verified against a live Hermes
+ * endpoint, which returns a complete, parseable plan under json_object and
+ * prose without it.
+ */
+function withJsonObjectMode(body: Record<string, unknown>): Record<string, unknown> {
+  const withStream = withExplicitStream(body);
+  // A caller that already set a response_format knows better than this default.
+  if ('response_format' in withStream) return withStream;
+  return { ...withStream, response_format: { type: 'json_object' } };
 }

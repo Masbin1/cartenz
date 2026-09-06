@@ -131,4 +131,10 @@ describe('agent task state machine', () => {
     expect(canTransition('waiting_approval', 'implementing')).toBe(true);
     expect(canTransition('waiting_approval', 'pushing')).toBe(true);
   });
+
+  it('permits analyzing -> implementing for a chat task (ADR-029)', () => {
+    // A chat task has no plan gate, so it branches from analysis straight into
+    // the conversational loop instead of planning.
+    expect(canTransition('analyzing', 'implementing')).toBe(true);
+  });
 });

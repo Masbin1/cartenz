@@ -85,6 +85,14 @@ export interface AllocateWorkspaceInput {
    */
   readonly onPremiseProjectPath: string | null;
   /**
+   * The read-only Odoo source paths in force for this organisation (ADR-033).
+   *
+   * Undefined means the caller has no opinion and the deployment's environment
+   * configuration applies (ADR-031), which is what keeps existing callers and
+   * tests working.
+   */
+  readonly odooSourcePaths?: readonly string[];
+  /**
    * The commit the change is based on, saved during a prior allocation. Null on
    * the first allocation of a task; used to tell a resumed on-premise task (whose
    * working tree already carries the agent's changes) from a fresh start.
@@ -277,7 +285,7 @@ export class WorkspaceManager {
         repositoryUrl: input.repositoryUrl,
         odooVersion: input.odooVersion,
         simulated: false,
-        readOnlyRoots: [],
+        readOnlyRoots: this.odooSourceRoots(input.odooSourcePaths),
         learnedHostKey: this.learnedHostKeys.get(workspaceId) ?? null,
         credentialRef: input.credentialRef,
         credentialKind: input.credentialKind,
@@ -470,12 +478,31 @@ export class WorkspaceManager {
       repositoryUrl: null,
       odooVersion: input.odooVersion,
       simulated: false,
-      readOnlyRoots: readOnlyRootsFromPaths(this.config.onPremise.readOnlyPaths),
+      readOnlyRoots: this.odooSourceRoots(input.odooSourcePaths),
       learnedHostKey: null,
       credentialRef: input.credentialRef,
       credentialKind: input.credentialKind,
       sshHostKey: input.sshHostKey,
     };
+  }
+
+  /**
+   * The Odoo source exposed to a task as read-only roots (ADR-031).
+   *
+   * Every Odoo project benefits from reading base and enterprise — a change to
+   * `sale.order` is planned against how Odoo declares it — so this is no longer
+   * on-premise only. The roots are read-only in the execution layer:
+   * `resolveWritePath` refuses a path that lands in one, which is what makes
+   * this safe rather than the prompt saying so.
+   *
+   * Empty when nothing is configured, in which case every read resolves inside
+   * the workspace exactly as before.
+   */
+  private odooSourceRoots(paths?: readonly string[]): readonly ReadOnlyRoot[] {
+    // Tolerate a configuration object without the section: the workspace layer
+    // is constructed in tests and by callers that predate ADR-031, and an
+    // absent reference means "no shared source", not a crash mid-task.
+    return readOnlyRootsFromPaths(paths ?? this.config.odooSource?.paths ?? []);
   }
 
   /**

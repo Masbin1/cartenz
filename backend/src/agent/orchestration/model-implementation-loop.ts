@@ -47,6 +47,8 @@ export interface ImplementationLoopInput {
    * a single provider bound at boot.
    */
   readonly organizationId: string;
+  /** Scopes an agent-backed endpoint's memory to this project, when known. */
+  readonly projectId?: string;
   readonly prompt: string;
   readonly projectName: string;
   readonly taskReference: string;
@@ -63,6 +65,8 @@ export interface ImplementationLoopInput {
    * not have.
    */
   readonly executionMode?: ExecutionMode | null;
+  /** Read-only Odoo source prefixes available to this task (ADR-031). */
+  readonly odooSourcePrefixes?: readonly string[];
   readonly run: LoopToolRunner;
 }
 
@@ -105,7 +109,7 @@ export class ModelImplementationLoop {
   ) {}
 
   async run(input: ImplementationLoopInput): Promise<ImplementationLoopOutcome> {
-    const provider = await this.providers.forOrganization(input.organizationId);
+    const provider = await this.providers.forOrganization(input.organizationId, input.projectId);
     const tools = this.offeredTools(input.agentPermissions, input.executionMode ?? null);
 
     // An empty tool list means the model is asked to change a repository with no
@@ -127,6 +131,7 @@ export class ModelImplementationLoop {
       odooVersion: input.odooVersion,
       branch: input.branch,
       grantedTools: tools.map((tool) => tool.name),
+      odooSourcePrefixes: input.odooSourcePrefixes,
     });
 
     let suspended = false;

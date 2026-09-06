@@ -18,6 +18,8 @@ export interface ModelPlanningInput {
    * single provider bound at boot.
    */
   readonly organizationId: string;
+  /** Scopes an agent-backed endpoint's memory to this project, when known. */
+  readonly projectId?: string;
   readonly prompt: string;
   readonly projectName: string;
   readonly taskReference: string;
@@ -34,6 +36,13 @@ export interface ModelPlanningInput {
   /** File contents the model should see, already read by the analysis step. */
   readonly excerpts: readonly { readonly path: string; readonly content: string }[];
   readonly grantedTools: readonly string[];
+  /**
+   * Documents attached to the task (ADR-030). Rendered as untrusted prompt parts
+   * so the boundary redacts them like repository content.
+   */
+  readonly documents?: readonly { name: string; content: string }[];
+  /** Read-only Odoo source prefixes available to this task (ADR-031). */
+  readonly odooSourcePrefixes?: readonly string[];
 }
 
 /** A field as the plan needs to see it: enough to be true to the model, no rows. */
@@ -46,6 +55,8 @@ export interface OdooFieldSummary {
 /** What planning an Odoo Online change needs. No repository, so no analysis. */
 export interface OdooOnlinePlanningInput {
   readonly organizationId: string;
+  /** Scopes an agent-backed endpoint's memory to this project, when known. */
+  readonly projectId?: string;
   readonly prompt: string;
   readonly projectName: string;
   readonly taskReference: string;
@@ -56,6 +67,8 @@ export interface OdooOnlinePlanningInput {
   /** The model's current fields, read from the live instance. */
   readonly fields: readonly OdooFieldSummary[];
   readonly grantedTools: readonly string[];
+  /** Documents attached to the task (ADR-030), rendered as untrusted parts. */
+  readonly documents?: readonly { name: string; content: string }[];
 }
 
 export interface PlanningOutcome {
@@ -89,13 +102,14 @@ export class ModelAgentPlanner {
   constructor(private readonly providers: ModelProviderResolver) {}
 
   async createPlan(input: ModelPlanningInput): Promise<PlanningOutcome> {
-    const provider = await this.providers.forOrganization(input.organizationId);
+    const provider = await this.providers.forOrganization(input.organizationId, input.projectId);
 
     const system = buildSystemPrompt({
       projectName: input.projectName,
       odooVersion: input.analysis?.detectedOdooVersion ?? input.declaredOdooVersion,
       branch: input.branch,
       grantedTools: input.grantedTools,
+      odooSourcePrefixes: input.odooSourcePrefixes,
     });
 
     const result = await provider.generateStructured({
@@ -143,7 +157,7 @@ export class ModelAgentPlanner {
    * whatever produced it and the portal needs no special case.
    */
   async createOdooOnlinePlan(input: OdooOnlinePlanningInput): Promise<PlanningOutcome> {
-    const provider = await this.providers.forOrganization(input.organizationId);
+    const provider = await this.providers.forOrganization(input.organizationId, input.projectId);
 
     const system = buildSystemPrompt({
       projectName: input.projectName,
@@ -152,31 +166,41 @@ export class ModelAgentPlanner {
       grantedTools: input.grantedTools,
     });
 
+    const parts: PromptPart[] = [
+      { label: 'Development request', content: input.prompt, untrusted: false },
+      {
+        label: 'The Odoo Online instance',
+        content: JSON.stringify(
+          {
+            // The URL, not the credentials. A model is never given the API key:
+            // the tools hold it and the model only names what it wants done.
+            instance: input.instanceUrl,
+            odooVersion: input.odooVersion,
+            targetModel: input.targetModel,
+            existingFields: input.fields.map((field) => ({
+              name: field.name,
+              label: field.label,
+              type: field.type,
+            })),
+          },
+          null,
+          2,
+        ),
+        untrusted: false,
+      },
+    ];
+
+    for (const document of input.documents ?? []) {
+      parts.push({
+        label: `Attached document: ${document.name}`,
+        content: document.content,
+        untrusted: true,
+      });
+    }
+
     const result = await provider.generateStructured({
       system: `${system}\n\n${ODOO_ONLINE_PLANNING_INSTRUCTION}`,
-      parts: [
-        { label: 'Development request', content: input.prompt, untrusted: false },
-        {
-          label: 'The Odoo Online instance',
-          content: JSON.stringify(
-            {
-              // The URL, not the credentials. A model is never given the API key:
-              // the tools hold it and the model only names what it wants done.
-              instance: input.instanceUrl,
-              odooVersion: input.odooVersion,
-              targetModel: input.targetModel,
-              existingFields: input.fields.map((field) => ({
-                name: field.name,
-                label: field.label,
-                type: field.type,
-              })),
-            },
-            null,
-            2,
-          ),
-          untrusted: false,
-        },
-      ],
+      parts,
       schema: odooOnlinePlanSchema,
       schemaName: 'OdooOnlinePlan',
     });
@@ -288,6 +312,14 @@ export class ModelAgentPlanner {
       parts.push({
         label: `File: ${excerpt.path}`,
         content: excerpt.content,
+        untrusted: true,
+      });
+    }
+
+    for (const document of input.documents ?? []) {
+      parts.push({
+        label: `Attached document: ${document.name}`,
+        content: document.content,
         untrusted: true,
       });
     }

@@ -15,6 +15,7 @@ import { OdooProjectAnalyser } from './analysis/odoo-project-analyser';
 import { ProjectMemoryService } from './analysis/project-memory.service';
 import { ModelAgentPlanner } from './orchestration/model-agent-planner';
 import { ModelImplementationLoop } from './orchestration/model-implementation-loop';
+import { ChatLoop } from './orchestration/model-chat-loop';
 import { ModelCallRecorder } from './model/model-call-recorder.service';
 import { ModelModule } from './model/model.module';
 import { AgentWorkflow } from './orchestration/agent-workflow';
@@ -26,6 +27,7 @@ import { OnPremiseExecutor } from './executors/on-premise.executor';
 import { OdooSHExecutor } from './executors/odoo-sh.executor';
 import { OdooOnlineExecutor } from './executors/odoo-online.executor';
 import { ApprovalsModule } from '../modules/approvals/approvals.module';
+import { DocumentsModule } from '../modules/documents/documents.module';
 
 /**
  * The agent layer: orchestration, tools, git, analysis and the workspace seam
@@ -42,7 +44,7 @@ import { ApprovalsModule } from '../modules/approvals/approvals.module';
  * would make the sequence harder to follow.
  */
 @Module({
-  imports: [ModelModule, forwardRef(() => ApprovalsModule)],
+  imports: [ModelModule, forwardRef(() => ApprovalsModule), DocumentsModule],
   providers: [
     TaskRepository,
     GitService,
@@ -60,6 +62,7 @@ import { ApprovalsModule } from '../modules/approvals/approvals.module';
     ToolExecutionService,
     ModelAgentPlanner,
     ModelImplementationLoop,
+    ChatLoop,
     ModelCallRecorder,
     AgentWorkflow,
     ExecutorRegistry,

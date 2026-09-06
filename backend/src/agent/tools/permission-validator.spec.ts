@@ -22,7 +22,13 @@ describe('ToolPermissionValidator', () => {
     overrides: Partial<Record<AgentPermission, boolean>> = {},
     grantedApprovals: string[] = [],
     executionMode: 'odoo_online' | 'odoo_sh' | 'on_premise' | null = 'odoo_sh',
-  ) => ({ agentPermissions: permissions(overrides), grantedApprovals, executionMode });
+    taskKind: 'change' | 'chat' = 'change',
+  ) => ({
+    agentPermissions: permissions(overrides),
+    grantedApprovals,
+    executionMode,
+    taskKind,
+  });
 
   it('allows a read tool under the default permissions', () => {
     const decision = validator.validate(
@@ -153,6 +159,44 @@ describe('ToolPermissionValidator', () => {
       policy({}, [], 'odoo_online'),
     );
     expect(decision.outcome).toBe('allowed');
+  });
+
+  it('requires chat_edit approval for a write tool in a chat task (ADR-029)', () => {
+    const decision = validator.validate(
+      { toolName: 'edit_file', input: { path: 'models/x.py', find: 'a', replace: 'b', summary: 's' } },
+      policy({}, [], 'odoo_sh', 'chat'),
+    );
+    expect(decision.outcome).toBe('approval_required');
+    expect(decision.outcome === 'approval_required' && decision.approvalAction).toBe('chat_edit');
+  });
+
+  it('allows a write tool in a chat task once chat_edit is granted (ADR-029)', () => {
+    const decision = validator.validate(
+      { toolName: 'edit_file', input: { path: 'models/x.py', find: 'a', replace: 'b', summary: 's' } },
+      policy({}, ['chat_edit'], 'odoo_sh', 'chat'),
+    );
+    expect(decision.outcome).toBe('allowed');
+  });
+
+  it('does not gate a read tool in a chat task (ADR-029)', () => {
+    // Reads are free: that is what lets the agent answer.
+    const decision = validator.validate(
+      { toolName: 'read_file', input: { path: 'models/x.py' } },
+      policy({}, [], 'odoo_sh', 'chat'),
+    );
+    expect(decision.outcome).toBe('allowed');
+  });
+
+  it('keeps the file_deletion gate for a chat delete (ADR-029)', () => {
+    // delete_file is not a chat_edit write: it keeps its existing gate.
+    const decision = validator.validate(
+      { toolName: 'delete_file', input: { path: 'models/old.py' } },
+      policy({}, [], 'odoo_sh', 'chat'),
+    );
+    expect(decision.outcome).toBe('approval_required');
+    expect(decision.outcome === 'approval_required' && decision.approvalAction).toBe(
+      'file_deletion',
+    );
   });
 });
 

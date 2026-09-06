@@ -48,7 +48,8 @@ export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
  * The action a pending approval authorises. Chapter 11 names production push,
  * production deployment, database migration, production service restart and
  * file deletion as approval-bearing; `implementation_plan` is added because the
- * product workflow requires the plan itself to be approved before any change.
+ * product workflow requires the plan itself to be approved before any change;
+ * `chat_edit` (ADR-029) gates a file write made during a conversational task.
  */
 export const APPROVAL_ACTIONS = [
   'implementation_plan',
@@ -57,8 +58,25 @@ export const APPROVAL_ACTIONS = [
   'database_migration',
   'service_restart',
   'file_deletion',
+  'chat_edit',
 ] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
+
+/**
+ * The kind of an agent task (ADR-029).
+ *
+ * `change` is the existing development run: plan, approve, implement, validate,
+ * commit and push. `chat` is conversational: the agent reads freely, answers in
+ * natural language, and writes a file only after an inline approval.
+ */
+export const AGENT_TASK_KINDS = ['change', 'chat'] as const;
+export type AgentTaskKind = (typeof AGENT_TASK_KINDS)[number];
+
+/** Human-readable label for each task kind, used by the API and the portal. */
+export const AGENT_TASK_KIND_LABELS: Readonly<Record<AgentTaskKind, string>> = {
+  change: 'Change',
+  chat: 'Chat',
+};
 
 /** Organisation roles. Table 5 of the Technical Architecture. */
 export const ORGANIZATION_ROLES = ['owner', 'admin', 'developer', 'viewer'] as const;
@@ -151,6 +169,20 @@ export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
  * Two entries with an identical URL would suggest a difference that is not there.
  */
 export const MODEL_PROVIDER_PRESETS = [
+  {
+    id: 'hermes',
+    label: 'Hermes (Claude engine)',
+    providerId: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:20128/v1',
+    model: 'cc/claude-sonnet-5',
+    // Claude through the gateway enforces the plan's JSON schema itself
+    // (response_format: json_schema), so structured outputs stay on. Verified
+    // against the live gateway returning clean JSON with no reasoning wrapper.
+    structuredOutputs: true,
+    detail:
+      'Claude as the agent engine, through the local gateway. Set this as priority 1 and ' +
+      'add a second provider below it as the maintenance fallback.',
+  },
   {
     id: 'local-gateway',
     label: 'Local gateway (9router / Hermes)',

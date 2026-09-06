@@ -1,5 +1,17 @@
-import { IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
+import { AGENT_TASK_KINDS } from '../../../core/enums';
+import { MAX_ATTACHED_DOCUMENTS } from '../../documents/document-extraction';
 
 export class CreateTaskDto {
   @IsString()
@@ -8,6 +20,15 @@ export class CreateTaskDto {
   @MaxLength(8000)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   prompt!: string;
+
+  /**
+   * Which product shape this task is (ADR-029). Omitted, the service defaults to
+   * `change`; a `chat` task answers a question in natural language instead of
+   * producing a reviewed change.
+   */
+  @IsOptional()
+  @IsIn(AGENT_TASK_KINDS, { message: `kind must be one of: ${AGENT_TASK_KINDS.join(', ')}` })
+  kind?: 'change' | 'chat';
 
   /**
    * Existing session to attach the task to. Omitted for the first task, which
@@ -24,6 +45,19 @@ export class CreateTaskDto {
   @IsOptional()
   @IsUUID()
   environmentId?: string;
+
+  /**
+   * Documents already uploaded to the project, attached to this task (ADR-030).
+   * The workflow passes each one's text to the model as a prompt part; they are
+   * never concatenated into `prompt`. Cap keeps the prompt bounded.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_ATTACHED_DOCUMENTS, {
+    message: `At most ${MAX_ATTACHED_DOCUMENTS} documents can be attached to one task`,
+  })
+  @IsUUID('4', { each: true })
+  documentIds?: string[];
 }
 
 export class CancelTaskDto {

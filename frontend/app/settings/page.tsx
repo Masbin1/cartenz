@@ -12,6 +12,7 @@ import type {
   ModelProviderPreset,
   ModelProviderRow,
   ModelProviderTestResult,
+  OdooSettings,
 } from '@/lib/types';
 
 /**
@@ -21,6 +22,17 @@ import type {
  * are `baseUrl` and `structuredOutputs`, and both are copied exactly.
  */
 const PRESETS: ModelProviderPreset[] = [
+  {
+    id: 'hermes',
+    label: 'Hermes (Claude engine)',
+    providerId: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:20128/v1',
+    model: 'cc/claude-sonnet-5',
+    structuredOutputs: true,
+    detail:
+      'Claude as the agent engine, through the local gateway. Set this as priority 1 and ' +
+      'add a second provider below it as the maintenance fallback.',
+  },
   {
     id: 'local-gateway',
     label: 'Local gateway (9router / Hermes)',
@@ -128,6 +140,16 @@ export default function OrganizationSettingsPage() {
   const organizationId = organization?.organizationId ?? null;
 
   const [list, setList] = useState<ModelProviderList | null>(null);
+  // The organisation's Odoo estate (ADR-033): the server's view, and the form
+  // being edited. Kept apart so the reported existence of each path belongs to
+  // what was saved rather than to what is currently typed.
+  const [odoo, setOdoo] = useState<OdooSettings | null>(null);
+  const [odooForm, setOdooForm] = useState({
+    basePath: '',
+    enterprisePath: '',
+    projectsRoot: '',
+  });
+  const [savingOdoo, setSavingOdoo] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
@@ -150,13 +172,43 @@ export default function OrganizationSettingsPage() {
   const load = useCallback(async () => {
     if (!organizationId) return;
     try {
-      setList(await api.organizations.modelProviders(organizationId));
+      const [providers, odoo] = await Promise.all([
+        api.organizations.modelProviders(organizationId),
+        api.organizations.odooSettings(organizationId),
+      ]);
+      setList(providers);
+      setOdoo(odoo);
+      setOdooForm({
+        basePath: odoo.basePath.path ?? '',
+        enterprisePath: odoo.enterprisePath.path ?? '',
+        projectsRoot: odoo.projectsRoot.path ?? '',
+      });
     } catch (caught) {
       setError(
         caught instanceof ApiError ? caught.message : 'The configuration could not be loaded.',
       );
     }
   }, [organizationId]);
+
+  /**
+   * Saves the Odoo paths (ADR-033). The server refuses a path that is not there,
+   * so a typo is reported here rather than at the first task that needs it.
+   */
+  const saveOdoo = async () => {
+    if (!organizationId) return;
+    setSavingOdoo(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const saved = await api.organizations.updateOdooSettings(organizationId, odooForm);
+      setOdoo(saved);
+      setNotice('The Odoo paths were saved.');
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The paths could not be saved.');
+    } finally {
+      setSavingOdoo(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -609,6 +661,92 @@ export default function OrganizationSettingsPage() {
 
       {error ? <Alert tone="error">{error}</Alert> : null}
       {notice ? <Alert tone="success">{notice}</Alert> : null}
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2 className="panel-title">Odoo source and projects</h2>
+        </div>
+
+        <div className="space-y-4 px-4 py-4">
+          <p className="text-xs text-content-muted">
+            Where this organisation&apos;s Odoo lives. The base and enterprise checkouts are read by
+            the agent as a reference and are never written to; new projects are created under the
+            projects root, each with its own <code>addons/</code> directory, which is the only
+            place the agent writes.
+          </p>
+
+          {odoo?.fromEnvironment ? (
+            <Alert tone="info">
+              No paths are configured here, so the server&apos;s environment configuration is in
+              force
+              {odoo.effectiveSourcePaths.length > 0
+                ? `: ${odoo.effectiveSourcePaths.join(', ')}`
+                : ' — and it sets no Odoo source, so the agent has no reference to read'}
+              .
+            </Alert>
+          ) : null}
+
+          {(
+            [
+              {
+                key: 'basePath' as const,
+                label: 'Odoo base',
+                hint: 'The Odoo checkout, for example /home/user/linkederp/base/odoo. Read-only.',
+                status: odoo?.basePath,
+              },
+              {
+                key: 'enterprisePath' as const,
+                label: 'Enterprise addons',
+                hint: 'The enterprise addons directory. Read-only. Leave blank if you have none.',
+                status: odoo?.enterprisePath,
+              },
+              {
+                key: 'projectsRoot' as const,
+                label: 'Projects root',
+                hint: 'Where a new project directory is created, for example /home/user/linkederp.',
+                status: odoo?.projectsRoot,
+              },
+            ]
+          ).map((field) => (
+            <div key={field.key} className="space-y-1">
+              <label className="flex items-center gap-2 text-xs font-medium" htmlFor={field.key}>
+                {field.label}
+                {field.status?.path ? (
+                  <span
+                    className={
+                      field.status.exists
+                        ? 'text-[11px] font-normal text-emerald-600'
+                        : 'text-[11px] font-normal text-red-600'
+                    }
+                  >
+                    {field.status.exists ? 'found on the server' : 'not found on the server'}
+                  </span>
+                ) : null}
+              </label>
+              <input
+                id={field.key}
+                className="input w-full font-mono text-xs"
+                placeholder="/absolute/path"
+                value={odooForm[field.key]}
+                onChange={(event) =>
+                  setOdooForm((current) => ({ ...current, [field.key]: event.target.value }))
+                }
+              />
+              <p className="text-[11px] text-content-muted">{field.hint}</p>
+            </div>
+          ))}
+
+          <div className="flex items-center gap-2">
+            <button className="btn-primary" onClick={() => void saveOdoo()} disabled={savingOdoo}>
+              {savingOdoo ? <Spinner /> : null}
+              Save paths
+            </button>
+            <span className="text-[11px] text-content-muted">
+              A path that does not exist on the server is refused rather than saved.
+            </span>
+          </div>
+        </div>
+      </section>
 
       <section className="panel">
         <div className="panel-header">

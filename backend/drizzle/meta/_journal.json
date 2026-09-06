@@ -43,6 +43,34 @@
       "when": 1788500000000,
       "tag": "0005_model_provider_list",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788500000001,
+      "tag": "0006_chat_task_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788500000002,
+      "tag": "0007_approval_pending_dedup",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788580000000,
+      "tag": "0008_project_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788660000000,
+      "tag": "0009_organization_odoo_settings",
+      "breakpoints": true
     }
   ]
 }

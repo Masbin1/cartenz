@@ -1,0 +1,37 @@
+[Unit]
+# Cartenz agent worker — consumes the BullMQ queue and runs agent tasks.
+# Separate unit from the API because it is the process that clones repositories
+# and calls model providers; it is restarted and scaled independently (ADR-016).
+Description=Cartenz agent worker
+Documentation=file:///opt/cartenz/docs/INSTALL-SERVER.md
+After=network-online.target postgresql.service redis-server.service cartenz-api.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=cartenz
+Group=cartenz
+WorkingDirectory=/opt/cartenz/backend
+EnvironmentFile=/opt/cartenz/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/worker.js
+Restart=always
+RestartSec=5
+
+# The worker clones into WORKSPACE_ROOT and must be able to write there.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cartenz/.runtime /var/log/cartenz
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=append:/var/log/cartenz/worker.log
+StandardError=append:/var/log/cartenz/worker.log
+
+[Install]
+WantedBy=multi-user.target

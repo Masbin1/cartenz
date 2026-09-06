@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { AgentPermission } from '../../core/authz/agent-permissions';
 import { isNeverGrantable } from '../../core/authz/agent-permissions';
+import type { AgentTaskKind } from '../../core/enums';
 import type { ExecutionMode } from '../executors/execution-mode';
 import { ToolRegistry } from './tool-registry';
 import type { AnyToolDefinition } from './tool.interface';
@@ -27,6 +28,8 @@ export interface ToolPolicyContext {
   readonly grantedApprovals: readonly string[];
   /** The execution mode this task runs in (ADR-028). */
   readonly executionMode: ExecutionMode | null;
+  /** The kind of task the tool request belongs to (ADR-029). */
+  readonly taskKind: AgentTaskKind;
 }
 
 /**
@@ -91,6 +94,24 @@ export class ToolPermissionValidator {
       return { outcome: 'denied', reason: `invalid request for ${tool.name}: ${invalid}` };
     }
 
+    // Chat write gate (ADR-029). A chat task reads freely, but a write tool is
+    // gated behind an inline approval: these tools replace or create files
+    // entirely, so allowing one unapproved would be a write to customer code
+    // with no person in the loop. delete_file is deliberately excluded - it
+    // keeps its existing `file_deletion` gate below.
+    if (
+      context.taskKind === 'chat' &&
+      CHAT_WRITE_TOOLS.includes(tool.name) &&
+      !context.grantedApprovals.includes('chat_edit')
+    ) {
+      return {
+        outcome: 'approval_required',
+        tool,
+        approvalAction: 'chat_edit',
+        reason: 'a chat task writes a file only with your approval',
+      };
+    }
+
     if (tool.leavesPlatform) {
       const approvalAction = approvalActionForTool(tool.name);
 
@@ -120,6 +141,13 @@ export class ToolPermissionValidator {
     return { outcome: 'allowed', tool };
   }
 }
+
+/**
+ * The write tools whose execution in a chat task requires the `chat_edit`
+ * approval (ADR-029). Delete is not here: it is already approval-bearing through
+ * its `file_deletion` gate, and one gate is enough.
+ */
+const CHAT_WRITE_TOOLS = ['edit_file', 'update_file', 'create_file'];
 
 /**
  * Maps a tool to the approval action that authorises it. See the fail-closed

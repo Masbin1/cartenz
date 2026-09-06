@@ -7,6 +7,7 @@ import { TaskRepository, type TaskExecutionSnapshot } from '../task-repository';
 import { searchTermsFor } from './odoo-target';
 import { ModelAgentPlanner } from './model-agent-planner';
 import { ModelImplementationLoop, type LoopToolResult } from './model-implementation-loop';
+import { ChatLoop } from './model-chat-loop';
 import { ModelCallRecorder } from '../model/model-call-recorder.service';
 import { ModelProviderError } from '../model/model-provider.interface';
 import { AiBoundaryRefusalError } from '../../core/ai-boundary/boundary-types';
@@ -14,6 +15,8 @@ import { WorkspaceManager, type Workspace } from '../workspace/workspace-manager
 import { ApprovalRequiredError, ToolExecutionService } from '../tools/tool-execution.service';
 import { ToolRegistry } from '../tools/tool-registry';
 import { ApprovalService } from '../../modules/approvals/approval.service';
+import { DocumentsService } from '../../modules/documents/documents.service';
+import { OdooSettingsService } from '../../modules/organizations/odoo-settings.service';
 import { OdooProjectAnalyser } from '../analysis/odoo-project-analyser';
 import { ProjectMemoryService } from '../analysis/project-memory.service';
 import { GitService } from '../git/git.service';
@@ -77,6 +80,7 @@ export class AgentWorkflow {
     private readonly tasks: TaskRepository,
     private readonly planner: ModelAgentPlanner,
     private readonly implementationLoop: ModelImplementationLoop,
+    private readonly chatLoop: ChatLoop,
     private readonly modelCalls: ModelCallRecorder,
     private readonly workspaceManager: WorkspaceManager,
     private readonly tools: ToolExecutionService,
@@ -86,8 +90,25 @@ export class AgentWorkflow {
     private readonly projectMemory: ProjectMemoryService,
     private readonly git: GitService,
     private readonly validation: OdooValidationRunner,
+    private readonly documents: DocumentsService,
+    private readonly odooSettings: OdooSettingsService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
+
+  /**
+   * Loads the text of the task's attached documents (ADR-030), in attachment
+   * order, for the planner and chat loop to render as prompt parts.
+   */
+  private async attachedDocuments(
+    snapshot: TaskExecutionSnapshot,
+  ): Promise<readonly { name: string; content: string }[]> {
+    if (snapshot.attachedDocumentIds.length === 0) return [];
+    const rows = await this.documents.loadForTask(
+      snapshot.projectId,
+      snapshot.attachedDocumentIds,
+    );
+    return rows.map((row) => ({ name: row.filename, content: row.content }));
+  }
 
   /** Advances a task as far as it can go, returning when it settles or suspends. */
   async run(taskId: string): Promise<void> {
@@ -139,11 +160,13 @@ export class AgentWorkflow {
         return this.resumeFromApproval(snapshot);
 
       case 'implementing':
+        if (snapshot.kind === 'chat') return this.implementChat(snapshot);
         return snapshot.executionMode === 'odoo_online'
           ? this.implementOdooOnline(snapshot)
           : this.implement(snapshot);
 
       case 'testing':
+        if (snapshot.kind === 'chat') return this.completeChat(snapshot);
         return snapshot.executionMode === 'odoo_online'
           ? this.validateOdooOnline(snapshot)
           : this.validate(snapshot);
@@ -209,6 +232,11 @@ export class AgentWorkflow {
           message: 'The file deletion was approved. Continuing implementation.',
         });
 
+      case 'chat_edit':
+        return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'implementing', {
+          message: 'Approved. Continuing.',
+        });
+
       default:
         return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'failed', {
           failureReason: `No resumption is defined for an approved ${decision.action}.`,
@@ -256,9 +284,15 @@ export class AgentWorkflow {
     if (workspace.simulated) {
       await this.narrate(
         snapshot,
-        'This project has no repository connected, so there is nothing to clone. Planning from the project specification.',
+        snapshot.kind === 'chat'
+          ? 'This project has no repository connected, so there is nothing to clone. Answering from the project specification.'
+          : 'This project has no repository connected, so there is nothing to clone. Planning from the project specification.',
       );
-      return this.tasks.transition(snapshot.taskId, 'analyzing', 'planning');
+      return this.tasks.transition(
+        snapshot.taskId,
+        'analyzing',
+        snapshot.kind === 'chat' ? 'implementing' : 'planning',
+      );
     }
 
     await this.narrate(
@@ -311,7 +345,13 @@ export class AgentWorkflow {
 
     await this.narrate(snapshot, 'Searching related modules...');
 
-    return this.tasks.transition(snapshot.taskId, 'analyzing', 'planning');
+    // A chat task has no plan gate (ADR-029): analysis leads straight into the
+    // conversational loop rather than into planning.
+    return this.tasks.transition(
+      snapshot.taskId,
+      'analyzing',
+      snapshot.kind === 'chat' ? 'implementing' : 'planning',
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -386,6 +426,7 @@ export class AgentWorkflow {
     try {
       outcome = await this.planner.createOdooOnlinePlan({
         organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -394,6 +435,7 @@ export class AgentWorkflow {
         targetModel: target,
         fields: (fields.output.fields as OdooFieldSummary[] | undefined) ?? [],
         grantedTools: this.grantedToolNames(snapshot),
+        documents: await this.attachedDocuments(snapshot),
       });
     } catch (error) {
       return this.failOnModelError(snapshot, 'planning', 'planning', error);
@@ -474,6 +516,7 @@ export class AgentWorkflow {
     try {
       outcome = await this.implementationLoop.run({
         organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -614,6 +657,7 @@ export class AgentWorkflow {
     try {
       outcome = await this.planner.createPlan({
         organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -624,6 +668,8 @@ export class AgentWorkflow {
         excerpts: candidates.excerpts,
         rankedCandidates: candidates.ranked,
         grantedTools: this.grantedToolNames(snapshot),
+        documents: await this.attachedDocuments(snapshot),
+        odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
       });
     } catch (error) {
       return this.failOnModelError(snapshot, 'planning', 'planning', error);
@@ -722,6 +768,7 @@ export class AgentWorkflow {
     try {
       outcome = await this.implementationLoop.run({
         organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -730,6 +777,7 @@ export class AgentWorkflow {
         plan: snapshot.plan,
         agentPermissions: snapshot.agentPermissions,
         executionMode: snapshot.executionMode,
+        odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
         run: async (call) => {
           const outcome = await this.callTool(snapshot, workspace, call.name, call.input);
           return { status: toLoopResult(outcome.status), output: outcome.output };
@@ -813,6 +861,127 @@ export class AgentWorkflow {
 
     return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
       message: `${modified.length} file(s) changed, +${diff.linesAdded}/-${diff.linesRemoved} across ${outcome.toolCalls} tool call(s). Running validation.`,
+    });
+  }
+
+  /**
+   * IMPLEMENTING, for a chat task (ADR-029).
+   *
+   * Runs the conversational loop instead of the plan-carrying one. There is no
+   * plan and no diff to check the model against: the deliverable is the
+   * natural-language answer, saved on the task and narrated so it survives the
+   * destroyed workspace. A write tool pauses the task for the `chat_edit`
+   * approval through the same callTool path a change task uses, and the run
+   * resumes into implementing once a person decides.
+   */
+  private async implementChat(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    const workspace = await this.acquireWorkspace(snapshot);
+    await this.narrate(snapshot, 'Thinking about your request...');
+
+    let outcome;
+    try {
+      outcome = await this.chatLoop.run({
+        organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
+        prompt: snapshot.prompt,
+        projectName: snapshot.projectName,
+        taskReference: snapshot.reference,
+        branch: workspace.branch,
+        odooVersion: snapshot.odooVersion,
+        agentPermissions: snapshot.agentPermissions,
+        executionMode: snapshot.executionMode,
+        documents: await this.attachedDocuments(snapshot),
+        odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
+        run: async (call) => {
+          const result = await this.callTool(snapshot, workspace, call.name, call.input);
+          return { status: toLoopResult(result.status), output: result.output };
+        },
+      });
+    } catch (error) {
+      return this.failOnModelError(snapshot, 'implementing', 'chat', error);
+    }
+
+    await this.modelCalls.record({
+      taskId: snapshot.taskId,
+      organizationId: snapshot.organizationId,
+      operation: 'chat',
+      providerId: outcome.providerId,
+      model: outcome.model,
+      calledExternalService: outcome.calledExternalService,
+      inputTokens: outcome.usage.inputTokens,
+      outputTokens: outcome.usage.outputTokens,
+      durationMs: outcome.usage.durationMs,
+      steps: outcome.steps,
+      toolCalls: outcome.toolCalls,
+      boundaryFindings: outcome.boundaryFindings,
+      redactionCount: outcome.redactionCount,
+      haltReason: outcome.haltReason,
+    });
+
+    // A write tool needed the `chat_edit` approval. callTool has already
+    // requested the approval and moved the task to waiting_approval, so the run
+    // simply ends here and resumes once a person decides.
+    if (outcome.suspended) return false;
+
+    const answer = outcome.answer.trim();
+
+    if (answer.length > 0) {
+      await this.tasks.saveAnswer(snapshot.taskId, answer);
+      await this.narrate(snapshot, answer);
+    }
+
+    if (outcome.haltReason) {
+      await this.narrate(snapshot, `The agent stopped early: ${outcome.haltReason}.`);
+    }
+
+    // A chat task does not commit or push, but an approved write still has to be
+    // reviewable. The workspace is destroyed when the run ends, so the diff is
+    // computed and retained with the task exactly as a change task retains it —
+    // the only difference is that no commit exists and nothing can be pushed.
+    const diff = await this.git.diff(workspace.repositoryPath, workspace.baseCommit ?? 'HEAD');
+
+    if (diff.files.length > 0) {
+      const modified: ModifiedFile[] = diff.files.map((file) => ({
+        path: file.path,
+        change: file.change === 'renamed' ? 'modified' : file.change,
+        summary: 'Changed in conversation, with your approval',
+        linesAdded: file.linesAdded,
+        linesRemoved: file.linesRemoved,
+      }));
+
+      await this.tasks.saveModifiedFiles(snapshot.taskId, modified);
+      await this.tasks.saveDiffStats(snapshot.taskId, {
+        filesChanged: diff.files.length,
+        linesAdded: diff.linesAdded,
+        linesRemoved: diff.linesRemoved,
+        patchTruncated: diff.patchTruncated,
+        toolCalls: outcome.toolCalls,
+      });
+      await this.tasks.saveDiffPatch(snapshot.taskId, diff.patch);
+    }
+
+    // A chat task that answered a question and changed nothing completes
+    // successfully. There is no "made no change to the working tree" failure
+    // here - that is a change-task rule, and a chat's deliverable is the answer.
+    // The state machine has no implementing -> completed edge (ADR-018), so the
+    // task passes through `testing`, where the chat branch completes it at once:
+    // a conversation has nothing to validate, commit or push.
+    return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
+      message: `Answered in ${outcome.steps} step(s) across ${outcome.toolCalls} tool call(s).`,
+    });
+  }
+
+  /**
+   * TESTING, on a chat task. A conversation has nothing to validate, commit or
+   * push, so the task completes the moment its answer is saved. This branch
+   * exists rather than a `implementing -> completed` edge because the state
+   * machine deliberately keeps that edge absent: `odoo_online` must pass
+   * through validation (a real defect it guards), and a chat task passing
+   * through `testing` keeps the machine intact for every kind.
+   */
+  private async completeChat(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
+      message: 'Answered.',
     });
   }
 
@@ -1123,7 +1292,7 @@ export class AgentWorkflow {
   private async failOnModelError(
     snapshot: TaskExecutionSnapshot,
     from: AgentTaskStatus,
-    operation: 'planning' | 'implementation',
+    operation: 'planning' | 'implementation' | 'chat',
     error: unknown,
   ): Promise<boolean> {
     const boundaryRefusal = error instanceof AiBoundaryRefusalError;
@@ -1194,6 +1363,10 @@ export class AgentWorkflow {
       sshHostKey: snapshot.sshHostKey,
       executionMode: snapshot.executionMode,
       onPremiseProjectPath: snapshot.onPremiseProjectPath,
+      // The organisation's configured Odoo estate, falling back to the
+      // deployment's environment when it has not been set in the portal
+      // (ADR-033).
+      odooSourcePaths: await this.odooSettings.sourcePathsFor(snapshot.organizationId),
       baseCommit: snapshot.baseCommit,
     });
 
@@ -1289,6 +1462,7 @@ export class AgentWorkflow {
           agentPermissions: snapshot.agentPermissions,
           grantedApprovals: snapshot.grantedApprovals,
           executionMode: snapshot.executionMode,
+          taskKind: snapshot.kind,
         },
         taskStatus: snapshot.status,
       });

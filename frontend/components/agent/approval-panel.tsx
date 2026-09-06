@@ -6,6 +6,14 @@ import { Spinner } from '@/components/ui/spinner';
 import type { Approval } from '@/lib/types';
 
 /**
+ * Friendly names for approval actions whose raw identifier would read poorly
+ * after `humanise`. `chat_edit` is a chat task asking to write a file.
+ */
+const ACTION_LABELS: Record<string, string> = {
+  chat_edit: 'File change',
+};
+
+/**
  * The approval decision.
  *
  * Deliberately explicit: the action being authorised is named, the reason it
@@ -41,7 +49,7 @@ export function ApprovalPanel({
         <span className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-state-waiting" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-state-waiting">
-            Approval required: {humanise(approval.action)}
+            Approval required: {ACTION_LABELS[approval.action] ?? humanise(approval.action)}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-content-muted">
             {approval.requiredReason}

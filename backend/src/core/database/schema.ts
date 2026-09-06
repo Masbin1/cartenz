@@ -17,6 +17,7 @@ import {
   AGENT_ACTION_STATUSES,
   AGENT_ACTION_TYPES,
   AGENT_SESSION_STATUSES,
+  AGENT_TASK_KINDS,
   APPROVAL_ACTIONS,
   APPROVAL_STATUSES,
   CONNECTION_STATUSES,
@@ -287,6 +288,31 @@ export const organizationModelSettings = pgTable(
   }),
 );
 
+/**
+ * Where this organisation's Odoo estate lives (ADR-033).
+ *
+ * One row per organisation. Filesystem locations rather than credentials, so
+ * they are stored in plain columns and displayed in the portal — being able to
+ * see and correct them is the reason they moved out of the environment.
+ */
+export const organizationOdooSettings = pgTable('organization_odoo_settings', {
+  organizationId: uuid('organization_id')
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  /** The Odoo base checkout, read-only to the agent. */
+  basePath: text('base_path'),
+  /** The enterprise addons, read-only to the agent. */
+  enterprisePath: text('enterprise_path'),
+  /** Where a new project's directory is created. */
+  projectsRoot: text('projects_root'),
+  updatedByUserId: uuid('updated_by_user_id').references(() => users.id, {
+    onDelete: 'set null',
+  }),
+  ...timestamps,
+});
+
+export type OrganizationOdooSettingsRow = typeof organizationOdooSettings.$inferSelect;
+
 export const projectConnections = pgTable(
   'project_connections',
   {
@@ -357,6 +383,40 @@ export const projectSpecifications = pgTable(
   }),
 );
 
+export const projectDocuments = pgTable(
+  'project_documents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    uploadedByUserId: uuid('uploaded_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    /** Original filename as uploaded; shown to people, never used as a path. */
+    filename: text('filename').notNull(),
+    /** Declared MIME type, allowlisted at upload (ADR-030). */
+    mimeType: text('mime_type').notNull(),
+    /** Uploaded byte size, before extraction. */
+    byteSize: integer('byte_size').notNull(),
+    /**
+     * The document as extracted text (ADR-030). The original binary is not
+     * stored. Bounded on write; a document whose extraction yields no text is
+     * refused rather than stored empty.
+     */
+    textContent: text('text_content').notNull(),
+    ...timestamps,
+  },
+  (table) => ({
+    byProject: index('project_documents_project_idx').on(table.projectId),
+  }),
+);
+
+export type ProjectDocumentRow = typeof projectDocuments.$inferSelect;
+
 export const agentSessions = pgTable(
   'agent_sessions',
   {
@@ -400,6 +460,10 @@ export const agentTasks = pgTable(
       onDelete: 'set null',
     }),
     prompt: text('prompt').notNull(),
+    /** Which product shape this task is: a development run or a conversation (ADR-029). */
+    kind: text('kind', { enum: asEnum(AGENT_TASK_KINDS) }).notNull().default('change'),
+    /** The natural-language answer a chat task produced (ADR-029). Null for a change task. */
+    answer: text('answer'),
     status: text('status', { enum: asEnum(AGENT_TASK_STATUSES) }).notNull().default('created'),
     branch: text('branch'),
     commitHash: text('commit_hash'),
@@ -410,6 +474,13 @@ export const agentTasks = pgTable(
     /** Validation and test outcome for the task. */
     testResults: jsonb('test_results').$type<Record<string, unknown> | null>(),
     failureReason: text('failure_reason'),
+    /**
+     * Documents attached to the task (ADR-030), referenced by id. The workflow
+     * loads them and passes each as a prompt part; they are never concatenated
+     * into `prompt`. A task runs with the text captured at creation time even if
+     * a document is later deleted, so the ids are what is stored here.
+     */
+    attachedDocumentIds: jsonb('attached_document_ids').$type<string[]>().notNull().default([]),
     /**
      * The environment this task targets (ADR-021).
      *
@@ -551,6 +622,12 @@ export const approvals = pgTable(
   (table) => ({
     byTask: index('approvals_task_idx').on(table.taskId),
     byStatus: index('approvals_org_status_idx').on(table.organizationId, table.status),
+    // At most one pending approval per (task, action): the request path dedupes
+    // with a read-modify-write, and this partial index makes the dedup a schema
+    // fact so two parallel requests cannot both insert a pending row (ADR-029).
+    pendingUnique: uniqueIndex('approvals_task_action_pending_unique')
+      .on(table.taskId, table.action)
+      .where(sql`${table.status} = 'pending'`),
   }),
 );
 
@@ -774,7 +851,7 @@ export const agentModelCalls = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
-    /** `planning` or `implementation`. */
+    /** `planning`, `implementation` or `chat`. */
     operation: text('operation').notNull(),
     providerId: text('provider_id').notNull(),
     model: text('model').notNull(),

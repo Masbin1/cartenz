@@ -5,13 +5,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import {
   agentActions,
   agentSessions,
   agentTaskEvents,
   agentTasks,
+  projectDocuments,
   projectEnvironments,
   approvals,
   projects,
@@ -28,7 +29,7 @@ import {
   type AgentOrchestrator,
 } from '../../agent/orchestration/agent-orchestrator.interface';
 import { isTerminalStatus, type AgentTaskStatus } from '../../agent/task-state';
-import { REPOSITORY_BACKED_PROJECT_TYPES, type ProjectType } from '../../core/enums';
+import { REPOSITORY_BACKED_PROJECT_TYPES, type AgentTaskKind, type ProjectType } from '../../core/enums';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import type { CreateTaskDto } from './dto/task.dto';
 
@@ -54,6 +55,10 @@ export class TasksService {
   ) {}
 
   async create(user: AuthenticatedUser, projectId: string, dto: CreateTaskDto) {
+    // Which product shape this task is (ADR-029). `change` is the existing
+    // development run; `chat` answers a question and never commits or pushes.
+    const kind: AgentTaskKind = dto.kind ?? 'change';
+
     const context = await this.authz.requireProjectAccess(user, projectId, 'developer');
 
     const [project] = await this.database.db
@@ -80,8 +85,13 @@ export class TasksService {
      * operates on a local directory, the second on the Odoo instance. They fall
      * through; their own surface is validated at workspace allocation or by the
      * Odoo Online tools.
+     *
+     * A `chat` task on an `ai_project` is allowed despite the missing repository
+     * (ADR-029): it needs nothing to clone, and answers from the project
+     * specification. A `chat` on a repository-backed project still requires the
+     * repository, because reading it is how the agent answers.
      */
-    if (!project.repositoryUrl && project.projectType === 'ai_project') {
+    if (kind !== 'chat' && !project.repositoryUrl && project.projectType === 'ai_project') {
       throw new BadRequestException(
         'This project was created from a specification and has no repository yet. ' +
           'Connect one before submitting a development request.',
@@ -101,6 +111,16 @@ export class TasksService {
         'The agent is not permitted to read this project. Enable repository read in the project settings.',
       );
     }
+
+    /**
+     * Documents attached to this task (ADR-030) must already exist on this
+     * project. Validated at submission so a mistyped id fails the request rather
+     * than silently running without the document the person meant to attach.
+     */
+    const attachedDocumentIds = await this.resolveAttachedDocuments(
+      projectId,
+      dto.documentIds ?? [],
+    );
 
     /**
      * The environment this task will work against (ADR-021).
@@ -126,11 +146,35 @@ export class TasksService {
      * selected, on the environment's own branch. There is no separate AI branch
      * standing between the agent's commit and `main`, which makes the restriction
      * matter more there than on Odoo.sh, not less.
+     *
+     * A `chat` task skips this refusal (ADR-029): it never commits or pushes, so
+     * targeting the branch a person is on is harmless - the agent only reads it.
      */
     if (
+      kind !== 'chat' &&
       (project.projectType === 'odoo_sh' || project.projectType === 'on_premise') &&
       environment.branch === 'main'
     ) {
+      // The refusal is audited before it is raised (ADR-028: "the task is
+      // refused before any row is written, and the refusal is audited"). Written
+      // first so that a refusal nobody can see is not indistinguishable from a
+      // request nobody made; mirrors ADR-021's production refusal, reusing the
+      // same event with a reason that names this decision.
+      await this.audit.record({
+        event: AUDIT_EVENTS.ENVIRONMENT_TARGET_REFUSED,
+        organizationId: context.organizationId,
+        projectId,
+        userId: user.userId,
+        metadata: {
+          environmentId: environment.id,
+          environmentName: environment.name,
+          environmentKind: environment.kind,
+          branch: environment.branch,
+          projectType: project.projectType,
+          reason: 'the main branch is the live business and is not targetable (ADR-028)',
+        },
+      });
+
       throw new BadRequestException(
         `${project.projectType === 'odoo_sh' ? 'Odoo.sh' : 'On-premise'} projects cannot target ` +
           'the main branch. Ask the project administrator to create another branch.',
@@ -147,7 +191,9 @@ export class TasksService {
       sessionId,
       createdByUserId: user.userId,
       prompt: dto.prompt,
+      kind,
       environmentId: environment.id,
+      attachedDocumentIds,
     });
 
     await this.audit.record({
@@ -190,6 +236,7 @@ export class TasksService {
         id: agentTasks.id,
         reference: agentTasks.reference,
         prompt: agentTasks.prompt,
+        kind: agentTasks.kind,
         status: agentTasks.status,
         branch: agentTasks.branch,
         commitHash: agentTasks.commitHash,
@@ -262,9 +309,11 @@ export class TasksService {
       projectId: task.projectId,
       sessionId: task.sessionId,
       prompt: task.prompt,
+      kind: task.kind,
       status: task.status,
       branch: task.branch,
       commitHash: task.commitHash,
+      answer: task.answer,
       plan: task.plan,
       modifiedFiles: task.modifiedFiles,
       baseCommit: task.baseCommit,
@@ -470,13 +519,47 @@ export class TasksService {
    * generated rather than sequential, so a collision is possible but rare; the
    * unique index is the authority.
    */
+  /**
+   * Confirms every attached document id belongs to this project (ADR-030), and
+   * returns them in the order given. A mistyped id fails the request instead of
+   * silently running without the document.
+   */
+  private async resolveAttachedDocuments(
+    projectId: string,
+    documentIds: string[],
+  ): Promise<string[]> {
+    if (documentIds.length === 0) return [];
+
+    const rows = await this.database.db
+      .select({ id: projectDocuments.id })
+      .from(projectDocuments)
+      .where(
+        and(
+          eq(projectDocuments.projectId, projectId),
+          inArray(projectDocuments.id, documentIds),
+        ),
+      );
+
+    const found = new Set(rows.map((row) => row.id));
+    const missing = documentIds.filter((id) => !found.has(id));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Attached document not found on this project: ${missing.join(', ')}`,
+      );
+    }
+
+    return documentIds;
+  }
+
   private async insertTask(values: {
     organizationId: string;
     projectId: string;
     sessionId: string;
     createdByUserId: string;
     prompt: string;
+    kind: AgentTaskKind;
     environmentId: string;
+    attachedDocumentIds: string[];
   }) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {

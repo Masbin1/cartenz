@@ -1,0 +1,28 @@
+[Unit]
+# 9router — the OpenAI-compatible model gateway Cartenz calls for its fallback
+# providers (priority 2 and below). Cartenz reaches it over loopback; it holds
+# the provider API keys, so it is never exposed beyond the host.
+Description=9router model gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cartenz
+Group=cartenz
+WorkingDirectory=/opt/cartenz
+ExecStart=/usr/bin/node /opt/9router/cli.js --skip-update --host 127.0.0.1 -p 20128
+Restart=always
+RestartSec=5
+# The model catalogue sync on a cold start can take a minute.
+TimeoutStartSec=120
+Environment=NODE_ENV=production
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=append:/var/log/cartenz/9router.log
+StandardError=append:/var/log/cartenz/9router.log
+
+[Install]
+WantedBy=multi-user.target

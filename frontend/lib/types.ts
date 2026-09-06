@@ -31,6 +31,13 @@ export type AgentTaskStatus =
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
+/**
+ * How the agent is being asked to work. `change` is the development run the
+ * workspace was built for; `chat` is a free-form question whose outcome is a
+ * natural-language answer (optionally followed by an approved file write).
+ */
+export type TaskKind = 'change' | 'chat';
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -118,6 +125,7 @@ export interface TaskSummary {
   reference: string;
   prompt: string;
   status: AgentTaskStatus;
+  kind: TaskKind;
   branch: string | null;
   commitHash?: string | null;
   simulated?: boolean;
@@ -241,6 +249,8 @@ export interface ModelCall {
 export interface TaskDetail extends TaskSummary {
   projectId: string;
   sessionId: string | null;
+  /** For a chat task: the agent's final natural-language reply. */
+  answer?: string | null;
   plan: ImplementationPlan | null;
   modifiedFiles: ModifiedFile[];
   /** The commit the AI branch was created from, for the diff base. */
@@ -444,6 +454,35 @@ export interface ProjectEnvironment {
   branch: string;
   kind: EnvironmentKind;
   isDefaultTarget?: boolean;
+}
+
+/** Where an organisation's Odoo estate lives (ADR-033). */
+export interface OdooPathStatus {
+  path: string | null;
+  /** Null when unset; otherwise whether the directory is there on the server. */
+  exists: boolean | null;
+}
+
+export interface OdooSettings {
+  basePath: OdooPathStatus;
+  enterprisePath: OdooPathStatus;
+  projectsRoot: OdooPathStatus;
+  /** True when the deployment's environment configuration is what is in force. */
+  fromEnvironment: boolean;
+  effectiveSourcePaths: string[];
+}
+
+/** A document attached to a project for the agent to read (ADR-030). */
+export interface ProjectDocument {
+  id: string;
+  filename: string;
+  mimeType: string;
+  byteSize: number;
+  createdAt: string;
+}
+
+export interface ProjectDocumentDetail extends ProjectDocument {
+  textContent: string;
 }
 
 export interface AuditLogEntry {

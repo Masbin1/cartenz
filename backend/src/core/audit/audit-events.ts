@@ -26,6 +26,10 @@ export const AUDIT_EVENTS = {
   PROJECT_SPECIFICATION_CREATED: 'project.specification_created',
   PROJECT_AGENT_PERMISSIONS_CHANGED: 'project.agent_permissions_changed',
 
+  /** A document was uploaded to a project for the agent to read (ADR-030). */
+  PROJECT_DOCUMENT_UPLOADED: 'project.document_uploaded',
+  PROJECT_DOCUMENT_DELETED: 'project.document_deleted',
+
   TASK_CREATED: 'task.created',
   TASK_STARTED: 'task.started',
   TASK_TRANSITIONED: 'task.transitioned',
@@ -50,6 +54,9 @@ export const AUDIT_EVENTS = {
   MODEL_PROVIDER_CLEARED: 'model_provider.cleared',
   MODEL_PROVIDER_TESTED: 'model_provider.tested',
   MODEL_PROVIDER_REORDERED: 'model_provider.reordered',
+
+  /** The organisation's Odoo paths were configured in the portal (ADR-033). */
+  ODOO_SETTINGS_UPDATED: 'odoo_settings.updated',
 
   AUTHORIZATION_DENIED: 'authorization.denied',
 } as const;

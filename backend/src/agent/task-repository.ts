@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { DatabaseService } from '../core/database/database.service';
+import { withSequenceRetry } from '../core/database/task-sequence';
 import {
   agentActions,
   agentTasks,
@@ -14,7 +15,7 @@ import { AuditService } from '../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../core/audit/audit-events';
 import { TaskEventPublisher } from '../core/events/task-event-publisher.service';
 import { resolveAgentPermissions, type AgentPermission } from '../core/authz/agent-permissions';
-import type { ProjectType } from '../core/enums';
+import type { AgentTaskKind, ProjectType } from '../core/enums';
 import { assertTransition, isTerminalStatus, type AgentTaskStatus } from './task-state';
 import { executionModeFor, type ExecutionMode } from './executors/execution-mode';
 import type { ImplementationPlan, ModifiedFile, TaskTestResults } from './orchestration/agent-plan';
@@ -33,6 +34,14 @@ export interface TaskExecutionSnapshot {
    */
   readonly executionMode: ExecutionMode | null;
   readonly prompt: string;
+  /**
+   * Documents attached to the task (ADR-030). Their text is passed to the model
+   * as prompt parts; the workflow resolves the ids to text, the snapshot only
+   * carries the ids so a later deletion does not change what was submitted.
+   */
+  readonly attachedDocumentIds: readonly string[];
+  /** Which product shape this task is: a development run or a conversation (ADR-029). */
+  readonly kind: AgentTaskKind;
   readonly status: AgentTaskStatus;
   readonly branch: string | null;
   /**
@@ -118,6 +127,8 @@ export class TaskRepository {
         projectId: agentTasks.projectId,
         projectName: projects.name,
         prompt: agentTasks.prompt,
+        attachedDocumentIds: agentTasks.attachedDocumentIds,
+        kind: agentTasks.kind,
         status: agentTasks.status,
         branch: agentTasks.branch,
         baseCommit: agentTasks.baseCommit,
@@ -199,6 +210,8 @@ export class TaskRepository {
       projectType: row.projectType as ProjectType,
       executionMode: executionModeFor(row.projectType as ProjectType),
       prompt: row.prompt,
+      attachedDocumentIds: row.attachedDocumentIds ?? [],
+      kind: row.kind as AgentTaskKind,
       status: row.status as AgentTaskStatus,
       branch: row.branch,
       baseCommit: row.baseCommit,
@@ -306,6 +319,14 @@ export class TaskRepository {
       .where(eq(agentTasks.id, taskId));
   }
 
+  /** Stores the natural-language answer a chat task produced (ADR-029). */
+  async saveAnswer(taskId: string, answer: string): Promise<void> {
+    await this.database.db
+      .update(agentTasks)
+      .set({ answer, updatedAt: new Date() })
+      .where(eq(agentTasks.id, taskId));
+  }
+
   async saveBranch(taskId: string, branch: string): Promise<void> {
     await this.database.db
       .update(agentTasks)
@@ -380,18 +401,22 @@ export class TaskRepository {
     taskStatus: AgentTaskStatus,
     message: string,
   ): Promise<void> {
-    await this.database.db.insert(agentActions).values({
-      taskId,
-      sequence: sql`(
-        select coalesce(max(a.sequence), 0) + 1
-        from agent_actions a
-        where a.task_id = ${taskId}
-      )`,
-      actionType: 'reasoning',
-      status: 'succeeded',
-      output: { message },
-      simulated: true,
-    });
+    await withSequenceRetry(
+      () =>
+        this.database.db.insert(agentActions).values({
+          taskId,
+          sequence: sql`(
+            select coalesce(max(a.sequence), 0) + 1
+            from agent_actions a
+            where a.task_id = ${taskId}
+          )`,
+          actionType: 'reasoning',
+          status: 'succeeded',
+          output: { message },
+          simulated: true,
+        }),
+      'agent_actions_task_sequence_unique',
+    );
 
     await this.events.publish({
       taskId,
@@ -419,19 +444,23 @@ export class TaskRepository {
     from: AgentTaskStatus,
     to: AgentTaskStatus,
   ): Promise<void> {
-    await this.database.db.insert(agentActions).values({
-      taskId,
-      sequence: sql`(
-        select coalesce(max(a.sequence), 0) + 1
-        from agent_actions a
-        where a.task_id = ${taskId}
-      )`,
-      actionType: 'transition',
-      status: 'succeeded',
-      input: { from },
-      output: { to },
-      simulated: false,
-    });
+    await withSequenceRetry(
+      () =>
+        this.database.db.insert(agentActions).values({
+          taskId,
+          sequence: sql`(
+            select coalesce(max(a.sequence), 0) + 1
+            from agent_actions a
+            where a.task_id = ${taskId}
+          )`,
+          actionType: 'transition',
+          status: 'succeeded',
+          input: { from },
+          output: { to },
+          simulated: false,
+        }),
+      'agent_actions_task_sequence_unique',
+    );
   }
 
   /** Only pending tasks may be listed for cancellation and resumption. */

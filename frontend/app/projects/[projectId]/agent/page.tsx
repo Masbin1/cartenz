@@ -11,6 +11,7 @@ import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Alert } from '@/components/ui/alert';
 import { ActivityTimeline } from '@/components/agent/activity-timeline';
+import { ChatMarkdown } from '@/components/agent/chat-markdown';
 import { PlanView } from '@/components/agent/plan-view';
 import { ApprovalPanel } from '@/components/agent/approval-panel';
 import { TaskInspector } from '@/components/agent/task-inspector';
@@ -20,9 +21,11 @@ import { EnvironmentKindBadge } from '@/components/projects/environment-editor';
 import type {
   AgentCapabilities,
   ProjectDetail,
+  ProjectDocument,
   ProjectEnvironment,
   TaskDetail,
   TaskDiff,
+  TaskKind,
   TaskSummary,
 } from '@/lib/types';
 
@@ -55,12 +58,17 @@ export default function AgentWorkspacePage() {
   const [diff, setDiff] = useState<TaskDiff | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
+  const [kind, setKind] = useState<TaskKind>('change');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [environments, setEnvironments] = useState<ProjectEnvironment[]>([]);
   const [environmentId, setEnvironmentId] = useState<string>('');
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<ProjectDocument[]>([]);
+  const [attachedIds, setAttachedIds] = useState<Set<string>>(new Set());
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { events, connected } = useTaskStream(selectedTaskId);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -72,14 +80,16 @@ export default function AgentWorkspacePage() {
 
   const loadProject = useCallback(async () => {
     try {
-      const [detail, taskList, environmentList, sessionList] = await Promise.all([
+      const [detail, taskList, environmentList, sessionList, documentList] = await Promise.all([
         api.projects.get(projectId),
         api.tasks.listForProject(projectId),
         api.projects.environments(projectId),
         api.tasks.sessions(projectId),
+        api.documents.list(projectId),
       ]);
       setProject(detail);
       setTasks(taskList);
+      setDocuments(documentList);
       setSelectedTaskId((current) => current ?? taskList[0]?.id ?? null);
 
       // Continue in the most recent session by default: a prompt attaches to it
@@ -180,9 +190,12 @@ export default function AgentWorkspacePage() {
         prompt: prompt.trim(),
         sessionId: sessionId || undefined,
         environmentId: environmentId || undefined,
+        kind,
+        documentIds: attachedIds.size > 0 ? [...attachedIds] : undefined,
       });
       setSessionId(created.sessionId);
       setPrompt('');
+      setAttachedIds(new Set());
       setSelectedTaskId(created.id);
       router.replace(`/projects/${projectId}/agent?task=${created.id}`);
       setTasks(await api.tasks.listForProject(projectId));
@@ -212,6 +225,46 @@ export default function AgentWorkspacePage() {
       setTasks(await api.tasks.listForProject(projectId));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The task could not be cancelled.');
+    }
+  };
+
+  const toggleDocument = (documentId: string) => {
+    setAttachedIds((current) => {
+      const next = new Set(current);
+      if (next.has(documentId)) next.delete(documentId);
+      else next.add(documentId);
+      return next;
+    });
+  };
+
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const uploaded = await api.documents.upload(projectId, file);
+      setDocuments((current) => [uploaded, ...current]);
+      setAttachedIds((current) => new Set(current).add(uploaded.id));
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The document could not be uploaded.');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const removeDocument = async (documentId: string) => {
+    try {
+      await api.documents.remove(projectId, documentId);
+      setDocuments((current) => current.filter((document) => document.id !== documentId));
+      setAttachedIds((current) => {
+        const next = new Set(current);
+        next.delete(documentId);
+        return next;
+      });
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The document could not be removed.');
     }
   };
 
@@ -305,6 +358,41 @@ export default function AgentWorkspacePage() {
             <label htmlFor="prompt" className="panel-title mb-2 block">
               Development request
             </label>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-2xs text-content-subtle">Mode</span>
+              <div
+                role="group"
+                aria-label="Task mode"
+                className="flex overflow-hidden rounded-md border border-surface-border"
+              >
+                <button
+                  type="button"
+                  onClick={() => setKind('change')}
+                  disabled={submitting}
+                  aria-pressed={kind === 'change'}
+                  className={`px-3 py-1 text-2xs font-medium transition-colors ${
+                    kind === 'change'
+                      ? 'bg-accent text-white'
+                      : 'bg-transparent text-content-muted hover:text-content'
+                  }`}
+                >
+                  Change
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setKind('chat')}
+                  disabled={submitting}
+                  aria-pressed={kind === 'chat'}
+                  className={`px-3 py-1 text-2xs font-medium transition-colors ${
+                    kind === 'chat'
+                      ? 'bg-accent text-white'
+                      : 'bg-transparent text-content-muted hover:text-content'
+                  }`}
+                >
+                  Chat
+                </button>
+              </div>
+            </div>
             <textarea
               id="prompt"
               ref={promptRef}
@@ -321,6 +409,71 @@ export default function AgentWorkspacePage() {
               placeholder="Add a customer reference field to Sales Order and Invoice."
               className="field-input resize-none"
             />
+            {kind === 'chat' ? (
+              <p className="mt-2 text-2xs leading-relaxed text-content-subtle">
+                Chat reads the project and answers in natural language. Writing a file will ask for
+                your approval first.
+              </p>
+            ) : null}
+
+            <div className="mt-3 border-t border-surface-border pt-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-2xs font-medium text-content-subtle">
+                  Attach documents (PRD, spec) — {attachedIds.size} selected
+                </span>
+                <label className="btn-ghost cursor-pointer px-2 py-1 text-2xs">
+                  {uploading ? 'Uploading…' : 'Upload document'}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".md,.markdown,.txt,.pdf,.docx,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={handleUpload}
+                    disabled={uploading}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {documents.length === 0 ? (
+                <p className="text-2xs text-content-muted">
+                  No documents yet. Upload a PRD and the agent will read it when you submit a
+                  request.
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {documents.map((document) => (
+                    <li
+                      key={document.id}
+                      className="flex items-center justify-between gap-2 rounded px-2 py-1 hover:bg-surface-raised"
+                    >
+                      <label className="flex min-w-0 cursor-pointer items-center gap-2 text-2xs">
+                        <input
+                          type="checkbox"
+                          checked={attachedIds.has(document.id)}
+                          onChange={() => toggleDocument(document.id)}
+                          className="accent-[var(--color-accent)]"
+                        />
+                        <span className="truncate font-mono">{document.filename}</span>
+                        <span className="shrink-0 text-content-muted">
+                          {Math.max(1, Math.round(document.byteSize / 1024))} KB
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => removeDocument(document.id)}
+                        className="shrink-0 text-content-muted hover:text-content"
+                        title="Delete document"
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-1.5 text-2xs text-content-muted">
+                Markdown, plain text, PDF and DOCX, up to 10 MiB.
+              </p>
+            </div>
             {environments.length > 0 ? (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label htmlFor="environment" className="text-2xs text-content-subtle">
@@ -395,6 +548,19 @@ export default function AgentWorkspacePage() {
               onDecide={decide}
               canDecide={canDecide}
             />
+          ) : null}
+
+          {task?.kind === 'chat' && task.answer ? (
+            <div className="panel">
+              <div className="panel-header">
+                <h2 className="panel-title">Answer</h2>
+              </div>
+              <div className="px-4 py-3">
+                <div className="max-w-[90%] rounded-2xl rounded-tl-sm bg-surface-overlay px-4 py-3">
+                  <ChatMarkdown content={task.answer} />
+                </div>
+              </div>
+            </div>
           ) : null}
 
           <div className="panel">

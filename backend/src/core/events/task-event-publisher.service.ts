@@ -5,6 +5,7 @@ import { RedisService } from '../redis/redis.service';
 import { agentTaskEvents } from '../database/schema';
 import { taskEventChannel } from '../redis/redis.constants';
 import { redactMetadata } from '../audit/redact';
+import { withSequenceRetry } from '../database/task-sequence';
 import type { TaskEvent, TaskEventStatus, TaskEventType } from './event-types';
 import type { AgentTaskStatus } from '../../agent/task-state';
 
@@ -43,21 +44,28 @@ export class TaskEventPublisher {
   async publish(input: PublishTaskEventInput): Promise<TaskEvent> {
     const payload = input.payload ? redactMetadata(input.payload) : undefined;
 
-    const [row] = await this.database.db
-      .insert(agentTaskEvents)
-      .values({
-        taskId: input.taskId,
-        sequence: sql`(
-          select coalesce(max(e.sequence), 0) + 1
-          from agent_task_events e
-          where e.task_id = ${input.taskId}
-        )`,
-        eventType: input.type,
-        status: input.status,
-        message: input.message,
-        payload: payload ?? null,
-      })
-      .returning({ sequence: agentTaskEvents.sequence, createdAt: agentTaskEvents.createdAt });
+    // The sequence subquery is not atomic, so a burst of publishes for one task
+    // can collide on the unique index. Retry the insert on that collision: each
+    // attempt re-reads max+1 and lands on the next free value.
+    const [row] = await withSequenceRetry(
+      () =>
+        this.database.db
+          .insert(agentTaskEvents)
+          .values({
+            taskId: input.taskId,
+            sequence: sql`(
+              select coalesce(max(e.sequence), 0) + 1
+              from agent_task_events e
+              where e.task_id = ${input.taskId}
+            )`,
+            eventType: input.type,
+            status: input.status,
+            message: input.message,
+            payload: payload ?? null,
+          })
+          .returning({ sequence: agentTaskEvents.sequence, createdAt: agentTaskEvents.createdAt }),
+      'agent_task_events_task_sequence_unique',
+    );
 
     const event: TaskEvent = {
       taskId: input.taskId,

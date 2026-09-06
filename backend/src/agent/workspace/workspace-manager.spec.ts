@@ -95,10 +95,11 @@ describe('on-premise workspace allocation', () => {
     ...overrides,
   });
 
-  const manager = (overrides: { dirty?: boolean } = {}) => {
+  const manager = (overrides: { dirty?: boolean; odooSourcePaths?: string[] } = {}) => {
     const config = {
       workspace: { root: workspaceRoot, maxBytes: 1, maxFiles: 1, retainOnFailure: false },
       onPremise: { root: onPremiseRoot, readOnlyPaths: [] },
+      odooSource: { paths: overrides.odooSourcePaths ?? [] },
     } as unknown as AppConfig;
 
     const git = {
@@ -188,5 +189,30 @@ describe('on-premise workspace allocation', () => {
     expect(workspace.branch).toBe('main');
     expect(workspace.baseBranch).toBe('main');
     expect(workspace.baseCommit).toBe('saved123');
+  });
+
+  /**
+   * ADR-031. The reference used to be derived from the on-premise setting alone,
+   * which is why it reached one execution mode. It now comes from the Odoo
+   * source configuration, and the prefix is the directory's own name so the
+   * model refers to `odoo/addons/...` rather than a host path.
+   */
+  it('exposes the configured Odoo source as read-only roots', async () => {
+    const odooPath = join(sandbox, 'base', 'odoo');
+    const enterprisePath = join(sandbox, 'base', 'enterprise');
+    await mkdir(odooPath, { recursive: true });
+    await mkdir(enterprisePath, { recursive: true });
+
+    const workspace = await manager({
+      odooSourcePaths: [odooPath, enterprisePath],
+    }).allocate(input({ taskReference: 'task_7' }));
+
+    expect(workspace.readOnlyRoots.map((root) => root.prefix)).toEqual(['odoo', 'enterprise']);
+    expect(workspace.readOnlyRoots.map((root) => root.path)).toEqual([odooPath, enterprisePath]);
+  });
+
+  it('has no read-only roots when no Odoo source is configured', async () => {
+    const workspace = await manager().allocate(input({ taskReference: 'task_8' }));
+    expect(workspace.readOnlyRoots).toEqual([]);
   });
 });

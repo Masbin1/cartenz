@@ -275,6 +275,21 @@ export class GitService {
     }
   }
 
+  /**
+   * Initialises a new repository on the given branch (ADR-032).
+   *
+   * `--initial-branch` rather than init-then-rename, so the repository never
+   * exists on a branch nobody asked for. The name is checked as a ref name for
+   * the same reason every other branch argument is.
+   */
+  async init(repositoryPath: string, branch: string): Promise<void> {
+    const safe = assertSafeRefName(branch);
+    const result = await this.run(repositoryPath, ['init', `--initial-branch=${safe}`]);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('init', result.exitCode, summariseFailure(result));
+    }
+  }
+
   /** Creates a branch at HEAD and checks it out. */
   async createBranch(repositoryPath: string, name: string): Promise<void> {
     const branch = assertSafeRefName(name);

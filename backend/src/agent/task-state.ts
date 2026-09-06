@@ -15,6 +15,10 @@
  * task that commits and pushes must be observably in those states, and omitting
  * them would force the lifecycle to misreport itself as `testing` while pushing.
  * This is recorded as ADR-018.
+ *
+ * ADR-029 amends one transition: a `chat` task branches at the point a `change`
+ * task would plan, walking `analyzing -> implementing` directly. That edge is
+ * added to the analyzing transitions below.
  */
 
 export const AGENT_TASK_STATUSES = [
@@ -62,13 +66,19 @@ export const SUSPENDED_TASK_STATUSES: readonly AgentTaskStatus[] = ['waiting_app
 const TRANSITIONS: Readonly<Record<AgentTaskStatus, readonly AgentTaskStatus[]>> = {
   created: ['queued', 'failed', 'cancelled'],
   queued: ['analyzing', 'failed', 'cancelled'],
-  analyzing: ['planning', 'failed', 'cancelled'],
+  // analyzing -> implementing is the chat path (ADR-029): a conversational task
+  // has no plan gate, so it goes straight from analysis to the model loop.
+  analyzing: ['planning', 'implementing', 'failed', 'cancelled'],
   planning: ['waiting_approval', 'failed', 'cancelled'],
   // Two gates suspend into waiting_approval, so two edges lead back out: the
   // plan gate resumes into implementing, the push gate into pushing. Which one
   // applies is decided by the approval that was granted, not by this table.
   waiting_approval: ['implementing', 'pushing', 'failed', 'cancelled'],
-  implementing: ['testing', 'failed', 'cancelled'],
+  // A write approval during implementation (chat_edit for a chat task, or
+  // file_deletion) suspends the task from implementing into waiting_approval,
+  // then resumes back into implementing once decided (ADR-029). The edge is
+  // absent from the chapter-6 diagram but required by the approval mechanism.
+  implementing: ['testing', 'waiting_approval', 'failed', 'cancelled'],
   // Testing may return to implementing so that a failed validation can be
   // repaired within the same task rather than requiring a new one.
   testing: ['implementing', 'committing', 'completed', 'failed', 'cancelled'],
