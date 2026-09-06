@@ -110,6 +110,27 @@ export class CreateProjectDto {
   environmentConfig?: Record<string, unknown>;
 
   /**
+   * Create the project's custom addon on disk (ADR-032).
+   *
+   * On-premise only: the directory is created under ON_PREMISE_ROOT, initialised
+   * as a Git repository and committed, so the first task has somewhere to write.
+   */
+  @IsOptional()
+  @IsBoolean()
+  scaffold?: boolean;
+
+  /**
+   * The Odoo module name to create, when `scaffold` is set. Derived from the
+   * project name when omitted. Lowercase identifier: it is a Python package
+   * name and a directory name, not a label.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(63)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  technicalName?: string;
+
+  /**
    * The environments this project has (ADR-021).
    *
    * Declared here because this is when the person creating the project knows which

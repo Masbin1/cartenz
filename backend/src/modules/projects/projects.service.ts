@@ -6,6 +6,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { and, count, desc, eq, isNull, notInArray, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import {
@@ -25,11 +27,16 @@ import {
   isNeverGrantable,
   resolveAgentPermissions,
 } from '../../core/authz/agent-permissions';
-import { REPOSITORY_BACKED_PROJECT_TYPES } from '../../core/enums';
+import { REPOSITORY_BACKED_PROJECT_TYPES, type ProjectType } from '../../core/enums';
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
 import { redactMetadata } from '../../core/audit/redact';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import { buildProjectSpecification } from './project-specification';
+import {
+  buildScaffoldFiles,
+  deriveTechnicalName,
+  isValidTechnicalName,
+} from './odoo-scaffold';
 import { ProjectMemoryService } from '../../agent/analysis/project-memory.service';
 import { ProjectEnvironmentsService } from './project-environments.service';
 import { WorkspaceManager } from '../../agent/workspace/workspace-manager';
@@ -252,6 +259,25 @@ export class ProjectsService {
     const defaultBranch = dto.defaultBranch ?? 'main';
     this.environments.buildForCreation('', dto.organizationId, defaultBranch, dto.environments);
 
+    /**
+     * The custom addon, created before the project row (ADR-032).
+     *
+     * On disk first because a directory that could not be created must not leave
+     * a project pointing at nothing; the reverse order would need a compensating
+     * delete on a path the request supplied, which is worse. The scaffold records
+     * its own path in the environment configuration, which is where the workspace
+     * layer reads an on-premise project's directory from.
+     */
+    const scaffolded = dto.scaffold
+      ? await this.scaffoldCustomAddon({
+          projectName: dto.name,
+          technicalName: dto.technicalName,
+          projectType: dto.projectType,
+          odooVersion: dto.odooVersion ?? null,
+          defaultBranch,
+        })
+      : null;
+
     const project = await this.insertProject({
       organizationId: dto.organizationId,
       name: dto.name,
@@ -260,7 +286,9 @@ export class ProjectsService {
       odooVersion: dto.odooVersion ?? null,
       defaultBranch,
       repositoryUrl: dto.repositoryUrl ?? null,
-      environmentConfig,
+      environmentConfig: scaffolded
+        ? { ...environmentConfig, onPremisePath: scaffolded.repositoryPath }
+        : environmentConfig,
       createdByUserId: user.userId,
     });
 
@@ -895,6 +923,99 @@ export class ProjectsService {
    */
   private sanitiseEnvironmentConfig(config: Record<string, unknown> | undefined) {
     return redactMetadata(config ?? {});
+  }
+
+  /**
+   * Creates the project's custom addon on disk (ADR-032).
+   *
+   * The directory is a direct child of ON_PREMISE_ROOT, a Git repository, and
+   * carries one commit of the skeleton — because the workspace layer refuses a
+   * directory that is not a repository, and refuses a dirty tree, so anything
+   * less would fail at the first task rather than here.
+   *
+   * Refuses rather than reuses an existing directory: adopting one would put a
+   * new project's work into another project's module, and overwriting would
+   * destroy it.
+   */
+  private async scaffoldCustomAddon(input: {
+    projectName: string;
+    technicalName?: string;
+    projectType: ProjectType;
+    odooVersion: string | null;
+    defaultBranch: string;
+  }): Promise<{ technicalName: string; repositoryPath: string }> {
+    if (input.projectType !== 'on_premise') {
+      throw new BadRequestException(
+        'Scaffolding a custom addon is available for on-premise projects. ' +
+          'A repository-backed project takes its code from the repository it connects to.',
+      );
+    }
+
+    const root = this.config.onPremise.root;
+    if (!root) {
+      throw new BadRequestException(
+        'On-premise execution is disabled (ON_PREMISE_ROOT is not set), so there is nowhere to create the addon.',
+      );
+    }
+
+    const technicalName = input.technicalName ?? deriveTechnicalName(input.projectName) ?? '';
+    if (!isValidTechnicalName(technicalName)) {
+      throw new BadRequestException(
+        `"${technicalName || input.projectName}" does not give a usable Odoo module name. ` +
+          'Supply technicalName: lowercase letters, digits and underscores, starting with a letter.',
+      );
+    }
+
+    const realRoot = await realpath(resolve(root)).catch(() => null);
+    if (!realRoot) {
+      throw new BadRequestException(`The configured ON_PREMISE_ROOT "${root}" does not exist.`);
+    }
+
+    // The name is already constrained to `[a-z][a-z0-9_]*`, so it cannot
+    // traverse; the containment check is kept because the boundary should not
+    // depend on a validator somewhere else continuing to be strict.
+    const repositoryPath = resolve(realRoot, technicalName);
+    if (dirname(repositoryPath) !== realRoot) {
+      throw new BadRequestException(
+        `The module directory must be directly under the on-premise root.`,
+      );
+    }
+
+    const existing = await stat(repositoryPath).catch(() => null);
+    if (existing) {
+      throw new ConflictException(
+        `"${technicalName}" already exists under the on-premise root. ` +
+          'Choose another technicalName, or connect the existing directory instead of scaffolding.',
+      );
+    }
+
+    try {
+      for (const file of buildScaffoldFiles({
+        technicalName,
+        projectName: input.projectName,
+        odooVersion: input.odooVersion,
+      })) {
+        const target = join(repositoryPath, file.path);
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, file.content, 'utf8');
+      }
+
+      await this.git.init(repositoryPath, input.defaultBranch);
+      await this.git.commit(repositoryPath, `Scaffold ${technicalName}`);
+    } catch (error) {
+      // A half-written directory is worse than none: it would satisfy the
+      // "already exists" check on the next attempt while not being a repository.
+      await rm(repositoryPath, { recursive: true, force: true }).catch(() => undefined);
+      throw new BadRequestException(
+        `The addon could not be created: ${(error as Error).message}`,
+      );
+    }
+
+    this.logger.log(
+      `Scaffolded Odoo addon "${technicalName}" at ${repositoryPath} on branch ${input.defaultBranch}`,
+    );
+
+    return { technicalName, repositoryPath };
   }
 
   /** Response shape for a project. Declared so no column leaks by accident. */
