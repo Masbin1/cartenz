@@ -39,7 +39,10 @@ import {
   type RunnableConfig,
 } from './odoo-scaffold';
 import { ProjectMemoryService } from '../../agent/analysis/project-memory.service';
-import { ProjectEnvironmentsService } from './project-environments.service';
+import {
+  DEFAULT_SCAFFOLD_ENVIRONMENTS,
+  ProjectEnvironmentsService,
+} from './project-environments.service';
 import { OdooSettingsService } from '../organizations/odoo-settings.service';
 import { WorkspaceManager } from '../../agent/workspace/workspace-manager';
 import { TERMINAL_TASK_STATUSES } from '../../agent/task-state';
@@ -278,6 +281,19 @@ export class ProjectsService {
     // Enterprise unless the caller chose Community (ADR-037).
     const odooEdition: OdooEdition = dto.odooEdition ?? DEFAULT_ODOO_EDITION;
 
+    /**
+     * The environments this project gets (ADR-021, ADR-038). A scaffolded project
+     * with none declared gets the Development + Staging pair; a declared set is
+     * honoured. A non-scaffolded project keeps whatever it declared (possibly
+     * none, which buildForCreation turns into a single Development).
+     */
+    const resolvedEnvironments =
+      dto.environments && dto.environments.length > 0
+        ? dto.environments
+        : dto.scaffold
+          ? DEFAULT_SCAFFOLD_ENVIRONMENTS
+          : undefined;
+
     const scaffolded = dto.scaffold
       ? await this.scaffoldCustomAddon({
           organizationId: dto.organizationId,
@@ -287,6 +303,8 @@ export class ProjectsService {
           odooVersion: dto.odooVersion ?? null,
           odooEdition,
           defaultBranch,
+          // A branch per environment beside the default (ADR-038).
+          environmentBranches: (resolvedEnvironments ?? []).map((environment) => environment.branch),
         })
       : null;
 
@@ -310,7 +328,7 @@ export class ProjectsService {
         project.id,
         dto.organizationId,
         defaultBranch,
-        dto.environments,
+        resolvedEnvironments,
       ),
     );
 
@@ -351,6 +369,11 @@ export class ProjectsService {
     // Enterprise unless the caller chose Community (ADR-037).
     const odooEdition: OdooEdition = dto.odooEdition ?? DEFAULT_ODOO_EDITION;
 
+    // A staging and a development line by default (ADR-038): the AI flow declares
+    // no environments, so it always gets the two, and the scaffold lays down a
+    // branch for each.
+    const scaffoldEnvironments = DEFAULT_SCAFFOLD_ENVIRONMENTS;
+
     const scaffolded = await this.scaffoldCustomAddon({
       organizationId: dto.organizationId,
       projectName: dto.name,
@@ -358,6 +381,7 @@ export class ProjectsService {
       odooVersion: dto.odooVersion ?? null,
       odooEdition,
       defaultBranch: 'main',
+      environmentBranches: scaffoldEnvironments.map((environment) => environment.branch),
     });
 
     let result: { project: typeof projects.$inferSelect; spec: typeof projectSpecifications.$inferSelect };
@@ -386,13 +410,11 @@ export class ProjectsService {
           .returning();
 
         /**
-         * The same default environment `create` builds (ADR-034).
-         *
-         * Without it every task submission fails environment resolution
-         * (ADR-021) with "no environments declared, so there is no branch to work
-         * on" — the branch a task targets is not an optional extra, so it is
-         * created in the same transaction as the project rather than left to a
-         * later edit.
+         * The two default environments (ADR-034 for the row, ADR-038 for the
+         * pair): Development and Staging, matching the branches the scaffold laid
+         * down. Without an environment every task submission fails environment
+         * resolution (ADR-021), so they are created in the same transaction as the
+         * project rather than left to a later edit.
          */
         await tx
           .insert(projectEnvironments)
@@ -401,7 +423,7 @@ export class ProjectsService {
               project.id,
               dto.organizationId,
               'main',
-              undefined,
+              scaffoldEnvironments,
             ),
           );
 
@@ -1021,6 +1043,12 @@ export class ProjectsService {
     odooVersion: string | null;
     odooEdition: OdooEdition;
     defaultBranch: string;
+    /**
+     * The branches to lay down beside the initial one (ADR-038): one per
+     * environment. The default branch is created by `init`; the rest are added at
+     * the initial commit so a task targeting any environment has a branch.
+     */
+    environmentBranches?: readonly string[];
   }): Promise<{ technicalName: string; repositoryPath: string; addonsPath: string }> {
     // on_premise takes its code from a scaffolded local directory; an ai_project
     // has no repository (Repository: None) precisely because its code is meant to
@@ -1088,6 +1116,14 @@ export class ProjectsService {
 
       await this.git.init(repositoryPath, input.defaultBranch);
       await this.git.commit(repositoryPath, `Scaffold ${directoryName}`);
+
+      // A branch per environment beside the default one (ADR-038), created at the
+      // initial commit. The default branch already exists from `init`, so it is
+      // skipped; the rest give every environment a task can target a real branch.
+      for (const branch of input.environmentBranches ?? []) {
+        if (branch === input.defaultBranch) continue;
+        await this.git.addBranch(repositoryPath, branch);
+      }
     } catch (error) {
       // A half-written directory is worse than none: it would satisfy the
       // "already exists" check on the next attempt while not being a repository.

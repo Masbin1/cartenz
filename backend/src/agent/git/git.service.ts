@@ -300,6 +300,22 @@ export class GitService {
   }
 
   /**
+   * Creates a branch at HEAD without checking it out (ADR-038).
+   *
+   * Used by the scaffold to lay down the staging and development branches beside
+   * the initial one: the working tree stays on the branch it was on, and the new
+   * branch points at the same commit. Idempotent-safe callers should not create a
+   * name that already exists; git refuses it, which surfaces as a failed scaffold.
+   */
+  async addBranch(repositoryPath: string, name: string): Promise<void> {
+    const branch = assertSafeRefName(name);
+    const result = await this.run(repositoryPath, ['branch', branch, '--']);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError(`branch ${branch}`, result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
    * The branch names a local working copy has: local branches plus the remote's,
    * with the remote prefix stripped. Used by the on-premise environment picker,
    * where the repository is a local directory rather than a remote URL.

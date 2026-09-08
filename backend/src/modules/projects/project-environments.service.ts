@@ -18,6 +18,19 @@ export interface EnvironmentInput {
   readonly isDefaultTarget?: boolean;
 }
 
+/**
+ * The environments a scaffolded project gets when none are declared (ADR-038).
+ *
+ * Two lines, not one: Development is where the work happens (the default target),
+ * Staging is what it is promoted to. Each branch is created in the scaffolded
+ * repository so a task targeting either has somewhere to commit. Production is
+ * absent on purpose — it is never a task target (ADR-021).
+ */
+export const DEFAULT_SCAFFOLD_ENVIRONMENTS: readonly EnvironmentInput[] = [
+  { name: 'Development', branch: 'development', kind: 'development', isDefaultTarget: true },
+  { name: 'Staging', branch: 'staging', kind: 'staging' },
+];
+
 /** A row as this service reads it: the resolved shape plus its scope and flag. */
 interface TrackedEnvironment extends ResolvedEnvironment {
   readonly organizationId: string;
