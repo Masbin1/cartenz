@@ -37,3 +37,4 @@ with the condition under which it is retired.
 | [ADR-035](ADR-035-project-runnable-dev-server.md) | A scaffolded project runs as a local dev server | Accepted |
 | [ADR-036](ADR-036-ai-project-scaffolded-and-runnable.md) | A Create-with-AI project is scaffolded locally and runs on-premise | Accepted |
 | [ADR-037](ADR-037-odoo-edition-per-project.md) | Odoo edition (Community or Enterprise) is chosen per project | Accepted |
+| [ADR-038](ADR-038-scaffold-staging-development-branches.md) | A scaffolded project is created with staging and development branches | Accepted |

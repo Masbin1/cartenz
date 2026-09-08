@@ -174,6 +174,56 @@ describe('GitService.listBranches', () => {
   });
 });
 
+/**
+ * ADR-038: the scaffold lays down staging and development branches beside the
+ * initial one. addBranch creates a branch at HEAD without checking it out, so
+ * the working tree stays where it is.
+ */
+describe('GitService.addBranch', () => {
+  const config = {
+    git: {
+      cloneDepth: 1, authorName: 'a', authorEmail: 'b',
+      allowLocalRemotes: false, pushEnabled: false, sshHostKeyPolicy: 'accept-new',
+    },
+    process: { timeoutMs: 15000, maxTimeoutMs: 20000, maxOutputBytes: 65536 },
+  } as AppConfig;
+
+  const capturingRunner = (exitCode = 0) => {
+    const calls: readonly string[][] = [];
+    const runner = {
+      run: (_executable: string, args: readonly string[]): Promise<CommandResult> => {
+        (calls as string[][]).push([...args]);
+        return Promise.resolve({
+          stdout: '', stderr: exitCode === 0 ? '' : 'fatal', exitCode,
+          durationMs: 1, timedOut: false, truncated: false,
+        } as CommandResult);
+      },
+    } as unknown as CommandRunner;
+    return { service: new GitService(runner, config), calls };
+  };
+
+  it('creates the branch at HEAD without checking it out', async () => {
+    const { service, calls } = capturingRunner();
+    await service.addBranch('/tmp/repo', 'staging');
+    // The hardening flags precede the subcommand, so match the tail.
+    const gitArgs = calls.find((args) => args.includes('branch'));
+    expect(gitArgs?.slice(-3)).toEqual(['branch', 'staging', '--']);
+    // Never a checkout: the working tree must stay on the default branch.
+    expect(calls.some((args) => args.includes('checkout'))).toBe(false);
+  });
+
+  it('refuses an unsafe branch name before running git', async () => {
+    const { service, calls } = capturingRunner();
+    await expect(service.addBranch('/tmp/repo', '--upload-pack=evil')).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('throws when git rejects the branch', async () => {
+    const { service } = capturingRunner(128);
+    await expect(service.addBranch('/tmp/repo', 'staging')).rejects.toThrow();
+  });
+});
+
 describe('GitService.push', () => {  const configWith = (allowLocal = false) =>
     ({
       git: {
