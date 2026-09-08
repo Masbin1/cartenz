@@ -50,12 +50,14 @@ governs how the project runs — not a per-run flag, so it belongs on the projec
 - `enterprise` is the default at every layer (column, DTO, generator), so this is
   additive: existing projects behave exactly as before, and only a project
   created as Community sees the narrower path.
-- This decides only the addons *path* of the generated conf. It does not change
-  what the agent may READ (ADR-031 source paths remain organisation-wide); a
-  Community project on a box whose enterprise source is configured can still have
-  the agent read enterprise code for reference. Narrowing that is a separate
-  decision because it is per-organisation source configuration, not a per-project
-  run setting.
+- This decides the addons *path* of the generated conf and, for a community
+  project, also what the agent may READ: `sourcePathsFor(orgId, edition)` drops
+  the portal-configured enterprise path for a community project, so a community
+  project's tasks cannot read enterprise source (ADR-031). The exclusion applies
+  to the portal-configured enterprise path — the identifiable one; the
+  environment fallback (`ODOO_SOURCE_PATHS`) is a flat, unlabelled list and is
+  left as configured, so a deployment wanting the narrower behaviour sets the
+  paths in the portal rather than the environment.
 
 ## Verification
 
@@ -65,3 +67,6 @@ governs how the project runs — not a per-run flag, so it belongs on the projec
 - End-to-end (dev box): a project created as Community produces an `odoo.conf`
   whose `addons_path` has no enterprise directory; the same project created as
   Enterprise includes it. Evidence is the generated file, not the diff.
+- Unit: `sourcePathsFor(orgId, 'community')` drops the configured enterprise path
+  while `'enterprise'` (and the default) keep it, so a community task's agent is
+  handed base-only source.

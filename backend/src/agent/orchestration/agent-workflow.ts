@@ -1365,8 +1365,12 @@ export class AgentWorkflow {
       onPremiseProjectPath: snapshot.onPremiseProjectPath,
       // The organisation's configured Odoo estate, falling back to the
       // deployment's environment when it has not been set in the portal
-      // (ADR-033).
-      odooSourcePaths: await this.odooSettings.sourcePathsFor(snapshot.organizationId),
+      // (ADR-033). A community project excludes the enterprise source (ADR-037),
+      // so the agent reads only what the project is entitled to.
+      odooSourcePaths: await this.odooSettings.sourcePathsFor(
+        snapshot.organizationId,
+        snapshot.odooEdition,
+      ),
       baseCommit: snapshot.baseCommit,
     });
 

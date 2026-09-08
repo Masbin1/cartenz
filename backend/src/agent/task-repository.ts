@@ -15,7 +15,7 @@ import { AuditService } from '../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../core/audit/audit-events';
 import { TaskEventPublisher } from '../core/events/task-event-publisher.service';
 import { resolveAgentPermissions, type AgentPermission } from '../core/authz/agent-permissions';
-import type { AgentTaskKind, ProjectType } from '../core/enums';
+import type { AgentTaskKind, OdooEdition, ProjectType } from '../core/enums';
 import { assertTransition, isTerminalStatus, type AgentTaskStatus } from './task-state';
 import { executionModeFor, type ExecutionMode } from './executors/execution-mode';
 import type { ImplementationPlan, ModifiedFile, TaskTestResults } from './orchestration/agent-plan';
@@ -51,6 +51,8 @@ export interface TaskExecutionSnapshot {
    */
   readonly baseCommit: string | null;
   readonly odooVersion: string | null;
+  /** The project's Odoo edition (ADR-037). Governs which source the agent reads. */
+  readonly odooEdition: OdooEdition;
   readonly repositoryUrl: string | null;
   readonly defaultBranch: string;
   /**
@@ -134,6 +136,7 @@ export class TaskRepository {
         baseCommit: agentTasks.baseCommit,
         plan: agentTasks.plan,
         odooVersion: projects.odooVersion,
+        odooEdition: projects.odooEdition,
         repositoryUrl: projects.repositoryUrl,
         defaultBranch: projects.defaultBranch,
         projectType: projects.projectType,
@@ -222,6 +225,7 @@ export class TaskRepository {
       branch: row.branch,
       baseCommit: row.baseCommit,
       odooVersion: row.odooVersion,
+      odooEdition: row.odooEdition as OdooEdition,
       repositoryUrl: row.repositoryUrl,
       defaultBranch: row.defaultBranch,
       credentialRef: connection?.secretRef ?? null,
