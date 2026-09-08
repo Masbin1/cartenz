@@ -28,3 +28,10 @@ with the condition under which it is retired.
 | [ADR-026](ADR-026-on-premise-deployment.md) | On-premise deployment | Accepted |
 | [ADR-027](ADR-027-odoo-validation-runtime.md) | Running Odoo for validation | Accepted |
 | [ADR-028](ADR-028-execution-adapters.md) | Three execution modes behind separate adapters | Accepted |
+| [ADR-029](ADR-029-conversational-agent-mode.md) | Conversational agent mode | Accepted |
+| [ADR-030](ADR-030-document-ingestion.md) | Document ingestion | Accepted |
+| [ADR-031](ADR-031-odoo-source-reference.md) | Odoo source reference | Accepted |
+| [ADR-032](ADR-032-odoo-project-scaffolding.md) | Odoo project scaffolding | Accepted |
+| [ADR-033](ADR-033-odoo-settings-and-addons-layout.md) | Odoo settings and addons layout | Accepted |
+| [ADR-034](ADR-034-project-ready-to-run.md) | A new project is ready to run | Accepted |
+| [ADR-035](ADR-035-project-runnable-dev-server.md) | A scaffolded project runs as a local dev server | Accepted |
