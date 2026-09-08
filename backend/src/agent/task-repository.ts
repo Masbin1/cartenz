@@ -201,6 +201,10 @@ export class TaskRepository {
       .sort((a, b) => (a.decidedAt as Date).getTime() - (b.decidedAt as Date).getTime());
     const lastDecision = decided.length > 0 ? decided[decided.length - 1] : null;
 
+    // Read once: it decides both the execution mode (ADR-036: an ai_project with
+    // a local directory runs on-premise) and is reported to the workspace layer.
+    const onPremiseProjectPath = readOnPremisePath(row.environmentConfig);
+
     return {
       taskId: row.taskId,
       reference: row.reference,
@@ -208,7 +212,9 @@ export class TaskRepository {
       projectId: row.projectId,
       projectName: row.projectName,
       projectType: row.projectType as ProjectType,
-      executionMode: executionModeFor(row.projectType as ProjectType),
+      executionMode: executionModeFor(row.projectType as ProjectType, {
+        hasLocalDirectory: onPremiseProjectPath !== null,
+      }),
       prompt: row.prompt,
       attachedDocumentIds: row.attachedDocumentIds ?? [],
       kind: row.kind as AgentTaskKind,
@@ -225,7 +231,7 @@ export class TaskRepository {
       targetEnvironment: environment
         ? { name: environment.name, kind: environment.kind }
         : null,
-      onPremiseProjectPath: readOnPremisePath(row.environmentConfig),
+      onPremiseProjectPath,
       odooOnlineUrl: readOdooOnlineUrl(connection?.metadata),
       plan: (row.plan as ImplementationPlan | null) ?? null,
       agentPermissions: resolveAgentPermissions(row.agentPermissions),

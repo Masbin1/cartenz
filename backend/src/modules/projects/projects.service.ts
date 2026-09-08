@@ -335,54 +335,86 @@ export class ProjectsService {
       modules: dto.modules,
     });
 
-    const result = await this.database.transaction(async (tx) => {
-      const [project] = await tx
-        .insert(projects)
-        .values({
-          organizationId: dto.organizationId,
-          name: dto.name,
-          description: dto.description,
-          projectType: 'ai_project',
-          odooVersion: dto.odooVersion,
-          defaultBranch: 'main',
-          environmentConfig: { targetEnvironment: 'development' },
-          agentPermissions: { ...DEFAULT_AGENT_PERMISSIONS },
-          createdByUserId: user.userId,
-        })
-        .returning();
-
-      /**
-       * The same default environment `create` builds (ADR-034).
-       *
-       * Without it every task submission fails environment resolution
-       * (ADR-021) with "no environments declared, so there is no branch to work
-       * on" — the branch a task targets is not an optional extra, so it is
-       * created in the same transaction as the project rather than left to a
-       * later edit.
-       */
-      await tx
-        .insert(projectEnvironments)
-        .values(
-          this.environments.buildForCreation(
-            project.id,
-            dto.organizationId,
-            'main',
-            undefined,
-          ),
-        );
-
-      const [spec] = await tx
-        .insert(projectSpecifications)
-        .values({
-          projectId: project.id,
-          version: 1,
-          specification: specification as unknown as Record<string, unknown>,
-          createdByUserId: user.userId,
-        })
-        .returning();
-
-      return { project, spec };
+    /**
+     * The project's local directory (ADR-036), created before the row for the
+     * same reason `create` does (ADR-032): disk work cannot join the database
+     * transaction, so a directory that fails to appear must not leave a project
+     * pointing at nothing. An AI project has no repository, so this is where its
+     * code lives — an empty `addons/`, plus the ADR-035 runnable files when the
+     * base holds `odoo-bin`.
+     */
+    const scaffolded = await this.scaffoldCustomAddon({
+      organizationId: dto.organizationId,
+      projectName: dto.name,
+      projectType: 'ai_project',
+      odooVersion: dto.odooVersion ?? null,
+      defaultBranch: 'main',
     });
+
+    let result: { project: typeof projects.$inferSelect; spec: typeof projectSpecifications.$inferSelect };
+    try {
+      result = await this.database.transaction(async (tx) => {
+        const [project] = await tx
+          .insert(projects)
+          .values({
+            organizationId: dto.organizationId,
+            name: dto.name,
+            description: dto.description,
+            projectType: 'ai_project',
+            odooVersion: dto.odooVersion,
+            defaultBranch: 'main',
+            // The scaffolded directory is where on-premise execution works
+            // (ADR-036). Recording it here is what turns this project's tasks
+            // from plan-only into a real on-premise run.
+            environmentConfig: {
+              targetEnvironment: 'development',
+              onPremisePath: scaffolded.repositoryPath,
+            },
+            agentPermissions: { ...DEFAULT_AGENT_PERMISSIONS },
+            createdByUserId: user.userId,
+          })
+          .returning();
+
+        /**
+         * The same default environment `create` builds (ADR-034).
+         *
+         * Without it every task submission fails environment resolution
+         * (ADR-021) with "no environments declared, so there is no branch to work
+         * on" — the branch a task targets is not an optional extra, so it is
+         * created in the same transaction as the project rather than left to a
+         * later edit.
+         */
+        await tx
+          .insert(projectEnvironments)
+          .values(
+            this.environments.buildForCreation(
+              project.id,
+              dto.organizationId,
+              'main',
+              undefined,
+            ),
+          );
+
+        const [spec] = await tx
+          .insert(projectSpecifications)
+          .values({
+            projectId: project.id,
+            version: 1,
+            specification: specification as unknown as Record<string, unknown>,
+            createdByUserId: user.userId,
+          })
+          .returning();
+
+        return { project, spec };
+      });
+    } catch (error) {
+      // The row could not be written, so the directory it would have pointed at
+      // is orphaned. Remove it, or a retry hits the "already exists" guard.
+      await rm(scaffolded.repositoryPath, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
+      throw error;
+    }
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_CREATED,
@@ -978,9 +1010,13 @@ export class ProjectsService {
     odooVersion: string | null;
     defaultBranch: string;
   }): Promise<{ technicalName: string; repositoryPath: string; addonsPath: string }> {
-    if (input.projectType !== 'on_premise') {
+    // on_premise takes its code from a scaffolded local directory; an ai_project
+    // has no repository (Repository: None) precisely because its code is meant to
+    // live locally too (ADR-036). A repository-backed type is refused: its code
+    // comes from the repository it connects to.
+    if (input.projectType !== 'on_premise' && input.projectType !== 'ai_project') {
       throw new BadRequestException(
-        'Scaffolding a project directory is available for on-premise projects. ' +
+        'Scaffolding a project directory is available for on-premise and AI projects. ' +
           'A repository-backed project takes its code from the repository it connects to.',
       );
     }

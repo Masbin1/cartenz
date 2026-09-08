@@ -11,8 +11,19 @@ describe('executionModeFor', () => {
     expect(executionModeFor('repository')).toBe('odoo_sh');
   });
 
-  it('maps an ai_project to no execution mode', () => {
+  it('maps an ai_project with no local directory to no execution mode', () => {
     expect(executionModeFor('ai_project')).toBeNull();
+    expect(executionModeFor('ai_project', { hasLocalDirectory: false })).toBeNull();
+  });
+
+  it('runs an ai_project on-premise once it has a local directory (ADR-036)', () => {
+    expect(executionModeFor('ai_project', { hasLocalDirectory: true })).toBe('on_premise');
+  });
+
+  it('ignores the local-directory hint for types whose mode is fixed', () => {
+    expect(executionModeFor('odoo_online', { hasLocalDirectory: true })).toBe('odoo_online');
+    expect(executionModeFor('odoo_sh', { hasLocalDirectory: true })).toBe('odoo_sh');
+    expect(executionModeFor('repository', { hasLocalDirectory: true })).toBe('odoo_sh');
   });
 });
 

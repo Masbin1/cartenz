@@ -35,3 +35,4 @@ with the condition under which it is retired.
 | [ADR-033](ADR-033-odoo-settings-and-addons-layout.md) | Odoo settings and addons layout | Accepted |
 | [ADR-034](ADR-034-project-ready-to-run.md) | A new project is ready to run | Accepted |
 | [ADR-035](ADR-035-project-runnable-dev-server.md) | A scaffolded project runs as a local dev server | Accepted |
+| [ADR-036](ADR-036-ai-project-scaffolded-and-runnable.md) | A Create-with-AI project is scaffolded locally and runs on-premise | Accepted |
