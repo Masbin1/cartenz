@@ -36,6 +36,7 @@ import {
   buildScaffoldFiles,
   deriveDirectoryName,
   isValidDirectoryName,
+  type RunnableConfig,
 } from './odoo-scaffold';
 import { ProjectMemoryService } from '../../agent/analysis/project-memory.service';
 import { ProjectEnvironmentsService } from './project-environments.service';
@@ -1026,10 +1027,11 @@ export class ProjectsService {
     }
 
     try {
-      for (const file of buildScaffoldFiles({ projectName: input.projectName })) {
+      const runnable = await this.resolveRunnableConfig(input.organizationId, directoryName);
+      for (const file of buildScaffoldFiles({ projectName: input.projectName, runnable })) {
         const target = join(repositoryPath, file.path);
         await mkdir(dirname(target), { recursive: true });
-        await writeFile(target, file.content, 'utf8');
+        await writeFile(target, file.content, { encoding: 'utf8', mode: file.mode ?? 0o644 });
       }
 
       await this.git.init(repositoryPath, input.defaultBranch);
@@ -1050,6 +1052,48 @@ export class ProjectsService {
     );
 
     return { technicalName: directoryName, repositoryPath, addonsPath };
+  }
+
+  /**
+   * The inputs a runnable `odoo.conf` and `run.sh` need (ADR-035), or undefined
+   * when the deployment cannot supply them.
+   *
+   * Best-effort by design: the base path must resolve and actually hold
+   * `odoo-bin`. When it does not — an environment-only deployment whose
+   * base/enterprise split is unknown, or a projects root without a matching Odoo
+   * source — scaffolding proceeds without the launcher rather than failing. A
+   * project that cannot be started is an inconvenience; a project that could not
+   * be created is not.
+   *
+   * The base path is the first configured source path, which ADR-033 defines as
+   * the Odoo repo root (the one holding `odoo-bin` and `addons/`); the enterprise
+   * path, when present, is the second.
+   */
+  private async resolveRunnableConfig(
+    organizationId: string,
+    directoryName: string,
+  ): Promise<RunnableConfig | undefined> {
+    const sourcePaths = await this.odooSettings.sourcePathsFor(organizationId);
+    const basePath = sourcePaths[0];
+    if (!basePath) return undefined;
+
+    const odooBin = join(basePath, 'odoo-bin');
+    const runnable = await stat(odooBin).catch(() => null);
+    if (!runnable?.isFile()) {
+      this.logger.warn(
+        `No runnable launcher scaffolded for "${directoryName}": ` +
+          `"${odooBin}" is not present, so odoo.conf/run.sh were skipped (ADR-035).`,
+      );
+      return undefined;
+    }
+
+    return {
+      directoryName,
+      basePath,
+      enterprisePath: sourcePaths[1] ?? null,
+      python: this.config.validation.python,
+      httpPort: 8069,
+    };
   }
 
   /** Response shape for a project. Declared so no column leaks by accident. */

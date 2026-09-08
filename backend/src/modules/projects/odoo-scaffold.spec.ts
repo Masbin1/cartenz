@@ -116,3 +116,71 @@ describe('buildScaffoldFiles', () => {
     expect(readme).toContain('read-only');
   });
 });
+
+/**
+ * ADR-035: a scaffolded project runs as a local Odoo dev server without Docker.
+ * The two extra files appear only when the base path holds an odoo-bin, so an
+ * environment-only deployment keeps the three ADR-032 files unchanged.
+ */
+describe('buildScaffoldFiles with a runnable config', () => {
+  const runnable = {
+    directoryName: 'pt_angin_ribut',
+    basePath: '/home/masbintang/linkederp/base/odoo',
+    enterprisePath: '/home/masbintang/linkederp/base/enterprise',
+    python: '/home/masbintang/venv/bin/python',
+    httpPort: 8069,
+  };
+  const files = buildScaffoldFiles({ projectName: 'PT Angin Ribut', runnable });
+  const byPath = (path: string) => files.find((file) => file.path === path);
+
+  it('adds a runnable odoo.conf and run.sh on top of the three base files', () => {
+    expect(files.map((file) => file.path).sort()).toEqual([
+      '.gitignore',
+      'README.md',
+      'addons/.gitkeep',
+      'odoo.conf',
+      'run.sh',
+    ]);
+  });
+
+  it('lists project, enterprise then core on the addons path', () => {
+    const conf = byPath('odoo.conf')!.content;
+    expect(conf).toContain(
+      'addons_path = /home/masbintang/linkederp/base/odoo/addons,' +
+        '/home/masbintang/linkederp/base/enterprise,addons',
+    );
+    expect(conf).toContain('db_name = pt_angin_ribut');
+    expect(conf).toContain('http_port = 8069');
+  });
+
+  it('keeps no password in the committed conf', () => {
+    expect(byPath('odoo.conf')!.content).not.toContain('db_password');
+  });
+
+  it('makes run.sh executable and names the interpreter and odoo-bin', () => {
+    const run = byPath('run.sh')!;
+    expect(run.mode).toBe(0o755);
+    expect(run.content).toContain("'/home/masbintang/venv/bin/python'");
+    expect(run.content).toContain("'/home/masbintang/linkederp/base/odoo/odoo-bin'");
+    expect(run.content).toContain('-c odoo.conf "$@"');
+    expect(run.content).toContain('PGPASSWORD');
+  });
+
+  it('omits the enterprise entry when it is not configured', () => {
+    const [, conf] = [
+      null,
+      buildScaffoldFiles({
+        projectName: 'X',
+        runnable: { ...runnable, enterprisePath: null },
+      }).find((file) => file.path === 'odoo.conf')!.content,
+    ];
+    expect(conf).toContain('addons_path = /home/masbintang/linkederp/base/odoo/addons,addons');
+  });
+
+  it('adds nothing runnable when no runnable config is given', () => {
+    const plain = buildScaffoldFiles({ projectName: 'X' });
+    expect(plain.map((file) => file.path)).not.toContain('odoo.conf');
+    expect(plain.map((file) => file.path)).not.toContain('run.sh');
+    expect(plain).toHaveLength(3);
+  });
+});
