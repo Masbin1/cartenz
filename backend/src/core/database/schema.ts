@@ -22,6 +22,7 @@ import {
   APPROVAL_STATUSES,
   CONNECTION_STATUSES,
   CONNECTION_TYPES,
+  ODOO_EDITIONS,
   ORGANIZATION_ROLES,
   PROJECT_TYPES,
 } from '../enums';
@@ -193,6 +194,14 @@ export const projects = pgTable(
     description: text('description'),
     projectType: text('project_type', { enum: asEnum(PROJECT_TYPES) }).notNull(),
     odooVersion: text('odoo_version'),
+    /**
+     * Community or Enterprise (ADR-037). Governs whether the generated
+     * `odoo.conf` lists the enterprise addons path. Defaults to enterprise, the
+     * behaviour before this column existed.
+     */
+    odooEdition: text('odoo_edition', { enum: asEnum(ODOO_EDITIONS) })
+      .notNull()
+      .default('enterprise'),
     defaultBranch: text('default_branch').notNull().default('main'),
     // Repository URL only. Credentials live behind a connection reference.
     repositoryUrl: text('repository_url'),

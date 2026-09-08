@@ -127,6 +127,7 @@ describe('buildScaffoldFiles with a runnable config', () => {
     directoryName: 'pt_angin_ribut',
     basePath: '/home/masbintang/linkederp/base/odoo',
     enterprisePath: '/home/masbintang/linkederp/base/enterprise',
+    edition: 'enterprise' as const,
     python: '/home/masbintang/venv/bin/python',
     httpPort: 8069,
   };
@@ -182,5 +183,26 @@ describe('buildScaffoldFiles with a runnable config', () => {
     expect(plain.map((file) => file.path)).not.toContain('odoo.conf');
     expect(plain.map((file) => file.path)).not.toContain('run.sh');
     expect(plain).toHaveLength(3);
+  });
+
+  /**
+   * ADR-037: a Community project has no enterprise licence, so its conf must not
+   * load the enterprise addons even when an enterprise path is configured.
+   */
+  it('omits the enterprise path for a community project', () => {
+    const conf = buildScaffoldFiles({
+      projectName: 'X',
+      runnable: { ...runnable, edition: 'community' },
+    }).find((file) => file.path === 'odoo.conf')!.content;
+    expect(conf).toContain('addons_path = /home/masbintang/linkederp/base/odoo/addons,addons');
+    expect(conf).not.toContain('/base/enterprise');
+  });
+
+  it('keeps the enterprise path for an enterprise project', () => {
+    const conf = buildScaffoldFiles({
+      projectName: 'X',
+      runnable: { ...runnable, edition: 'enterprise' },
+    }).find((file) => file.path === 'odoo.conf')!.content;
+    expect(conf).toContain('/home/masbintang/linkederp/base/enterprise');
   });
 });

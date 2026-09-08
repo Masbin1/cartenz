@@ -16,11 +16,13 @@ import {
   CONNECTION_TYPES,
   CREDENTIAL_KINDS,
   ENVIRONMENT_KINDS,
+  ODOO_EDITIONS,
   ODOO_VERSIONS,
   PROJECT_TYPES,
   type ConnectionType,
   type CredentialKind,
   type EnvironmentKind,
+  type OdooEdition,
   type OdooVersion,
   type ProjectType,
 } from '../../../core/enums';
@@ -84,6 +86,15 @@ export class CreateProjectDto {
   @IsOptional()
   @IsIn(ODOO_VERSIONS, { message: `odooVersion must be one of: ${ODOO_VERSIONS.join(', ')}` })
   odooVersion?: OdooVersion;
+
+  /**
+   * Community or Enterprise (ADR-037). Omitted means enterprise, the behaviour
+   * before the field existed. For a community project the generated odoo.conf
+   * leaves the enterprise addons path out.
+   */
+  @IsOptional()
+  @IsIn(ODOO_EDITIONS, { message: `odooEdition must be one of: ${ODOO_EDITIONS.join(', ')}` })
+  odooEdition?: OdooEdition;
 
   @IsOptional()
   @IsString()
@@ -178,6 +189,14 @@ export class CreateAiProjectDto {
 
   @IsIn(ODOO_VERSIONS, { message: `odooVersion must be one of: ${ODOO_VERSIONS.join(', ')}` })
   odooVersion!: OdooVersion;
+
+  /**
+   * Community or Enterprise (ADR-037). Omitted means enterprise, the behaviour
+   * before the field existed.
+   */
+  @IsOptional()
+  @IsIn(ODOO_EDITIONS, { message: `odooEdition must be one of: ${ODOO_EDITIONS.join(', ')}` })
+  odooEdition?: OdooEdition;
 
   @IsString()
   @IsNotEmpty({ message: 'A project description is required' })

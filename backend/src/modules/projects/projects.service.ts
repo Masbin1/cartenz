@@ -27,7 +27,7 @@ import {
   isNeverGrantable,
   resolveAgentPermissions,
 } from '../../core/authz/agent-permissions';
-import { REPOSITORY_BACKED_PROJECT_TYPES, type ProjectType } from '../../core/enums';
+import { REPOSITORY_BACKED_PROJECT_TYPES, DEFAULT_ODOO_EDITION, type OdooEdition, type ProjectType } from '../../core/enums';
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
 import { redactMetadata } from '../../core/audit/redact';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
@@ -275,6 +275,9 @@ export class ProjectsService {
      * workspace layer needs a Git repository, and the agent writes into the
      * `addons/` directory inside it.
      */
+    // Enterprise unless the caller chose Community (ADR-037).
+    const odooEdition: OdooEdition = dto.odooEdition ?? DEFAULT_ODOO_EDITION;
+
     const scaffolded = dto.scaffold
       ? await this.scaffoldCustomAddon({
           organizationId: dto.organizationId,
@@ -282,6 +285,7 @@ export class ProjectsService {
           technicalName: dto.technicalName,
           projectType: dto.projectType,
           odooVersion: dto.odooVersion ?? null,
+          odooEdition,
           defaultBranch,
         })
       : null;
@@ -292,6 +296,7 @@ export class ProjectsService {
       description: dto.description ?? null,
       projectType: dto.projectType,
       odooVersion: dto.odooVersion ?? null,
+      odooEdition,
       defaultBranch,
       repositoryUrl: dto.repositoryUrl ?? null,
       environmentConfig: scaffolded
@@ -343,11 +348,15 @@ export class ProjectsService {
      * code lives — an empty `addons/`, plus the ADR-035 runnable files when the
      * base holds `odoo-bin`.
      */
+    // Enterprise unless the caller chose Community (ADR-037).
+    const odooEdition: OdooEdition = dto.odooEdition ?? DEFAULT_ODOO_EDITION;
+
     const scaffolded = await this.scaffoldCustomAddon({
       organizationId: dto.organizationId,
       projectName: dto.name,
       projectType: 'ai_project',
       odooVersion: dto.odooVersion ?? null,
+      odooEdition,
       defaultBranch: 'main',
     });
 
@@ -362,6 +371,7 @@ export class ProjectsService {
             description: dto.description,
             projectType: 'ai_project',
             odooVersion: dto.odooVersion,
+            odooEdition,
             defaultBranch: 'main',
             // The scaffolded directory is where on-premise execution works
             // (ADR-036). Recording it here is what turns this project's tasks
@@ -947,6 +957,7 @@ export class ProjectsService {
     description: string | null;
     projectType: CreateProjectDto['projectType'];
     odooVersion: string | null;
+    odooEdition: OdooEdition;
     defaultBranch: string;
     repositoryUrl: string | null;
     environmentConfig: Record<string, unknown>;
@@ -1008,6 +1019,7 @@ export class ProjectsService {
     technicalName?: string;
     projectType: ProjectType;
     odooVersion: string | null;
+    odooEdition: OdooEdition;
     defaultBranch: string;
   }): Promise<{ technicalName: string; repositoryPath: string; addonsPath: string }> {
     // on_premise takes its code from a scaffolded local directory; an ai_project
@@ -1063,7 +1075,11 @@ export class ProjectsService {
     }
 
     try {
-      const runnable = await this.resolveRunnableConfig(input.organizationId, directoryName);
+      const runnable = await this.resolveRunnableConfig(
+        input.organizationId,
+        directoryName,
+        input.odooEdition,
+      );
       for (const file of buildScaffoldFiles({ projectName: input.projectName, runnable })) {
         const target = join(repositoryPath, file.path);
         await mkdir(dirname(target), { recursive: true });
@@ -1108,6 +1124,7 @@ export class ProjectsService {
   private async resolveRunnableConfig(
     organizationId: string,
     directoryName: string,
+    edition: OdooEdition,
   ): Promise<RunnableConfig | undefined> {
     const sourcePaths = await this.odooSettings.sourcePathsFor(organizationId);
     const basePath = sourcePaths[0];
@@ -1127,6 +1144,7 @@ export class ProjectsService {
       directoryName,
       basePath,
       enterprisePath: sourcePaths[1] ?? null,
+      edition,
       python: this.config.validation.python,
       httpPort: 8069,
     };
@@ -1140,6 +1158,7 @@ export class ProjectsService {
     description: string | null;
     projectType: string;
     odooVersion: string | null;
+    odooEdition: string;
     defaultBranch: string;
     repositoryUrl: string | null;
     environmentConfig: Record<string, unknown>;
@@ -1154,6 +1173,7 @@ export class ProjectsService {
       description: project.description,
       projectType: project.projectType,
       odooVersion: project.odooVersion,
+      odooEdition: project.odooEdition,
       defaultBranch: project.defaultBranch,
       repositoryUrl: project.repositoryUrl,
       environmentConfig: project.environmentConfig,

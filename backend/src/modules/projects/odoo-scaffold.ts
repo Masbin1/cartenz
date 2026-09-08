@@ -11,6 +11,8 @@
  * creation.
  */
 
+import type { OdooEdition } from '../../core/enums';
+
 /** Files written into a new project directory. */
 export interface ScaffoldFile {
   /** Path relative to the project directory. */
@@ -38,6 +40,11 @@ export interface RunnableConfig {
   readonly basePath: string;
   /** The enterprise addons directory, or null when not configured. */
   readonly enterprisePath: string | null;
+  /**
+   * The project's Odoo edition (ADR-037). A community project omits the
+   * enterprise path from its addons path even when one is configured.
+   */
+  readonly edition: OdooEdition;
   /** The interpreter that starts Odoo, usually a virtualenv. */
   readonly python: string;
   /** The HTTP port the dev server binds. */
@@ -173,7 +180,9 @@ export function buildScaffoldFiles(input: {
 export function buildRunnableConf(config: RunnableConfig): string {
   const addonsPath = [
     `${config.basePath}/addons`,
-    config.enterprisePath,
+    // Enterprise only for an Enterprise project (ADR-037): a Community project
+    // has no enterprise licence, so its conf must not load enterprise addons.
+    config.edition === 'enterprise' ? config.enterprisePath : null,
     'addons',
   ]
     .filter((entry): entry is string => Boolean(entry))

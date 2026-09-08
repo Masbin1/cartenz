@@ -14,6 +14,10 @@ import {
 } from '@/components/projects/environment-editor';
 
 const ODOO_VERSIONS = ['15.0', '16.0', '17.0', '18.0', '19.0'];
+const ODOO_EDITIONS: { value: string; label: string }[] = [
+  { value: 'enterprise', label: 'Enterprise' },
+  { value: 'community', label: 'Community' },
+];
 
 /**
  * The database name an Odoo Online URL implies.
@@ -126,6 +130,7 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
     description: '',
     projectType: 'repository',
     odooVersion: '18.0',
+    odooEdition: 'enterprise',
     defaultBranch: 'main',
     repositoryUrl: '',
     credential: '',
@@ -265,6 +270,7 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
         description: form.description || undefined,
         projectType: form.projectType,
         odooVersion: form.odooVersion,
+        odooEdition: form.odooEdition,
         defaultBranch: form.defaultBranch,
         repositoryUrl: needsRepository ? form.repositoryUrl : undefined,
         // The selected on-premise directory, stored in the project's environment
@@ -355,6 +361,24 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
             {ODOO_VERSIONS.map((version) => (
               <option key={version} value={version}>
                 {version}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="odooEdition" className="field-label">
+            Odoo edition
+          </label>
+          <select
+            id="odooEdition"
+            value={form.odooEdition}
+            onChange={update('odooEdition')}
+            className="field-input"
+          >
+            {ODOO_EDITIONS.map((edition) => (
+              <option key={edition.value} value={edition.value}>
+                {edition.label}
               </option>
             ))}
           </select>
@@ -608,6 +632,7 @@ function CreateWithAiForm({ organizationId }: { organizationId: string }) {
   const router = useRouter();
   const [name, setName] = useState('');
   const [odooVersion, setOdooVersion] = useState('18.0');
+  const [odooEdition, setOdooEdition] = useState('enterprise');
   const [description, setDescription] = useState('');
   const [requirements, setRequirements] = useState<{ title: string; detail: string }[]>([
     { title: '', detail: '' },
@@ -641,6 +666,7 @@ function CreateWithAiForm({ organizationId }: { organizationId: string }) {
         organizationId,
         name,
         odooVersion,
+        odooEdition,
         description,
         requirements: populated.map((entry) => ({
           title: entry.title,
@@ -692,6 +718,24 @@ function CreateWithAiForm({ organizationId }: { organizationId: string }) {
             {ODOO_VERSIONS.map((version) => (
               <option key={version} value={version}>
                 {version}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="ai-edition" className="field-label">
+            Odoo edition
+          </label>
+          <select
+            id="ai-edition"
+            value={odooEdition}
+            onChange={(event) => setOdooEdition(event.target.value)}
+            className="field-input"
+          >
+            {ODOO_EDITIONS.map((edition) => (
+              <option key={edition.value} value={edition.value}>
+                {edition.label}
               </option>
             ))}
           </select>

@@ -363,6 +363,7 @@ export const api = {
       description?: string;
       projectType: string;
       odooVersion?: string;
+      odooEdition?: string;
       defaultBranch?: string;
       repositoryUrl?: string;
       environmentConfig?: Record<string, unknown>;
@@ -373,6 +374,7 @@ export const api = {
       organizationId: string;
       name: string;
       odooVersion: string;
+      odooEdition?: string;
       description: string;
       requirements: { title: string; detail?: string }[];
       modules?: string[];
