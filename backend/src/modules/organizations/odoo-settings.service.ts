@@ -8,6 +8,7 @@ import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
+import type { OdooEdition } from '../../core/enums';
 
 /** A configured path, and whether it is actually there. */
 export interface OdooPathStatus {
@@ -71,10 +72,22 @@ export class OdooSettingsService {
    * The stored base and enterprise paths when set, otherwise the deployment's
    * configuration (ADR-031). Empty means no reference, in which case every read
    * resolves inside the workspace.
+   *
+   * `edition` (ADR-037): a community project drops the stored enterprise path, so
+   * the agent cannot read enterprise source it is not entitled to. Omitted means
+   * enterprise — every existing caller keeps the full set. The exclusion applies
+   * only to the portal-configured enterprise path, which is the identifiable one;
+   * the environment fallback (ADR-031) is a flat, unlabelled list and is left as
+   * configured, so a deployment that wants the narrower behaviour sets the paths
+   * in the portal.
    */
-  async sourcePathsFor(organizationId: string): Promise<readonly string[]> {
+  async sourcePathsFor(
+    organizationId: string,
+    edition: OdooEdition = 'enterprise',
+  ): Promise<readonly string[]> {
     const row = await this.findRow(organizationId);
-    const configured = [row?.basePath, row?.enterprisePath].filter(
+    const enterprisePath = edition === 'community' ? null : row?.enterprisePath;
+    const configured = [row?.basePath, enterprisePath].filter(
       (path): path is string => typeof path === 'string' && path.length > 0,
     );
     return configured.length > 0 ? configured : this.config.odooSource?.paths ?? [];

@@ -66,6 +66,29 @@ describe('OdooSettingsService', () => {
         '/env/enterprise',
       ]);
     });
+
+    /**
+     * ADR-037: a community project has no enterprise licence, so the agent must
+     * not be given the enterprise source to read.
+     */
+    it('excludes the configured enterprise path for a community project', async () => {
+      const service = serviceWith({
+        basePath: '/srv/odoo',
+        enterprisePath: '/srv/enterprise',
+      });
+      expect(await service.sourcePathsFor(organizationId, 'community')).toEqual(['/srv/odoo']);
+    });
+
+    it('keeps the enterprise path for an enterprise project', async () => {
+      const service = serviceWith({
+        basePath: '/srv/odoo',
+        enterprisePath: '/srv/enterprise',
+      });
+      expect(await service.sourcePathsFor(organizationId, 'enterprise')).toEqual([
+        '/srv/odoo',
+        '/srv/enterprise',
+      ]);
+    });
   });
 
   describe('projectsRootFor', () => {
