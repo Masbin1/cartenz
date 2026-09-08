@@ -114,6 +114,19 @@ export const ODOO_VERSIONS = ['15.0', '16.0', '17.0', '18.0', '19.0'] as const;
 export type OdooVersion = (typeof ODOO_VERSIONS)[number];
 
 /**
+ * Odoo edition of a project (ADR-037).
+ *
+ * `community` runs against the core modules only; `enterprise` also loads the
+ * enterprise addons. The distinction governs how the project's generated
+ * `odoo.conf` builds its addons path. `enterprise` is the default everywhere so
+ * the choice is additive: a project created before this existed keeps the wider
+ * path it already had.
+ */
+export const ODOO_EDITIONS = ['community', 'enterprise'] as const;
+export type OdooEdition = (typeof ODOO_EDITIONS)[number];
+export const DEFAULT_ODOO_EDITION: OdooEdition = 'enterprise';
+
+/**
  * Target environment kinds (ADR-021).
  *
  * In Odoo.sh an environment is a branch: production, one or more staging branches,

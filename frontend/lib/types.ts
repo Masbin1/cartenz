@@ -105,6 +105,7 @@ export interface ProjectDetail {
   description: string | null;
   projectType: ProjectType;
   odooVersion: string | null;
+  odooEdition: string;
   defaultBranch: string;
   repositoryUrl: string | null;
   environmentConfig: Record<string, unknown>;

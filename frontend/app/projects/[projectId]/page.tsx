@@ -267,6 +267,10 @@ export default function ProjectDetailPage() {
               </div>
               <dl className="divide-y divide-surface-border text-xs">
                 <DetailRow label="Odoo version" value={project.odooVersion ?? 'Not set'} />
+                <DetailRow
+                  label="Odoo edition"
+                  value={project.odooEdition === 'community' ? 'Community' : 'Enterprise'}
+                />
                 <DetailRow label="Default branch" value={project.defaultBranch} mono />
                 <DetailRow
                   label="Repository"
