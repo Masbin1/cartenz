@@ -6,6 +6,12 @@ agent worker, portal, and the model gateway.
 Written for Ubuntu 22.04 LTS. Commands assume `sudo` and a shell on the target
 host.
 
+> **Already running Odoo on this box?** Read
+> [INSTALL-SERVER-EXISTING-ODOO.md](INSTALL-SERVER-EXISTING-ODOO.md) for the
+> path configuration against an existing Odoo estate (base, enterprise, venv,
+> PostgreSQL). This guide covers the generic install; that one covers what
+> changes when Odoo is already present.
+
 ---
 
 ## 1. What you are installing
