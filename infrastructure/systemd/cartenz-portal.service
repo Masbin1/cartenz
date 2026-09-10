@@ -2,7 +2,10 @@
 # Cartenz portal — the Next.js production server.
 Description=Cartenz portal
 Documentation=file:///opt/cartenz/docs/INSTALL-SERVER.md
-After=network-online.target cartenz-api.service
+# Ordered after 9router so the gateway is settled before the portal starts.
+# (Defence in depth: with the corrected 9router unit this is no longer required
+# for correctness, but it keeps the portal from racing a gateway restart.)
+After=network-online.target cartenz-api.service 9router.service
 Wants=network-online.target
 StartLimitIntervalSec=0
 

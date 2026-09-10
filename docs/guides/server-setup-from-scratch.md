@@ -58,6 +58,12 @@ only if you specifically want its per-project memory for conversational work
 
 ## 2. Install the Platform (fastest path)
 
+> **Before you start — add swap on a small box.** The full stack (Postgres,
+> Redis, API, worker, portal, 9router, Hermes) does not fit in 2 GB without it.
+> With no swap, processes are killed mid-request (`Killed`, `status=137`) and
+> there is **no OOM line in `dmesg`** to tell you why. Commands in
+> `INSTALL-SERVER.md §1.1`.
+
 The repository ships an idempotent installer that performs sections 2–6 and 9 of
 `INSTALL-SERVER.md`. Preview it first — it changes nothing in dry-run:
 
@@ -148,6 +154,12 @@ A dependable chain for most servers:
 | 2 | Fallback | openai-compatible (9router) | `Banyak-duit` | on |
 | 3 | Fallback 2 | openai-compatible (9router) | `Paket-Hemat` | off |
 
+**Use ids your gateway actually serves.** The model ids above are examples; the
+real name is whatever 9router lists (`curl -s http://127.0.0.1:20128/v1/models`,
+`INSTALL-SERVER.md §5.3`). A row pointing at an id the gateway does not serve
+answers `No active credentials for provider: …` — that is a routing miss, not a
+bad key, and no amount of retrying fixes it.
+
 **Structured outputs is not cosmetic.** Only some models accept a strict
 `json_schema`; a model that refuses it must have the switch **off**, or every
 planning (`change`) call against that row fails — and can hang until timeout. If a
@@ -188,10 +200,45 @@ Notes:
 - Hermes refuses to start without `API_SERVER_KEY`, even on a loopback bind.
 - Bind it to `127.0.0.1` only. Like the gateway, it must never be reachable from
   the network — put it behind the firewall, never in the nginx config.
-- Hermes reaches its own model provider (per `~/.hermes/config.yaml`), so it does
-  **not** depend on 9router. That is deliberate — the two are independent engines.
+- Hermes picks its **own** model from `~/.hermes/config.yaml`; it does not inherit
+  Cartenz's engine. It is a separate brain — configure it once, in §6.2.
 
-### 6.2 Probe structured output before wiring it in
+### 6.2 Point Hermes at a model — `config.yaml`, never `.env`
+
+Hermes does **not** read `AI_PROVIDER`, `AI_MODEL`, `AI_BASE_URL` or `AI_API_KEY`
+from `.env` for its own inference. Those are Cartenz's keys. Hermes reads its
+model from `config.yaml`, and it is set with `hermes config set` — never edited by
+hand (a stray indent breaks the running service).
+
+The common choice is to point Hermes at the local 9router, so it can use the
+provider logins 9router already holds:
+
+```bash
+hermes config set model.provider  custom
+hermes config set model.base_url  http://127.0.0.1:20128/v1
+hermes config set model.default   cc/claude-sonnet-5      # a model 9router serves (§5.3)
+hermes config set model.api_key   '${AI_API_KEY}'         # a reference, not the literal key
+```
+
+`model.api_key` accepts an env reference, so the secret stays in Hermes' `.env`.
+Put the key there first (it is the same key 9router expects from its store):
+
+```bash
+grep -q '^AI_API_KEY=' ~/.hermes/.env || echo 'AI_API_KEY=<the 9router key>' >> ~/.hermes/.env
+```
+
+Then restart and confirm:
+
+```bash
+sudo systemctl restart hermes-api
+hermes -z "reply one word: PONG"          # expect: PONG
+```
+
+If it answers `HTTP 401 … invalid x-api-key` against `api.anthropic.com`, Hermes
+is still pointed at a provider whose key is empty — re-run the four `config set`
+commands above.
+
+### 6.3 Probe structured output before wiring it in
 
 Cartenz's planner asks for `response_format: json_schema`. Verify Hermes answers
 one:
@@ -206,9 +253,9 @@ curl -sS http://127.0.0.1:8642/v1/chat/completions \
 ```
 
 A trivial schema passes. This does **not** imply the full `change` planner schema
-passes — see §6.4.
+passes — see §6.5.
 
-### 6.3 Register Hermes as a provider
+### 6.4 Register Hermes as a provider
 
 Portal → **Settings → Model providers → Add**:
 
@@ -216,12 +263,12 @@ Portal → **Settings → Model providers → Add**:
 - Base URL: `http://127.0.0.1:8642/v1` (loopback plain-HTTP is accepted; ADR-023)
 - Model: `hermes-agent`
 - API key: the `API_SERVER_KEY` value from §6.1
-- Structured outputs: **on** (start here; see §6.4)
+- Structured outputs: **on** (start here; see §6.5)
 
 New rows land at the end of the chain. Reorder so the intended engine is priority
 1, and keep a non-Hermes row below it as the fallback.
 
-### 6.4 What to expect, honestly
+### 6.5 What to expect, honestly
 
 Verified behaviour, so you plan around it rather than fighting it:
 
@@ -237,7 +284,7 @@ row at priority 1 no longer makes `change` tasks fail outright — but confirm f
 the worker log or `agent_model_calls` which provider actually answered, not the
 summary field (it reports the chain's first member, not the responder).
 
-### 6.5 Per-project memory
+### 6.6 Per-project memory
 
 Cartenz scopes Hermes memory per project via the `X-Hermes-Session-Key` header
 (`cartenz-project-<projectId>`). No configuration is needed — a fact set in one
@@ -335,3 +382,73 @@ Then, in the portal:
 | Server that already runs Odoo (paths, ownership) | `docs/INSTALL-SERVER-EXISTING-ODOO.md` |
 | Using the platform (projects, branches, run.sh) | `docs/guides/creating-and-running-projects.md` |
 | Architectural decisions | `docs/adr/` (README indexes ADR-011…038) |
+
+---
+
+## 12. Known Pitfalls (read before debugging)
+
+Four traps cost real hours on a live server. Each is silent in a different way.
+
+### 12.1 The portal dies seconds after `Ready` (`status=137`, "Killed")
+
+**Cause:** 9router is being started through its interactive launcher
+(`cli.js`). Under systemd that launcher detaches, exits, and is restarted every
+`RestartSec`; each restart runs `killAllAppProcesses()`, which `kill -9`s every
+process whose command line contains `next-server` — and the portal *is* a
+`next-server`.
+
+**Diagnose:**
+
+```bash
+systemctl show 9router -p NRestarts         # thousands = you have this bug
+tail -20 /var/log/cartenz/portal.log        # "Ready in 700ms" then "Killed"
+```
+
+**Fix:** run the standalone server instead — `infrastructure/systemd/9router.service`
+is already written that way (`INSTALL-SERVER.md §5`). Re-copy it and
+`systemctl daemon-reload && systemctl restart 9router cartenz-portal`.
+
+### 12.2 A process is killed and `dmesg` says nothing
+
+**Cause:** no swap on a box smaller than the minimum in `INSTALL-SERVER.md §1.1`.
+The kernel reclaims with no headroom and the kill leaves no OOM trace.
+
+**Fix:** add the swapfile (`INSTALL-SERVER.md §1.1`). Judge by `free -h`, not by
+whether a process *looks* small.
+
+### 12.3 9router says `Invalid API key` and the key is definitely right
+
+**Cause:** 9router's key store (its own API keys **and** the upstream provider
+logins) lives in a SQLite DB under `DATA_DIR`. If that path changed — a new unit
+with a different `DATA_DIR`, or a different `User`/`HOME` resolving `$HOME/.9router`
+elsewhere — the gateway came up with an empty store.
+
+**Diagnose** (the store should not be empty):
+
+```bash
+sudo -u cartenz python3 - <<'PY'
+import sqlite3
+p="/opt/cartenz/.9router/db/data.sqlite"
+c=sqlite3.connect(p)
+for t in ("apiKeys","providerConnections"):
+    print(t, c.execute(f'select count(*) from "{t}"').fetchone()[0])
+PY
+```
+
+**Fix:** point `DATA_DIR` back at the real store and restart. If it was lost,
+copy the store back from backup (§10.1 of `INSTALL-SERVER.md`); the key must also
+match what the client sends, so keep `.env` and the store in step.
+
+### 12.4 Hermes cannot answer (`401`, or `Permission denied: /root/.hermes.md`)
+
+Two unrelated causes with one theme — Hermes' own configuration and working
+directory, not the gateway:
+
+- **`401 … invalid x-api-key` against `api.anthropic.com`:** `config.yaml` points
+  `model.provider` at a provider whose key is empty. Hermes' model is configured
+  by `config.yaml` only — `AI_PROVIDER`/`AI_MODEL` in `.env` are **ignored**
+  (§6.2).
+- **`Permission denied: '/root/.hermes.md'`:** the CLI was run from `/root` by a
+  non-root user. Run it from a readable directory; the installed `hermes` wrapper
+  `cd`s to `/opt/cartenz` for exactly this reason.
+

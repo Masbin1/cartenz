@@ -44,6 +44,24 @@ a repository and deletes it when the run ends, but concurrent tasks hold several
 clones at once. `WORKSPACE_MAX_BYTES` (default 512 MiB per workspace) bounds one
 clone, not the total.
 
+**Add swap — do not skip this on a small box.** A 2 vCPU / 2 GB VPS is below the
+minimum above and will not survive the full stack (Postgres + Redis + API +
+worker + portal + 9router + Hermes) without swap. With no swap, the kernel has
+no headroom: processes are killed mid-request and you get bare `Killed` /
+`code=exited, status=137` in the logs with no OOM line in `dmesg`. Create a
+swapfile before installing:
+
+```bash
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+sudo sysctl -w vm.swappiness=20
+echo 'vm.swappiness=20' | sudo tee -a /etc/sysctl.conf
+free -h    # Swap: 2.0Gi
+```
+
+
 ---
 
 ## 2. Prerequisites
@@ -197,6 +215,44 @@ sudo systemctl enable --now 9router
 The unit binds to `127.0.0.1` deliberately. The gateway holds provider API keys;
 it must never be reachable from the network.
 
+### 5.1 Why the unit runs `custom-server.js`, not `cli.js`
+
+`/opt/9router/cli.js` is the interactive launcher and must **not** be the
+ExecStart under systemd. Two things go wrong with it, and both are silent:
+
+1. **Restart loop.** With no TTY (and `--skip-update`) the launcher switches to
+   "tray mode": it spawns the real server as a *detached* child and then exits.
+   systemd tracks the launcher PID, sees it leave, and restarts the unit every
+   `RestartSec` — indefinitely. `systemctl show 9router -p NRestarts` climbs into
+   the thousands and `9router.log` repeats the banner forever.
+2. **It kills the portal.** Every one of those restarts calls the launcher's
+   `killAllAppProcesses()`, which runs `kill -9` on every process whose command
+   line contains `next-server`. `cartenz-portal` is also a `next-server`, so the
+   portal is killed a few seconds after it reports `Ready` and never stays up
+   (`status=137`, bare `Killed` in `portal.log`).
+
+The shipped unit therefore runs the standalone server directly:
+
+```ini
+WorkingDirectory=/opt/9router/app
+ExecStart=/usr/bin/node --dns-result-order=ipv4first --max-old-space-size=2048 /opt/9router/app/custom-server.js
+```
+
+Do not "simplify" this back to `cli.js … --skip-update`.
+
+### 5.2 The key store lives under `DATA_DIR`
+
+9router keeps its own API keys **and** its upstream provider credentials in a
+SQLite database under `DATA_DIR` (the unit sets `DATA_DIR=/opt/cartenz/.9router`).
+Consequences worth knowing before you debug an auth error:
+
+- Point `DATA_DIR` at a path that stays fixed. If it moves — or the unit's
+  user/HOME changes so `$HOME/.9router` resolves elsewhere — the gateway starts
+  with an **empty** key store and every client gets `Invalid API key`, even
+  though the key in `.env` is correct.
+- A fresh install has an empty store by design. Feed it here first (§5.3).
+- Back this directory up alongside `.env` (§10.1).
+
 Verify:
 
 ```bash
@@ -206,6 +262,21 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:20128/v1/models
 
 A cold start syncs the model catalogue and can take up to a minute before the
 endpoint answers. That is why the unit sets `TimeoutStartSec=120`.
+
+### 5.3 Feed it a provider, then note the model id
+
+Open the 9router UI (loopback `:20128`; reach it through an SSH tunnel) and add a
+provider credential — Anthropic/Claude OAuth, DeepSeek, Z.AI/GLM, etc. Then note
+the model id **as 9router actually serves it** — it is prefixed by the provider
+(`cc/claude-sonnet-5`, `alicode/glm-5`, …):
+
+```bash
+curl -s http://127.0.0.1:20128/v1/models | tr , '\n' | grep -o '"id":"[^"]*"' | sort -u
+```
+
+Use that exact id in the portal chain (§9). A model id the gateway does not serve
+answers `No active credentials for provider: …` — that is a routing miss, not a
+wrong key.
 
 ---
 
@@ -364,7 +435,7 @@ a test database cannot touch platform data.
 
 ### 10.1 Backup
 
-Two things must be backed up. Losing either is unrecoverable.
+Four things must be backed up. Losing any of them is unrecoverable.
 
 ```bash
 # Database
@@ -372,6 +443,15 @@ pg_dump -U linkederp -h 127.0.0.1 linkederp_ai | gzip > cartenz-$(date +%F).sql.
 
 # Secrets — SECRETS_ROOT_KEY decrypts every stored project credential
 sudo cp /opt/cartenz/.env /secure-backup/cartenz.env
+
+# 9router key store — the gateway's own API keys AND its upstream provider
+# credentials. Losing it means re-adding every provider login by hand.
+sudo systemctl stop 9router
+sudo cp -a /opt/cartenz/.9router /secure-backup/9router-data
+sudo systemctl start 9router
+
+# Hermes config + .env (its API_SERVER_KEY and its own model wiring)
+sudo cp -a /opt/cartenz/.hermes/config.yaml /opt/cartenz/.hermes/.env /secure-backup/hermes/
 ```
 
 ### 10.2 Upgrade
@@ -416,6 +496,14 @@ the honest answer to "what can this deployment actually do".
 | `health/ready` reports `postgres: down` | Credentials or database missing | Check `DATABASE_URL` |
 | Portal loads, API calls fail | Proxy not forwarding `/api/` | Check the nginx location block |
 | Push refused although enabled | `GIT_PUSH_ENABLED` not applied | Restart the worker after editing `.env` |
+| Portal exits `status=137` / bare `Killed` a few seconds after `Ready` | 9router is running `cli.js`, whose `killAllAppProcesses()` kills every `next-server` | Run the standalone server (§5); confirm with `systemctl show 9router -p NRestarts` |
+| 9router restarts every few seconds, `NRestarts` in the thousands | Same: `cli.js` tray mode detaches and exits | Same fix |
+| Processes killed with **no** OOM line in `dmesg`, memory looks free | No swap on a small box | Add swap (§1.1) |
+| 9router answers `Invalid API key` although `.env` is correct | `DATA_DIR` moved / points at an empty key store | Point `DATA_DIR` at the real store (§5); restore from backup |
+| 9router answers `No active credentials for provider: X` | Model id not served, or provider not connected in the UI | Add the provider, then use the exact served model id (§5.3) |
+| Hermes: `Permission denied: '/root/.hermes.md'` | CLI run from `/root` as a non-root user | Run it from a readable dir — the `hermes` wrapper `cd`s to `/opt/cartenz` |
+| Hermes: `HTTP 401 invalid x-api-key` (Anthropic endpoint) | `config.yaml` points `model.provider` at a provider with no key | Repoint it (§6.2 of the from-scratch guide) |
+
 
 ---
 
