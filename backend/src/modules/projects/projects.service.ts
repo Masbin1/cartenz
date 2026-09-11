@@ -27,12 +27,19 @@ import {
   isNeverGrantable,
   resolveAgentPermissions,
 } from '../../core/authz/agent-permissions';
-import { REPOSITORY_BACKED_PROJECT_TYPES, DEFAULT_ODOO_EDITION, type OdooEdition, type ProjectType } from '../../core/enums';
+import {
+  REPOSITORY_BACKED_PROJECT_TYPES,
+  DEFAULT_ODOO_EDITION,
+  type OdooEdition,
+  type ProjectProvisioningStatus,
+  type ProjectType,
+} from '../../core/enums';
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
 import { redactMetadata } from '../../core/audit/redact';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import { buildProjectSpecification } from './project-specification';
 import {
+  buildProvisionedAddonFiles,
   buildScaffoldFiles,
   deriveDirectoryName,
   isValidDirectoryName,
@@ -44,6 +51,7 @@ import {
   ProjectEnvironmentsService,
 } from './project-environments.service';
 import { OdooSettingsService } from '../organizations/odoo-settings.service';
+import { ProjectProvisioningService } from './project-provisioning.service';
 import { WorkspaceManager } from '../../agent/workspace/workspace-manager';
 import { TERMINAL_TASK_STATUSES } from '../../agent/task-state';
 import { assertSafeRemoteUrl, UnsafeRemoteUrlError } from '../../agent/git/git-url';
@@ -87,6 +95,7 @@ export class ProjectsService {
     private readonly git: GitService,
     private readonly odooSettings: OdooSettingsService,
     private readonly odooOnline: OdooOnlineClient,
+    private readonly provisioning: ProjectProvisioningService,
   ) {}
 
   /**
@@ -358,14 +367,6 @@ export class ProjectsService {
       modules: dto.modules,
     });
 
-    /**
-     * The project's local directory (ADR-036), created before the row for the
-     * same reason `create` does (ADR-032): disk work cannot join the database
-     * transaction, so a directory that fails to appear must not leave a project
-     * pointing at nothing. An AI project has no repository, so this is where its
-     * code lives — an empty `addons/`, plus the ADR-035 runnable files when the
-     * base holds `odoo-bin`.
-     */
     // Enterprise unless the caller chose Community (ADR-037).
     const odooEdition: OdooEdition = dto.odooEdition ?? DEFAULT_ODOO_EDITION;
 
@@ -374,15 +375,43 @@ export class ProjectsService {
     // branch for each.
     const scaffoldEnvironments = DEFAULT_SCAFFOLD_ENVIRONMENTS;
 
-    const scaffolded = await this.scaffoldCustomAddon({
-      organizationId: dto.organizationId,
-      projectName: dto.name,
-      projectType: 'ai_project',
-      odooVersion: dto.odooVersion ?? null,
-      odooEdition,
-      defaultBranch: 'main',
-      environmentBranches: scaffoldEnvironments.map((environment) => environment.branch),
-    });
+    /**
+     * Two entirely different paths, chosen once, at the top (ADR-039).
+     *
+     * With provisioning enabled, the operator's create_project /
+     * create_project_enterprise scripts create the project directory — a real
+     * PostgreSQL database, a systemd service and an Nginx site come with it —
+     * and this platform never calls mkdir on that path itself: the scripts
+     * refuse to run against a directory that already exists, so the two
+     * creators cannot race for the same path. With it disabled, behaviour is
+     * unchanged from before this existed: a scaffold-only directory, no live
+     * instance, provisioningStatus stays 'none'.
+     *
+     * There is no third, partial path. Either provisioning is off, or it is on
+     * and project creation succeeds only once a real instance is running and
+     * its addons/ is a git repository the agent can write to — a half-result
+     * (a directory but no service, or a service but no writable addons/) would
+     * be a worse failure mode than refusing the whole request, because nothing
+     * on this platform can tear down a systemd service or an Nginx site to
+     * clean it up afterwards.
+     */
+    const scaffolded = this.provisioning.available
+      ? await this.provisionAiProject({
+          organizationId: dto.organizationId,
+          projectName: dto.name,
+          odooEdition,
+          defaultBranch: 'main',
+          environmentBranches: scaffoldEnvironments.map((environment) => environment.branch),
+        })
+      : await this.scaffoldCustomAddon({
+          organizationId: dto.organizationId,
+          projectName: dto.name,
+          projectType: 'ai_project',
+          odooVersion: dto.odooVersion ?? null,
+          odooEdition,
+          defaultBranch: 'main',
+          environmentBranches: scaffoldEnvironments.map((environment) => environment.branch),
+        });
 
     let result: { project: typeof projects.$inferSelect; spec: typeof projectSpecifications.$inferSelect };
     try {
@@ -406,6 +435,10 @@ export class ProjectsService {
             },
             agentPermissions: { ...DEFAULT_AGENT_PERMISSIONS },
             createdByUserId: user.userId,
+            provisioningStatus: scaffolded.provisioning?.status ?? 'none',
+            provisioningPort: scaffolded.provisioning?.port ?? null,
+            provisioningUrl: scaffolded.provisioning?.url ?? null,
+            provisionedAt: scaffolded.provisioning?.status === 'provisioned' ? new Date() : null,
           })
           .returning();
 
@@ -440,11 +473,25 @@ export class ProjectsService {
         return { project, spec };
       });
     } catch (error) {
-      // The row could not be written, so the directory it would have pointed at
-      // is orphaned. Remove it, or a retry hits the "already exists" guard.
-      await rm(scaffolded.repositoryPath, { recursive: true, force: true }).catch(
-        () => undefined,
-      );
+      if (scaffolded.provisioning?.status === 'provisioned') {
+        // The directory, database, systemd service and Nginx site are real and
+        // now orphaned: none of them can be torn down from here, because there
+        // is no destroy counterpart to create_project exposed to this platform.
+        // This is loud on purpose - an operator has to clean it up on the host.
+        this.logger.error(
+          `Project row could not be written after "${scaffolded.technicalName}" was ` +
+            `provisioned on port ${scaffolded.provisioning.port}. The Odoo instance, its ` +
+            'database, systemd service and Nginx site are still running and were NOT torn ' +
+            `down. An operator must clean up "${scaffolded.technicalName}" on the host by hand. ` +
+            `Original error: ${(error as Error).message}`,
+        );
+      } else {
+        // Scaffold-only path: the directory it would have pointed at is
+        // orphaned. Remove it, or a retry hits the "already exists" guard.
+        await rm(scaffolded.repositoryPath, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+      }
       throw error;
     }
 
@@ -458,6 +505,8 @@ export class ProjectsService {
         projectType: 'ai_project',
         flow: 'create_with_ai',
         requirementCount: specification.requirements.length,
+        provisioningStatus: scaffolded.provisioning?.status ?? 'none',
+        provisioningPort: scaffolded.provisioning?.port ?? null,
       },
     });
 
@@ -1049,7 +1098,12 @@ export class ProjectsService {
      * the initial commit so a task targeting any environment has a branch.
      */
     environmentBranches?: readonly string[];
-  }): Promise<{ technicalName: string; repositoryPath: string; addonsPath: string }> {
+  }): Promise<{
+    technicalName: string;
+    repositoryPath: string;
+    addonsPath: string;
+    provisioning: null;
+  }> {
     // on_premise takes its code from a scaffolded local directory; an ai_project
     // has no repository (Repository: None) precisely because its code is meant to
     // live locally too (ADR-036). A repository-backed type is refused: its code
@@ -1139,7 +1193,125 @@ export class ProjectsService {
         `on branch ${input.defaultBranch}; addons at ${addonsPath}`,
     );
 
-    return { technicalName: directoryName, repositoryPath, addonsPath };
+    return { technicalName: directoryName, repositoryPath, addonsPath, provisioning: null };
+  }
+
+  /**
+   * The provisioning path (ADR-039): a real, running Odoo instance instead of a
+   * scaffold-only directory.
+   *
+   * The operator's create_project / create_project_enterprise scripts create
+   * `<PROJECT_PROVISION_PROJECTS_DIR>/<name>/addons/` themselves — a plain data
+   * directory, chown'd to odoo:odoo — as part of standing up the database,
+   * systemd service and Nginx site. This method does not create that directory:
+   * it waits for the script to create it, fixes its group ownership so the
+   * platform can write to it (ProjectProvisioningService.provision does that),
+   * and only then turns it into a Git repository, exactly the way
+   * `scaffoldCustomAddon` does for a plain scaffold.
+   *
+   * Same shape of return as `scaffoldCustomAddon`, plus the `provisioning`
+   * result, so `createAiProject` can treat the two branches uniformly except
+   * where they must differ.
+   *
+   * Throws (refusing project creation outright) when the script fails or the
+   * addons/ ownership fix-up fails: a project record with an
+   * inconsistent provisioning status is worse than a request that failed
+   * cleanly and can be retried, per the no-partial-result rule stated at the
+   * call site.
+   */
+  private async provisionAiProject(input: {
+    organizationId: string;
+    projectName: string;
+    odooEdition: OdooEdition;
+    defaultBranch: string;
+    environmentBranches?: readonly string[];
+  }): Promise<{
+    technicalName: string;
+    repositoryPath: string;
+    addonsPath: string;
+    provisioning: {
+      status: ProjectProvisioningStatus;
+      port: number | null;
+      url: string | null;
+    };
+  }> {
+    const directoryName = deriveDirectoryName(input.projectName) ?? '';
+    if (!isValidDirectoryName(directoryName)) {
+      throw new BadRequestException(
+        `"${directoryName || input.projectName}" does not give a usable directory name for ` +
+          'provisioning. Rename the project so it starts with a letter and contains only ' +
+          'lowercase letters, digits and underscores.',
+      );
+    }
+
+    const result = await this.provisioning.provision({
+      organizationId: input.organizationId,
+      projectId: '', // not yet known: the project row does not exist until after this call
+      technicalName: directoryName,
+      odooEdition: input.odooEdition,
+    });
+
+    if (!result.provisioned) {
+      throw new BadRequestException(
+        `The Odoo instance could not be provisioned: ${result.error ?? 'unknown error'}`,
+      );
+    }
+
+    const repositoryPath = join(this.config.provisioning.projectsDir, directoryName);
+    const addonsPath = join(repositoryPath, 'addons');
+
+    const addonsInfo = await stat(addonsPath).catch(() => null);
+    if (!addonsInfo?.isDirectory()) {
+      throw new BadRequestException(
+        `Provisioning reported success but "${addonsPath}" does not exist. Check the ` +
+          'provisioning script output on the host.',
+      );
+    }
+
+    try {
+      const existingGit = await stat(join(addonsPath, '.git')).catch(() => null);
+      if (!existingGit) {
+        for (const file of buildProvisionedAddonFiles({
+          projectName: input.projectName,
+          url: result.url,
+        })) {
+          const target = join(addonsPath, file.path);
+          await mkdir(dirname(target), { recursive: true });
+          await writeFile(target, file.content, { encoding: 'utf8', mode: file.mode ?? 0o644 });
+        }
+
+        await this.git.init(addonsPath, input.defaultBranch);
+        await this.git.commit(addonsPath, `Scaffold ${directoryName}`);
+
+        for (const branch of input.environmentBranches ?? []) {
+          if (branch === input.defaultBranch) continue;
+          await this.git.addBranch(addonsPath, branch);
+        }
+      }
+    } catch (error) {
+      // The instance is real and running; the only thing that failed is
+      // turning addons/ into a git repository. Reported as a request failure
+      // (not silently degraded to provisioningStatus 'failed') because a
+      // project the agent cannot commit to is not one "Create with AI" can use,
+      // and the audit trail for the orphaned instance is what the catch block
+      // in createAiProject writes once this throws.
+      throw new BadRequestException(
+        `The Odoo instance at ${result.url} is running, but its addons/ directory could not ` +
+          `be turned into a Git repository: ${(error as Error).message}. The instance was NOT ` +
+          'torn down; an operator must reconcile it on the host.',
+      );
+    }
+
+    this.logger.log(
+      `Provisioned and scaffolded "${directoryName}" at ${repositoryPath}, running at ${result.url}`,
+    );
+
+    return {
+      technicalName: directoryName,
+      repositoryPath,
+      addonsPath,
+      provisioning: { status: 'provisioned', port: result.port, url: result.url },
+    };
   }
 
   /**

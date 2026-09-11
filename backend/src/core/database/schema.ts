@@ -24,6 +24,7 @@ import {
   CONNECTION_TYPES,
   ODOO_EDITIONS,
   ORGANIZATION_ROLES,
+  PROJECT_PROVISIONING_STATUSES,
   PROJECT_TYPES,
 } from '../enums';
 import { AGENT_TASK_STATUSES } from '../../agent/task-state';
@@ -213,6 +214,27 @@ export const projects = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
+    /**
+     * The live instance this project's AI-created directory was provisioned
+     * into (ADR-039), by the operator's own create_project /
+     * create_project_enterprise scripts — never written by any code path
+     * other than ProjectProvisioningService.
+     *
+     * `none` on every project scaffolded before this existed, and on every
+     * project created while PROJECT_PROVISIONING_ENABLED is false: the
+     * platform never silently starts provisioning something that used to be a
+     * scaffold-only project.
+     */
+    provisioningStatus: text('provisioning_status', { enum: asEnum(PROJECT_PROVISIONING_STATUSES) })
+      .notNull()
+      .default('none'),
+    /** The HTTP port allocated for this project's Odoo instance, once provisioned. */
+    provisioningPort: integer('provisioning_port'),
+    /** The public URL — http://<name>.<base-domain> — once nginx is configured. */
+    provisioningUrl: text('provisioning_url'),
+    /** The last error message from a failed provisioning run, for the portal to show. */
+    provisioningError: text('provisioning_error'),
+    provisionedAt: timestamp('provisioned_at', { withTimezone: true }),
     /**
      * Agent permissions per chapter 11. Held per project and independent of
      * user roles. Defaults are applied by the application, not the column, so

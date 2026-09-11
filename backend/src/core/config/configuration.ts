@@ -136,6 +136,71 @@ const environmentSchema = z.object({
   ON_PREMISE_READ_ONLY_PATHS: z.string().default(''),
 
   /**
+   * Provisioning a real, running Odoo instance for a "Create with AI" project
+   * (ADR-039).
+   *
+   * Off by default, and — like GIT_PUSH_ENABLED and VALIDATION_ENABLED —
+   * enforced at the process chokepoint (ProvisioningRunner) rather than only by
+   * a permission or an approval: a guarantee that rests on how one tool is
+   * implemented ends the moment someone implements it. With this false, no
+   * project ever leaves the scaffold-only path, whatever else is configured.
+   *
+   * Enabling it lets the platform run `sudo <PROJECT_PROVISION_SCRIPT>` /
+   * `sudo <PROJECT_PROVISION_SCRIPT_ENTERPRISE>` as root on this host: real
+   * PostgreSQL databases, systemd services and Nginx vhosts. That is the
+   * operator's decision, not something a project or an organisation can grant
+   * itself.
+   */
+  PROJECT_PROVISIONING_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+
+  /** Absolute path to the Community project-creation script (ADR-039). */
+  PROJECT_PROVISION_SCRIPT: z.string().default('/opt/odoo/scripts/create_project'),
+  /** Absolute path to the Enterprise project-creation script (ADR-039). */
+  PROJECT_PROVISION_SCRIPT_ENTERPRISE: z
+    .string()
+    .default('/opt/odoo/scripts/create_project_enterprise'),
+  /**
+   * Absolute path to the addons/ ownership fix-up script (ADR-039).
+   *
+   * create_project / create_project_enterprise chown the whole project
+   * directory to odoo:odoo, mode 750, which leaves addons/ unwritable by this
+   * platform's own user. This script narrows a chown/chmod to addons/ alone so
+   * the agent can git init and commit into it.
+   */
+  PROJECT_PROVISION_GRANT_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/grant-addons-write.sh'),
+
+  /**
+   * The port range a new project's Odoo instance is allocated from.
+   *
+   * Each project takes two consecutive ports (HTTP, then gevent/websocket), so
+   * the allocator only ever hands out an even PROJECT_PORT_RANGE_START plus a
+   * multiple of two, matching what create_project itself derives
+   * (gevent = http + 1).
+   */
+  PROJECT_PORT_RANGE_START: z.coerce.number().int().min(1024).max(65000).default(7000),
+  PROJECT_PORT_RANGE_END: z.coerce.number().int().min(1024).max(65534).default(7999),
+
+  /** The domain a provisioned project is reachable at: <project>.<this>. */
+  PROJECT_BASE_DOMAIN: z.string().default(''),
+
+  /**
+   * The PROJECTS_DIR the operator's scripts create project directories under.
+   *
+   * Hardcoded inside create_project / create_project_enterprise as
+   * `${BASE_DIR}/projects` — the scripts take no argument for it, so this
+   * value exists only so the platform can find the addons/ directory those
+   * scripts just created, to git-init it. Must match the scripts' own
+   * BASE_DIR/projects exactly, or provisioning will succeed while the platform
+   * fails to locate the resulting directory.
+   */
+  PROJECT_PROVISION_PROJECTS_DIR: z.string().default('/opt/odoo/projects'),
+
+  /**
    * The Odoo source the agent reads as a reference on every Odoo project
    * (ADR-031), not only on-premise ones.
    *
@@ -319,6 +384,19 @@ export interface AppConfig {
     readonly readOnlyPaths: readonly string[];
   };
   /**
+   * Provisioning a real Odoo instance for a "Create with AI" project (ADR-039).
+   */
+  readonly provisioning: {
+    readonly enabled: boolean;
+    readonly communityScript: string;
+    readonly enterpriseScript: string;
+    readonly grantScript: string;
+    readonly portRangeStart: number;
+    readonly portRangeEnd: number;
+    readonly baseDomain: string | null;
+    readonly projectsDir: string;
+  };
+  /**
    * The Odoo source the agent reads as a reference on every Odoo project
    * (ADR-031). Empty when no Odoo source is configured, in which case every read
    * resolves inside the workspace.
@@ -453,6 +531,32 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   /**
+   * Provisioning (ADR-039). Validated at boot, not at the first project
+   * creation, for the same reason every other path setting is: a typo here is
+   * an operator's mistake, and it should fail loudly before anyone has
+   * clicked "Create with AI".
+   */
+  if (!isAbsolute(env.PROJECT_PROVISION_SCRIPT)) {
+    throw new ConfigurationError(['PROJECT_PROVISION_SCRIPT must be an absolute path.']);
+  }
+  if (!isAbsolute(env.PROJECT_PROVISION_SCRIPT_ENTERPRISE)) {
+    throw new ConfigurationError([
+      'PROJECT_PROVISION_SCRIPT_ENTERPRISE must be an absolute path.',
+    ]);
+  }
+  if (!isAbsolute(env.PROJECT_PROVISION_GRANT_SCRIPT)) {
+    throw new ConfigurationError(['PROJECT_PROVISION_GRANT_SCRIPT must be an absolute path.']);
+  }
+  if (!isAbsolute(env.PROJECT_PROVISION_PROJECTS_DIR)) {
+    throw new ConfigurationError(['PROJECT_PROVISION_PROJECTS_DIR must be an absolute path.']);
+  }
+  if (env.PROJECT_PORT_RANGE_END <= env.PROJECT_PORT_RANGE_START) {
+    throw new ConfigurationError([
+      'PROJECT_PORT_RANGE_END must be greater than PROJECT_PORT_RANGE_START.',
+    ]);
+  }
+
+  /**
    * The Odoo source the agent reads as a reference (ADR-031).
    *
    * Explicit when ODOO_SOURCE_PATHS is set; otherwise derived from what a
@@ -565,6 +669,16 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     onPremise: {
       root: emptyToUndefined(env.ON_PREMISE_ROOT) ?? null,
       readOnlyPaths,
+    },
+    provisioning: {
+      enabled: env.PROJECT_PROVISIONING_ENABLED,
+      communityScript: env.PROJECT_PROVISION_SCRIPT,
+      enterpriseScript: env.PROJECT_PROVISION_SCRIPT_ENTERPRISE,
+      grantScript: env.PROJECT_PROVISION_GRANT_SCRIPT,
+      portRangeStart: env.PROJECT_PORT_RANGE_START,
+      portRangeEnd: env.PROJECT_PORT_RANGE_END,
+      baseDomain: emptyToUndefined(env.PROJECT_BASE_DOMAIN) ?? null,
+      projectsDir: env.PROJECT_PROVISION_PROJECTS_DIR,
     },
     odooSource: {
       paths: odooSourcePaths,

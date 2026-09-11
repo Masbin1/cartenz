@@ -127,6 +127,22 @@ export type OdooEdition = (typeof ODOO_EDITIONS)[number];
 export const DEFAULT_ODOO_EDITION: OdooEdition = 'enterprise';
 
 /**
+ * Provisioning status of a project's live Odoo instance (ADR-039).
+ *
+ * `none` — no instance was requested, or provisioning is disabled on this
+ * deployment: a project scaffolded before this existed, or one created while
+ * PROJECT_PROVISIONING_ENABLED was false. `pending` — a provisioning run has
+ * been queued but has not finished. `provisioned` — the operator's
+ * create_project/create_project_enterprise script ran to completion and the
+ * systemd service is enabled. `failed` — the script exited non-zero; the
+ * project's scaffolded directory still exists and creation is not retried
+ * automatically, because a script failure usually means a port or a name
+ * collision the operator has to resolve on the host.
+ */
+export const PROJECT_PROVISIONING_STATUSES = ['none', 'pending', 'provisioned', 'failed'] as const;
+export type ProjectProvisioningStatus = (typeof PROJECT_PROVISIONING_STATUSES)[number];
+
+/**
  * Target environment kinds (ADR-021).
  *
  * In Odoo.sh an environment is a branch: production, one or more staging branches,

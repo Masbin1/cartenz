@@ -28,8 +28,18 @@ import type { AppConfig } from '../config/configuration';
  * python3 is here only so an Odoo validation run can be started, and it is
  * guarded twice: VALIDATION_ENABLED must be true, and the invocation must be an
  * odoo-bin inside a configured runtime (ADR-027).
+ *
+ * sudo is here only so the operator's own create_project /
+ * create_project_enterprise scripts can be run to provision a real Odoo
+ * instance for a "Create with AI" project (ADR-039), and it is guarded the same
+ * way: PROJECT_PROVISIONING_ENABLED must be true, and the invocation must be
+ * exactly `sudo -n <configured-script> <project-name> <port>` — nothing else is
+ * a legal sudo invocation as far as this platform is concerned. The narrowing
+ * lives in assertProvisioningInvocation, mirroring assertOdooInvocation below:
+ * adding an executable to this set is a wide grant, and the grant is narrowed
+ * to one fixed shape immediately.
  */
-const ALLOWED_EXECUTABLES = new Set(['git', 'python3']);
+const ALLOWED_EXECUTABLES = new Set(['git', 'python3', 'sudo']);
 
 /**
  * Git subcommands refused unless explicitly enabled (ADR-021).
@@ -52,6 +62,7 @@ const GUARDED_GIT_SUBCOMMANDS: Readonly<Record<string, string>> = {
 /** Executables that are refused outright unless their setting is enabled. */
 const GUARDED_EXECUTABLES: Readonly<Record<string, string>> = {
   python3: 'VALIDATION_ENABLED',
+  sudo: 'PROJECT_PROVISIONING_ENABLED',
 };
 
 export interface CommandResult {
@@ -157,6 +168,9 @@ export class CommandRunner {
   private readonly maxTimeoutMs: number;
   private readonly maxOutputBytes: number;
   private readonly odooCoreDirectories: readonly string[];
+  /** The exact provisioning scripts sudo may be asked to run (ADR-039). */
+  private readonly provisioningScripts: readonly string[];
+  private readonly provisioningGrantScript: string;
   /** Settings that enable a guarded subcommand, by setting name. */
   private readonly enabled: Readonly<Record<string, boolean>>;
 
@@ -167,6 +181,10 @@ export class CommandRunner {
     this.enabled = {
       GIT_PUSH_ENABLED: config.git.pushEnabled,
       VALIDATION_ENABLED: config.validation.enabled,
+      // Tolerates a config stub without the section, the way odooSourceRoots
+      // does in the workspace manager: several existing tests construct a
+      // narrow AppConfig by hand, and this must not throw for them.
+      PROJECT_PROVISIONING_ENABLED: config.provisioning?.enabled ?? false,
     };
 
     // Parsed once. A caller cannot widen the permitted set by passing a path.
@@ -174,6 +192,11 @@ export class CommandRunner {
       .split(',')
       .map((entry) => entry.slice(entry.indexOf('=') + 1).trim())
       .filter((entry) => entry.startsWith('/'));
+
+    this.provisioningScripts = config.provisioning
+      ? [config.provisioning.communityScript, config.provisioning.enterpriseScript]
+      : [];
+    this.provisioningGrantScript = config.provisioning?.grantScript ?? '';
 
     if (config.validation.enabled) {
       this.logger.warn(
@@ -194,6 +217,19 @@ export class CommandRunner {
     } else {
       this.logger.warn(
         'GIT_PUSH_ENABLED=true: the platform is permitted to push to customer repositories.',
+      );
+    }
+
+    if (!config.provisioning?.enabled) {
+      this.logger.log(
+        'Project provisioning is refused at the process layer ' +
+          '(PROJECT_PROVISIONING_ENABLED=false). No project can be turned into a running ' +
+          'Odoo instance.',
+      );
+    } else {
+      this.logger.warn(
+        'PROJECT_PROVISIONING_ENABLED=true: the platform is permitted to run ' +
+          `${this.provisioningScripts.join(', ')} as root via sudo.`,
       );
     }
   }
@@ -229,6 +265,13 @@ export class CommandRunner {
     // core from a configured runtime.
     if (executable === 'python3') {
       assertOdooInvocation(args, this.odooCoreDirectories);
+    }
+
+    // Enabled is not the same as unrestricted: sudo may only run one of the two
+    // configured provisioning scripts, non-interactively, with exactly the
+    // arguments they accept (ADR-039).
+    if (executable === 'sudo') {
+      assertProvisioningInvocation(args, this.provisioningScripts, this.provisioningGrantScript);
     }
 
     if (executable === 'git') {
@@ -422,6 +465,97 @@ export function assertOdooInvocation(
     throw new CommandArgumentError(
       `"${script}" is not inside a configured Odoo runtime. Configured: ` +
         `${coreDirectories.length > 0 ? coreDirectories.join(', ') : '(none)'}.`,
+    );
+  }
+}
+
+/** A project name the operator's provisioning scripts will accept. */
+const PROVISIONING_PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{1,30}$/;
+
+/**
+ * Refuses a sudo invocation that is not exactly a provisioning run (ADR-039).
+ *
+ * Adding `sudo` to the allow-list is about as wide a grant as exists: sudo can
+ * run anything its sudoers rule permits, as root. The grant is narrowed here to
+ * two fixed shapes - mirroring assertOdooInvocation above - and nothing else:
+ *
+ *   `sudo -n <create-script> <project-name> <port>` — the operator's
+ *   create_project / create_project_enterprise scripts.
+ *
+ *   `sudo -n <grant-script> <project-name>` — the addons-ownership fix-up
+ *   script, which takes no port because it touches only a directory the
+ *   create scripts already made.
+ *
+ * `createScripts` and `grantScript` are disjoint by construction (distinct
+ * configuration keys); a script appearing in neither is refused. Every check
+ * here duplicates a check the scripts themselves make; that is deliberate: the
+ * scripts run as root on the strength of a sudoers rule this platform does not
+ * control, and this function is the platform's own opinion of what a legal
+ * invocation looks like, independent of the sudoers rule or the script.
+ *
+ * `-n` (non-interactive) is required in the argument vector itself, not merely
+ * assumed: a `sudo` that blocks on a password prompt would hang the worker, and
+ * requiring the flag here means that failure mode cannot occur however the
+ * caller builds the argument list.
+ */
+export function assertProvisioningInvocation(
+  args: readonly string[],
+  createScripts: readonly string[],
+  grantScript: string | null = null,
+): void {
+  if (args[0] !== '-n') {
+    throw new CommandArgumentError(
+      'sudo may only be run non-interactively: the first argument must be "-n".',
+    );
+  }
+
+  const script = args[1];
+  if (!script) {
+    throw new CommandArgumentError(
+      'sudo may only run a configured project-provisioning script, and none was given.',
+    );
+  }
+
+  const isCreate = createScripts.includes(script);
+  const isGrant = grantScript !== null && script === grantScript;
+
+  if (!isCreate && !isGrant) {
+    const configured = [...createScripts, ...(grantScript ? [grantScript] : [])];
+    throw new CommandArgumentError(
+      `"${script}" is not a configured provisioning script. Configured: ` +
+        `${configured.length > 0 ? configured.join(', ') : '(none)'}.`,
+    );
+  }
+
+  const projectName = args[2];
+  if (!projectName || !PROVISIONING_PROJECT_NAME.test(projectName)) {
+    throw new CommandArgumentError(
+      'sudo provisioning requires a valid project name as the second argument: lowercase ' +
+        'letters, digits, hyphen and underscore, 2-31 characters.',
+    );
+  }
+
+  if (isGrant) {
+    if (args.length !== 3) {
+      throw new CommandArgumentError(
+        `The addons-ownership script takes exactly "-n <script> <project-name>"; got ` +
+          `${args.length} arguments.`,
+      );
+    }
+    return;
+  }
+
+  const port = args[3];
+  if (!port || !/^[0-9]+$/.test(port) || Number(port) < 1024 || Number(port) > 65534) {
+    throw new CommandArgumentError(
+      'sudo provisioning requires a numeric HTTP port between 1024 and 65534 as the third ' +
+        'argument.',
+    );
+  }
+
+  if (args.length !== 4) {
+    throw new CommandArgumentError(
+      `sudo provisioning takes exactly "-n <script> <project-name> <port>"; got ${args.length} arguments.`,
     );
   }
 }

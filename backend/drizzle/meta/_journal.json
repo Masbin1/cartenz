@@ -78,6 +78,13 @@
       "when": 1788740000000,
       "tag": "0010_project_odoo_edition",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789033532501,
+      "tag": "0011_project_provisioning",
+      "breakpoints": true
     }
   ]
 }

@@ -168,6 +168,52 @@ export function buildScaffoldFiles(input: {
 }
 
 /**
+ * The files written when the git repository *is* the addons/ directory itself
+ * (ADR-039), rather than a directory containing one.
+ *
+ * Used only for a project that was actually provisioned by the operator's
+ * create_project / create_project_enterprise scripts: those scripts already
+ * created addons/ as a plain data directory (no `addons/addons/` nesting) and
+ * already wrote a real, running odoo.conf under config/ — so there is no
+ * runnable launcher to generate here, and no `addons/.gitkeep` path prefix:
+ * the repository root and the Odoo addons path are the same directory.
+ */
+export function buildProvisionedAddonFiles(input: {
+  readonly projectName: string;
+  readonly url: string | null;
+}): ScaffoldFile[] {
+  return [
+    { path: '.gitkeep', content: '' },
+    {
+      path: '.gitignore',
+      content: ['__pycache__/', '*.pyc', '*.pyo', '.idea/', '.vscode/', ''].join('\n'),
+    },
+    {
+      path: 'README.md',
+      content: [
+        `# ${input.projectName}`,
+        '',
+        'Custom Odoo addons for this project.',
+        '',
+        'This directory *is* the Odoo addons path for a running instance the ' +
+          'platform provisioned on this server (ADR-039): a PostgreSQL database, a ' +
+          'systemd service and an Nginx site already exist for it. Modules created ' +
+          'here are picked up on the next restart of that service.',
+        '',
+        'config/, data/ and logs/ sit beside this directory and are not part of this ' +
+          'repository: they hold the Odoo master password and the filestore, and are ' +
+          'owned by the odoo system account rather than by this project.',
+        input.url ? '' : '',
+        input.url ? `Running at: ${input.url}` : '',
+        '',
+      ]
+        .filter((line, index, all) => !(line === '' && all[index - 1] === ''))
+        .join('\n'),
+    },
+  ];
+}
+
+/**
  * A runnable server `odoo.conf` (ADR-035) — distinct from the ephemeral
  * validation conf (ADR-027), which runs `--stop-after-init` and is deleted after
  * one run.

@@ -7,6 +7,7 @@ import {
   CommandRunner,
   SubcommandNotEnabledError,
   assertOdooInvocation,
+  assertProvisioningInvocation,
   findGitSubcommand,
 } from './command-runner.service';
 import type { AppConfig } from '../config/configuration';
@@ -376,5 +377,96 @@ describe('assertOdooInvocation', () => {
 
   it('tolerates a configured path with a trailing slash', () => {
     expect(() => assertOdooInvocation(['/opt/odoo19/odoo-bin'], ['/opt/odoo19/'])).not.toThrow();
+  });
+});
+
+/**
+ * The provisioning invocation guard (ADR-039).
+ *
+ * Adding `sudo` to the allow-list is about as wide a grant as exists. These
+ * assert the narrowing to exactly `-n <script> <name> <port>` or
+ * `-n <grant-script> <name>`, because a mistake here turns "provisioning is
+ * enabled" into "arbitrary root command execution".
+ */
+describe('assertProvisioningInvocation', () => {
+  const createScripts = ['/opt/odoo/scripts/create_project', '/opt/odoo/scripts/create_project_enterprise'];
+  const grantScript = '/opt/cartenz/infrastructure/provisioning/grant-addons-write.sh';
+
+  it('permits a well-formed community provisioning call', () => {
+    expect(() =>
+      assertProvisioningInvocation(['-n', createScripts[0], 'dodolbintangmas', '7001'], createScripts, grantScript),
+    ).not.toThrow();
+  });
+
+  it('permits a well-formed enterprise provisioning call', () => {
+    expect(() =>
+      assertProvisioningInvocation(['-n', createScripts[1], 'dodolbintangmas', '7001'], createScripts, grantScript),
+    ).not.toThrow();
+  });
+
+  it('permits a well-formed addons-grant call, which takes no port', () => {
+    expect(() =>
+      assertProvisioningInvocation(['-n', grantScript, 'dodolbintangmas'], createScripts, grantScript),
+    ).not.toThrow();
+  });
+
+  it('refuses an interactive invocation missing -n', () => {
+    expect(() =>
+      assertProvisioningInvocation([createScripts[0], 'dodolbintangmas', '7001'], createScripts, grantScript),
+    ).toThrow(/non-interactively/);
+  });
+
+  it('refuses a script that is not configured', () => {
+    expect(() =>
+      assertProvisioningInvocation(['-n', '/tmp/evil.sh', 'dodolbintangmas', '7001'], createScripts, grantScript),
+    ).toThrow(/not a configured provisioning script/);
+  });
+
+  it('is not fooled by a path that merely starts with a configured one', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', '/opt/odoo/scripts/create_project-evil', 'name', '7001'],
+        createScripts,
+        grantScript,
+      ),
+    ).toThrow(/not a configured provisioning script/);
+  });
+
+  it('refuses an invalid project name', () => {
+    for (const bad of ['', '-x', 'UPPER', 'has spaces', '../escape', 'a;rm -rf /']) {
+      expect(() =>
+        assertProvisioningInvocation(['-n', createScripts[0], bad, '7001'], createScripts, grantScript),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a non-numeric or out-of-range port', () => {
+    for (const bad of ['abc', '-1', '99999', '80.5', '']) {
+      expect(() =>
+        assertProvisioningInvocation(['-n', createScripts[0], 'name', bad], createScripts, grantScript),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses extra arguments smuggled after the port', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', createScripts[0], 'name', '7001', '; rm -rf /'],
+        createScripts,
+        grantScript,
+      ),
+    ).toThrow(CommandArgumentError);
+  });
+
+  it('refuses extra arguments smuggled after the grant script name', () => {
+    expect(() =>
+      assertProvisioningInvocation(['-n', grantScript, 'name', 'extra'], createScripts, grantScript),
+    ).toThrow(CommandArgumentError);
+  });
+
+  it('refuses everything when no scripts are configured', () => {
+    expect(() => assertProvisioningInvocation(['-n', createScripts[0], 'name', '7001'], [], null)).toThrow(
+      /\(none\)/,
+    );
   });
 });

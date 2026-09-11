@@ -1,0 +1,48 @@
+# LinkedERP project provisioning — sudoers rule (ADR-039)
+#
+# Installs on the host as root:
+#
+#   visudo -cf infrastructure/provisioning/99-linkederp-provisioning   # validate first
+#   install -o root -g root -m 0440 \
+#     infrastructure/provisioning/99-linkederp-provisioning \
+#     /etc/sudoers.d/99-linkederp-provisioning
+#
+# What this grants, and nothing more:
+#
+#   - The "cartenz" user (the one the LinkedERP API and worker run as) may run
+#     exactly three commands as root, with NO password prompt (NOPASSWD) and
+#     no other privilege.
+#   - Two are the operator's own project-creation scripts, called with no
+#     wildcard in their arguments: the platform's own CommandRunner
+#     (backend/src/core/process/command-runner.service.ts,
+#     assertProvisioningInvocation) independently re-validates that only these
+#     two exact paths are ever passed to `sudo`, and that the arguments after
+#     them are a valid project name and a valid port. This sudoers rule and
+#     that code-level check are two independent gates; neither is trusted
+#     alone.
+#   - The third is the addons/ ownership fix-up
+#     (infrastructure/provisioning/grant-addons-write.sh), needed because
+#     create_project/create_project_enterprise leave the whole project
+#     directory, including addons/, owned by odoo:odoo mode 750 — unwritable
+#     by the "cartenz" user that must git-init and commit into addons/.
+#
+#   - `sudo -l -U cartenz` on the host shows exactly this rule; there is no
+#     wildcard sudo access anywhere else for this user.
+#
+# Update the three paths below if this repository, or the operator's scripts,
+# live somewhere other than what ADR-039 assumes.
+
+Cmnd_Alias LINKEDERP_PROVISION = \
+    /opt/odoo/scripts/create_project, \
+    /opt/odoo/scripts/create_project_enterprise, \
+    /opt/cartenz/infrastructure/provisioning/grant-addons-write.sh
+
+cartenz ALL=(root) NOPASSWD: LINKEDERP_PROVISION
+
+# Never let sudo re-exec these under a pty or with an inherited environment
+# that could smuggle something in; !requiretty is deliberately NOT set here —
+# CommandRunner's sudo invocations always pass -n (non-interactive), so a TTY
+# is never expected. Defaults below are the same hardening the platform itself
+# applies to every child process (see command-runner.service.ts FORCED_ENV):
+# no explicit Defaults line is required for a NOPASSWD Cmnd_Alias grant, but
+# the two are stated for a reader auditing this file, not enforced by it.

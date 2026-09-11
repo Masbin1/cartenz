@@ -30,6 +30,16 @@ import {
  */
 const HARDENING_ARGS: readonly string[] = [
   '-c', 'core.hooksPath=/dev/null',
+  // GIT_CONFIG_GLOBAL=/dev/null (command-runner.service.ts) means git never
+  // reads a gitconfig file, so "safe.directory" cannot be set that way either.
+  // Every repository this platform touches is provisioned by a separate root
+  // script (create_project) that leaves it owned by "odoo", not "cartenz" -
+  // git's ownership check would otherwise refuse every single one of them.
+  // Trusting all directories is safe specifically because hooksPath is
+  // already neutralised above: the dubious-ownership check exists to stop a
+  // hostile repo's hooks running as the invoking user, and that path is
+  // already closed.
+  '-c', 'safe.directory=*',
   // No credential helper may be inherited from anywhere; the askpass lease is
   // the only credential path.
   '-c', 'credential.helper=',
