@@ -261,6 +261,10 @@ export default function ProjectDetailPage() {
           </div>
 
           <div className="space-y-5">
+            {project.provisioning.status !== 'none' ? (
+              <InstancePanel projectId={project.id} provisioning={project.provisioning} viewerRole={project.viewerRole} />
+            ) : null}
+
             <section className="panel">
               <div className="panel-header">
                 <h2 className="panel-title">Project</h2>
@@ -394,5 +398,123 @@ function DetailRow({
       <dt className="shrink-0 text-content-subtle">{label}</dt>
       <dd className={`min-w-0 truncate text-right ${mono ? 'font-mono text-2xs' : ''}`}>{value}</dd>
     </div>
+  );
+}
+
+/**
+ * The provisioned instance's own connection details (ADR-039, ADR-040): URL,
+ * database, status, and a "reveal" control for the master password gated to
+ * admin/owner (enforced by the API; the button is simply not shown to anyone
+ * else, since a 403 from clicking it would be a confusing dead end).
+ */
+function InstancePanel({
+  projectId,
+  provisioning,
+  viewerRole,
+}: {
+  projectId: string;
+  provisioning: import('@/lib/types').ProjectProvisioningInfo;
+  viewerRole: string;
+}) {
+  const canReveal = viewerRole === 'owner' || viewerRole === 'admin';
+  const [revealed, setRevealed] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+
+  const reveal = useCallback(async () => {
+    setRevealing(true);
+    setRevealError(null);
+    try {
+      const { masterPassword } = await api.projects.revealMasterPassword(projectId);
+      setRevealed(masterPassword);
+    } catch (caught) {
+      setRevealError(
+        caught instanceof ApiError ? caught.message : 'The master password could not be revealed.',
+      );
+    } finally {
+      setRevealing(false);
+    }
+  }, [projectId]);
+
+  const statusTone =
+    provisioning.status === 'provisioned'
+      ? 'text-state-success'
+      : provisioning.status === 'failed'
+        ? 'text-state-failure'
+        : 'text-state-waiting';
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2 className="panel-title">Instance</h2>
+        <span className={`text-2xs ${statusTone}`}>{humanise(provisioning.status)}</span>
+      </div>
+
+      {provisioning.status === 'failed' && provisioning.error ? (
+        <div className="border-b border-surface-border px-4 py-3">
+          <Alert tone="error" title="Provisioning failed">
+            {provisioning.error}
+          </Alert>
+        </div>
+      ) : null}
+
+      <dl className="divide-y divide-surface-border text-xs">
+        <DetailRow
+          label="URL"
+          value={provisioning.url ?? 'Not provisioned'}
+          mono
+        />
+        <DetailRow label="Database" value={provisioning.databaseName ?? 'None'} mono />
+        <DetailRow
+          label="HTTPS"
+          value={
+            provisioning.https.status === 'issued'
+              ? 'Active'
+              : provisioning.https.status === 'failed'
+                ? `Failed${provisioning.https.error ? ` — ${provisioning.https.error}` : ''}`
+                : provisioning.https.status === 'pending'
+                  ? 'Pending'
+                  : 'Not issued (plain HTTP)'
+          }
+        />
+        {provisioning.provisionedAt ? (
+          <DetailRow label="Provisioned" value={relativeTime(provisioning.provisionedAt)} />
+        ) : null}
+      </dl>
+
+      {provisioning.hasMasterPassword ? (
+        <div className="border-t border-surface-border px-4 py-3">
+          <p className="panel-title mb-2">Master password</p>
+          {revealed ? (
+            <div className="space-y-2">
+              <code className="block break-all rounded border border-surface-border bg-surface-overlay px-2 py-1.5 font-mono text-2xs">
+                {revealed}
+              </code>
+              <p className="text-2xs leading-relaxed text-content-subtle">
+                Store this somewhere safe. It will not be shown here again without another reveal.
+              </p>
+            </div>
+          ) : canReveal ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => void reveal()}
+                disabled={revealing}
+                className="btn-secondary text-2xs"
+              >
+                {revealing ? 'Revealing…' : 'Reveal master password'}
+              </button>
+              {revealError ? (
+                <p className="text-2xs leading-relaxed text-state-failure">{revealError}</p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-2xs leading-relaxed text-content-subtle">
+              Held, encrypted. Only an organisation admin or owner can reveal it.
+            </p>
+          )}
+        </div>
+      ) : null}
+    </section>
   );
 }

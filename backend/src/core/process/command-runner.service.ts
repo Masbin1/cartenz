@@ -38,6 +38,10 @@ import type { AppConfig } from '../config/configuration';
  * lives in assertProvisioningInvocation, mirroring assertOdooInvocation below:
  * adding an executable to this set is a wide grant, and the grant is narrowed
  * to one fixed shape immediately.
+ *
+ * The same `sudo` entry also covers the addons-ownership fix-up script and, as
+ * of ADR-040, the HTTPS-issuance script — both are additional fixed shapes
+ * assertProvisioningInvocation recognises, not a new executable.
  */
 const ALLOWED_EXECUTABLES = new Set(['git', 'python3', 'sudo']);
 
@@ -171,6 +175,8 @@ export class CommandRunner {
   /** The exact provisioning scripts sudo may be asked to run (ADR-039). */
   private readonly provisioningScripts: readonly string[];
   private readonly provisioningGrantScript: string;
+  /** The HTTPS-issuance script sudo may be asked to run (ADR-040). */
+  private readonly httpsScript: string;
   /** Settings that enable a guarded subcommand, by setting name. */
   private readonly enabled: Readonly<Record<string, boolean>>;
 
@@ -197,6 +203,7 @@ export class CommandRunner {
       ? [config.provisioning.communityScript, config.provisioning.enterpriseScript]
       : [];
     this.provisioningGrantScript = config.provisioning?.grantScript ?? '';
+    this.httpsScript = config.https?.enabled ? (config.https.script ?? '') : '';
 
     if (config.validation.enabled) {
       this.logger.warn(
@@ -230,6 +237,18 @@ export class CommandRunner {
       this.logger.warn(
         'PROJECT_PROVISIONING_ENABLED=true: the platform is permitted to run ' +
           `${this.provisioningScripts.join(', ')} as root via sudo.`,
+      );
+    }
+
+    if (!config.https?.enabled) {
+      this.logger.log(
+        'HTTPS issuance is refused at the process layer (PROJECT_HTTPS_ENABLED=false). No ' +
+          'certificate can be requested for a provisioned instance.',
+      );
+    } else {
+      this.logger.warn(
+        `PROJECT_HTTPS_ENABLED=true: the platform is permitted to run ${this.httpsScript} ` +
+          'as root via sudo.',
       );
     }
   }
@@ -271,7 +290,12 @@ export class CommandRunner {
     // configured provisioning scripts, non-interactively, with exactly the
     // arguments they accept (ADR-039).
     if (executable === 'sudo') {
-      assertProvisioningInvocation(args, this.provisioningScripts, this.provisioningGrantScript);
+      assertProvisioningInvocation(
+        args,
+        this.provisioningScripts,
+        this.provisioningGrantScript,
+        this.httpsScript || null,
+      );
     }
 
     if (executable === 'git') {
@@ -472,12 +496,19 @@ export function assertOdooInvocation(
 /** A project name the operator's provisioning scripts will accept. */
 const PROVISIONING_PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{1,30}$/;
 
+/** A domain name the HTTPS-issuance script will accept (ADR-040). */
+const HTTPS_DOMAIN = /^[a-z0-9.-]+$/;
+
+/** An email address the HTTPS-issuance script will accept (ADR-040). */
+const HTTPS_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /**
- * Refuses a sudo invocation that is not exactly a provisioning run (ADR-039).
+ * Refuses a sudo invocation that is not exactly a provisioning run (ADR-039)
+ * or an HTTPS-issuance run (ADR-040).
  *
  * Adding `sudo` to the allow-list is about as wide a grant as exists: sudo can
  * run anything its sudoers rule permits, as root. The grant is narrowed here to
- * two fixed shapes - mirroring assertOdooInvocation above - and nothing else:
+ * three fixed shapes - mirroring assertOdooInvocation above - and nothing else:
  *
  *   `sudo -n <create-script> <project-name> <port>` — the operator's
  *   create_project / create_project_enterprise scripts.
@@ -486,12 +517,17 @@ const PROVISIONING_PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{1,30}$/;
  *   script, which takes no port because it touches only a directory the
  *   create scripts already made.
  *
- * `createScripts` and `grantScript` are disjoint by construction (distinct
- * configuration keys); a script appearing in neither is refused. Every check
- * here duplicates a check the scripts themselves make; that is deliberate: the
- * scripts run as root on the strength of a sudoers rule this platform does not
- * control, and this function is the platform's own opinion of what a legal
- * invocation looks like, independent of the sudoers rule or the script.
+ *   `sudo -n <https-script> <project-name> <domain> <email>` — the
+ *   HTTPS-issuance script (ADR-040), which runs certbot for the project's own
+ *   domain.
+ *
+ * `createScripts`, `grantScript` and `httpsScript` are disjoint by
+ * construction (distinct configuration keys); a script appearing in none of
+ * them is refused. Every check here duplicates a check the scripts themselves
+ * make; that is deliberate: the scripts run as root on the strength of a
+ * sudoers rule this platform does not control, and this function is the
+ * platform's own opinion of what a legal invocation looks like, independent of
+ * the sudoers rule or the script.
  *
  * `-n` (non-interactive) is required in the argument vector itself, not merely
  * assumed: a `sudo` that blocks on a password prompt would hang the worker, and
@@ -502,6 +538,7 @@ export function assertProvisioningInvocation(
   args: readonly string[],
   createScripts: readonly string[],
   grantScript: string | null = null,
+  httpsScript: string | null = null,
 ): void {
   if (args[0] !== '-n') {
     throw new CommandArgumentError(
@@ -518,9 +555,14 @@ export function assertProvisioningInvocation(
 
   const isCreate = createScripts.includes(script);
   const isGrant = grantScript !== null && script === grantScript;
+  const isHttps = httpsScript !== null && script === httpsScript;
 
-  if (!isCreate && !isGrant) {
-    const configured = [...createScripts, ...(grantScript ? [grantScript] : [])];
+  if (!isCreate && !isGrant && !isHttps) {
+    const configured = [
+      ...createScripts,
+      ...(grantScript ? [grantScript] : []),
+      ...(httpsScript ? [httpsScript] : []),
+    ];
     throw new CommandArgumentError(
       `"${script}" is not a configured provisioning script. Configured: ` +
         `${configured.length > 0 ? configured.join(', ') : '(none)'}.`,
@@ -540,6 +582,28 @@ export function assertProvisioningInvocation(
       throw new CommandArgumentError(
         `The addons-ownership script takes exactly "-n <script> <project-name>"; got ` +
           `${args.length} arguments.`,
+      );
+    }
+    return;
+  }
+
+  if (isHttps) {
+    const domain = args[3];
+    const email = args[4];
+    if (!domain || !HTTPS_DOMAIN.test(domain)) {
+      throw new CommandArgumentError(
+        'sudo HTTPS issuance requires a valid domain as the third argument.',
+      );
+    }
+    if (!email || !HTTPS_EMAIL.test(email)) {
+      throw new CommandArgumentError(
+        'sudo HTTPS issuance requires a valid email as the fourth argument.',
+      );
+    }
+    if (args.length !== 5) {
+      throw new CommandArgumentError(
+        `The HTTPS-issuance script takes exactly "-n <script> <project-name> <domain> ` +
+          `<email>"; got ${args.length} arguments.`,
       );
     }
     return;

@@ -470,3 +470,90 @@ describe('assertProvisioningInvocation', () => {
     );
   });
 });
+
+/**
+ * The HTTPS-issuance invocation guard (ADR-040).
+ *
+ * Same narrowing discipline as the create/grant shapes above: `sudo` is a wide
+ * grant, and this asserts it is narrowed to exactly
+ * `-n <https-script> <name> <domain> <email>`.
+ */
+describe('assertProvisioningInvocation - HTTPS issuance', () => {
+  const createScripts = ['/opt/odoo/scripts/create_project', '/opt/odoo/scripts/create_project_enterprise'];
+  const grantScript = '/opt/cartenz/infrastructure/provisioning/grant-addons-write.sh';
+  const httpsScript = '/opt/cartenz/infrastructure/provisioning/setup-project-https.sh';
+
+  it('permits a well-formed HTTPS issuance call', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', httpsScript, 'dodolbintangmas', 'dodolbintangmas.masbintang.space', 'ops@example.com'],
+        createScripts,
+        grantScript,
+        httpsScript,
+      ),
+    ).not.toThrow();
+  });
+
+  it('refuses an invalid domain', () => {
+    for (const bad of ['', 'has spaces', 'a;rm -rf /', 'UPPER CASE.com']) {
+      expect(() =>
+        assertProvisioningInvocation(
+          ['-n', httpsScript, 'name', bad, 'ops@example.com'],
+          createScripts,
+          grantScript,
+          httpsScript,
+        ),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses an invalid email', () => {
+    for (const bad of ['', 'not-an-email', 'a b@example.com', 'x@']) {
+      expect(() =>
+        assertProvisioningInvocation(
+          ['-n', httpsScript, 'name', 'example.com', bad],
+          createScripts,
+          grantScript,
+          httpsScript,
+        ),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses extra arguments smuggled after the email', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', httpsScript, 'name', 'example.com', 'ops@example.com', '; rm -rf /'],
+        createScripts,
+        grantScript,
+        httpsScript,
+      ),
+    ).toThrow(CommandArgumentError);
+  });
+
+  it('refuses the HTTPS script when it is not configured (httpsScript null)', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', httpsScript, 'name', 'example.com', 'ops@example.com'],
+        createScripts,
+        grantScript,
+        null,
+      ),
+    ).toThrow(/not a configured provisioning script/);
+  });
+
+  it('still permits the create and grant shapes once httpsScript is configured', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', createScripts[0], 'name', '7001'],
+        createScripts,
+        grantScript,
+        httpsScript,
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      assertProvisioningInvocation(['-n', grantScript, 'name'], createScripts, grantScript, httpsScript),
+    ).not.toThrow();
+  });
+});

@@ -189,6 +189,38 @@ const environmentSchema = z.object({
   PROJECT_BASE_DOMAIN: z.string().default(''),
 
   /**
+   * Issuing a real HTTPS certificate for a provisioned project's Nginx site
+   * (ADR-040), immediately after create_project/create_project_enterprise
+   * succeeds.
+   *
+   * Off by default and enforced at the process chokepoint the same way as
+   * PROJECT_PROVISIONING_ENABLED itself: with this false, the platform never
+   * runs certbot, and a provisioned project stays reachable over plain HTTP
+   * only. Requires PROJECT_PROVISIONING_ENABLED=true and a non-empty
+   * PROJECT_BASE_DOMAIN and PROJECT_HTTPS_EMAIL — refused at boot otherwise
+   * (an HTTPS certificate needs a real domain to issue for and a real email
+   * for Let's Encrypt's expiry notifications).
+   */
+  PROJECT_HTTPS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+
+  /** Absolute path to the HTTPS-issuance script (ADR-040). */
+  PROJECT_HTTPS_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/setup-project-https.sh'),
+
+  /**
+   * The email certbot registers a Let's Encrypt account under. Never a
+   * secret — passed as a plain argument to certbot, and used only for expiry
+   * notifications — but required (not defaulted) once PROJECT_HTTPS_ENABLED is
+   * true, since an operator's own address must be the one that finds out a
+   * certificate is about to lapse.
+   */
+  PROJECT_HTTPS_EMAIL: z.string().default(''),
+
+  /**
    * The PROJECTS_DIR the operator's scripts create project directories under.
    *
    * Hardcoded inside create_project / create_project_enterprise as
@@ -396,6 +428,12 @@ export interface AppConfig {
     readonly baseDomain: string | null;
     readonly projectsDir: string;
   };
+  /** HTTPS issuance for a provisioned instance (ADR-040). */
+  readonly https: {
+    readonly enabled: boolean;
+    readonly script: string;
+    readonly email: string | null;
+  };
   /**
    * The Odoo source the agent reads as a reference on every Odoo project
    * (ADR-031). Empty when no Odoo source is configured, in which case every read
@@ -557,6 +595,36 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   /**
+   * HTTPS issuance (ADR-040). Same boot-time validation posture as
+   * provisioning above: an operator's misconfiguration should fail loudly
+   * here, not at the first "Create with AI" submission.
+   */
+  if (env.PROJECT_HTTPS_ENABLED) {
+    if (!env.PROJECT_PROVISIONING_ENABLED) {
+      throw new ConfigurationError([
+        'PROJECT_HTTPS_ENABLED is true but PROJECT_PROVISIONING_ENABLED is false. HTTPS is ' +
+          'issued for an instance provisioning creates; there is nothing to issue a ' +
+          'certificate for without it.',
+      ]);
+    }
+    if (!isAbsolute(env.PROJECT_HTTPS_SCRIPT)) {
+      throw new ConfigurationError(['PROJECT_HTTPS_SCRIPT must be an absolute path.']);
+    }
+    if (!env.PROJECT_BASE_DOMAIN) {
+      throw new ConfigurationError([
+        'PROJECT_HTTPS_ENABLED is true but PROJECT_BASE_DOMAIN is empty. A certificate is ' +
+          'issued for <project>.<PROJECT_BASE_DOMAIN>; there is no domain to request one for.',
+      ]);
+    }
+    if (!env.PROJECT_HTTPS_EMAIL) {
+      throw new ConfigurationError([
+        "PROJECT_HTTPS_ENABLED is true but PROJECT_HTTPS_EMAIL is empty. Let's Encrypt " +
+          'requires a registration email for expiry notifications.',
+      ]);
+    }
+  }
+
+  /**
    * The Odoo source the agent reads as a reference (ADR-031).
    *
    * Explicit when ODOO_SOURCE_PATHS is set; otherwise derived from what a
@@ -679,6 +747,13 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       portRangeEnd: env.PROJECT_PORT_RANGE_END,
       baseDomain: emptyToUndefined(env.PROJECT_BASE_DOMAIN) ?? null,
       projectsDir: env.PROJECT_PROVISION_PROJECTS_DIR,
+    },
+    https: {
+      // Requires provisioning itself to be on: HTTPS is issued for an instance
+      // create_project/create_project_enterprise just stood up, not on its own.
+      enabled: env.PROJECT_HTTPS_ENABLED && env.PROJECT_PROVISIONING_ENABLED,
+      script: env.PROJECT_HTTPS_SCRIPT,
+      email: emptyToUndefined(env.PROJECT_HTTPS_EMAIL) ?? null,
     },
     odooSource: {
       paths: odooSourcePaths,

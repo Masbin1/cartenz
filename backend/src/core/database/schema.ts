@@ -236,6 +236,35 @@ export const projects = pgTable(
     provisioningError: text('provisioning_error'),
     provisionedAt: timestamp('provisioned_at', { withTimezone: true }),
     /**
+     * The PostgreSQL database name create_project/create_project_enterprise
+     * created (ADR-040) — always equal to the project's technicalName/directory
+     * name, but stored explicitly so the portal's connection panel does not have
+     * to re-derive it from provisioningUrl.
+     */
+    provisioningDatabaseName: text('provisioning_database_name'),
+    /**
+     * Reference into secret_records (ADR-014, ADR-040) for the Odoo master
+     * password create_project/create_project_enterprise generates and prints on
+     * success. Never the plaintext value itself — that is written once by
+     * ProjectProvisioningService immediately after the script prints it, and is
+     * read back only through the dedicated reveal endpoint, gated to
+     * admin/owner. Null for every project scaffolded before this existed, and
+     * for one whose provisioning failed before a password was ever produced.
+     */
+    provisioningMasterPasswordRef: text('provisioning_master_password_ref'),
+    /**
+     * HTTPS issuance status for the provisioned instance (ADR-040): 'none' (not
+     * attempted — HTTPS disabled on this deployment, or the project is
+     * scaffold-only), 'pending', 'issued' (certbot ran and the Nginx vhost now
+     * redirects to TLS), 'failed' (certbot ran and did not succeed; the instance
+     * stays reachable over plain HTTP, and provisioningUrl is not upgraded).
+     */
+    httpsStatus: text('https_status', { enum: ['none', 'pending', 'issued', 'failed'] })
+      .notNull()
+      .default('none'),
+    /** The last error message from a failed HTTPS issuance, for the portal to show. */
+    httpsError: text('https_error'),
+    /**
      * Agent permissions per chapter 11. Held per project and independent of
      * user roles. Defaults are applied by the application, not the column, so
      * that the data-blind posture is expressed in one place in code.

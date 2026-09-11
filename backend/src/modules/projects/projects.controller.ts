@@ -92,6 +92,22 @@ export class ProjectsController {
     return this.projects.findOne(user, projectId);
   }
 
+  /**
+   * Reveals the Odoo master password for a provisioned instance (ADR-040).
+   * admin/owner only, enforced in the service. A GET that returns a secret is
+   * unusual, but this is a read (nothing is created or changed) and the value
+   * itself never appears in `findOne`'s response - this is the only route
+   * that can produce it, and only for the two roles the master password is
+   * meant for.
+   */
+  @Get(':projectId/provisioning-secret')
+  revealMasterPassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ) {
+    return this.projects.revealMasterPassword(user, projectId);
+  }
+
   @Patch(':projectId')
   update(
     @CurrentUser() user: AuthenticatedUser,

@@ -357,6 +357,14 @@ export const api = {
 
     get: (projectId: string) => request<ProjectDetail>(`/projects/${projectId}`),
 
+    /**
+     * Reveals the Odoo master password for a provisioned instance (ADR-040).
+     * admin/owner only, enforced by the API - a 403 from this call means the
+     * viewer's role, not a client bug.
+     */
+    revealMasterPassword: (projectId: string) =>
+      request<{ masterPassword: string }>(`/projects/${projectId}/provisioning-secret`),
+
     create: (body: {
       organizationId: string;
       name: string;

@@ -143,6 +143,19 @@ export const PROJECT_PROVISIONING_STATUSES = ['none', 'pending', 'provisioned', 
 export type ProjectProvisioningStatus = (typeof PROJECT_PROVISIONING_STATUSES)[number];
 
 /**
+ * HTTPS issuance status for a provisioned instance (ADR-040).
+ *
+ * `none` — not attempted: HTTPS is disabled on this deployment
+ * (PROJECT_HTTPS_ENABLED=false), or the project is scaffold-only.
+ * `pending` — certbot is running or was queued. `issued` — certbot completed
+ * and the Nginx vhost now terminates TLS. `failed` — certbot ran and did not
+ * succeed; the instance is still reachable over plain HTTP and
+ * provisioningUrl keeps its http:// form.
+ */
+export const PROJECT_HTTPS_STATUSES = ['none', 'pending', 'issued', 'failed'] as const;
+export type ProjectHttpsStatus = (typeof PROJECT_HTTPS_STATUSES)[number];
+
+/**
  * Target environment kinds (ADR-021).
  *
  * In Odoo.sh an environment is a branch: production, one or more staging branches,

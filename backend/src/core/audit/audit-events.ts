@@ -25,6 +25,8 @@ export const AUDIT_EVENTS = {
   PROJECT_CONNECTION_DELETED: 'project.connection_deleted',
   PROJECT_SPECIFICATION_CREATED: 'project.specification_created',
   PROJECT_AGENT_PERMISSIONS_CHANGED: 'project.agent_permissions_changed',
+  /** An admin/owner revealed a provisioned instance's Odoo master password (ADR-040). */
+  PROJECT_MASTER_PASSWORD_REVEALED: 'project.master_password_revealed',
 
   /** A document was uploaded to a project for the agent to read (ADR-030). */
   PROJECT_DOCUMENT_UPLOADED: 'project.document_uploaded',

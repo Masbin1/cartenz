@@ -119,6 +119,26 @@ export interface ProjectDetail {
   memory: ProjectMemory | null;
   recentTasks: TaskSummary[];
   viewerRole: OrganizationRole;
+  provisioning: ProjectProvisioningInfo;
+}
+
+/**
+ * A provisioned Odoo instance's own connection details (ADR-039, ADR-040).
+ * `hasMasterPassword` tells the portal whether a reveal call would return
+ * something - the plaintext password is never part of this shape.
+ */
+export interface ProjectProvisioningInfo {
+  status: 'none' | 'pending' | 'provisioned' | 'failed';
+  port: number | null;
+  url: string | null;
+  databaseName: string | null;
+  error: string | null;
+  provisionedAt: string | null;
+  hasMasterPassword: boolean;
+  https: {
+    status: 'none' | 'pending' | 'issued' | 'failed';
+    error: string | null;
+  };
 }
 
 export interface TaskSummary {

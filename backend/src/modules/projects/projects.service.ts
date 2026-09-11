@@ -73,6 +73,21 @@ import type {
 } from './dto/project.dto';
 
 /**
+ * Provisioning outcome carried out of the two scaffold paths (ADR-039,
+ * ADR-040), and into the project row insert. `null` for the scaffold-only
+ * path (provisioning disabled on this deployment): a project scaffolded that
+ * way has no live instance, and every field below stays at its column default.
+ */
+interface ScaffoldProvisioningInfo {
+  readonly status: ProjectProvisioningStatus;
+  readonly port: number | null;
+  readonly url: string | null;
+  readonly databaseName: string | null;
+  readonly masterPasswordRef: string | null;
+  readonly https: { readonly status: 'none' | 'pending' | 'issued' | 'failed'; readonly error: string | null };
+}
+
+/**
  * Projects, connections and specifications.
  *
  * Every method resolves authorisation first and then filters on the organisation
@@ -439,6 +454,10 @@ export class ProjectsService {
             provisioningPort: scaffolded.provisioning?.port ?? null,
             provisioningUrl: scaffolded.provisioning?.url ?? null,
             provisionedAt: scaffolded.provisioning?.status === 'provisioned' ? new Date() : null,
+            provisioningDatabaseName: scaffolded.provisioning?.databaseName ?? null,
+            provisioningMasterPasswordRef: scaffolded.provisioning?.masterPasswordRef ?? null,
+            httpsStatus: scaffolded.provisioning?.https.status ?? 'none',
+            httpsError: scaffolded.provisioning?.https.error ?? null,
           })
           .returning();
 
@@ -596,6 +615,52 @@ export class ProjectsService {
       recentTasks,
       viewerRole: context.membership.role,
     };
+  }
+
+  /**
+   * Reveals the Odoo master password for a provisioned instance (ADR-040).
+   *
+   * admin/owner only - the master password is full administrative access to
+   * the Odoo instance, not a value a developer or viewer role should be able
+   * to pull on demand. Unsealed on-demand and returned once; never cached,
+   * never logged, never included in `findOne`'s response shape.
+   */
+  async revealMasterPassword(user: AuthenticatedUser, projectId: string) {
+    const context = await this.authz.requireProjectAccess(user, projectId, 'admin', {
+      includeArchived: true,
+    });
+
+    const [project] = await this.database.db
+      .select({
+        provisioningMasterPasswordRef: projects.provisioningMasterPasswordRef,
+        name: projects.name,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+
+    if (!project) throw new NotFoundException('Project not found');
+
+    if (!project.provisioningMasterPasswordRef) {
+      throw new NotFoundException(
+        'No master password is held for this project. It may not have been provisioned, or ' +
+          'provisioning ran before this platform recorded the password.',
+      );
+    }
+
+    const masterPassword = await this.secrets.read(project.provisioningMasterPasswordRef);
+
+    // A reveal is a security-relevant read, audited the same way a connection
+    // credential's use would be - the audit log is what lets an owner answer
+    // "who looked at this" later.
+    await this.audit.record({
+      event: AUDIT_EVENTS.PROJECT_MASTER_PASSWORD_REVEALED,
+      organizationId: context.organizationId,
+      projectId,
+      userId: user.userId,
+    });
+
+    return { masterPassword };
   }
 
   async update(user: AuthenticatedUser, projectId: string, dto: UpdateProjectDto) {
@@ -770,6 +835,20 @@ export class ProjectsService {
     for (const secret of secrets) {
       await this.secrets.destroy(secret.ref).catch((error: Error) => {
         this.logger.error(`Could not destroy ${secret.ref}: ${error.message}`);
+      });
+    }
+
+    // The Odoo master password (ADR-040) is sealed with projectId null - the
+    // project row does not exist yet at the moment provisioning writes it -
+    // so the project-scoped query above never finds it. Destroyed by its own
+    // reference, held directly on the project row, for the same reason every
+    // other secret this project owns is destroyed here rather than left
+    // orphaned in secret_records.
+    if (project.provisioningMasterPasswordRef) {
+      await this.secrets.destroy(project.provisioningMasterPasswordRef).catch((error: Error) => {
+        this.logger.error(
+          `Could not destroy ${project.provisioningMasterPasswordRef}: ${error.message}`,
+        );
       });
     }
 
@@ -1102,7 +1181,7 @@ export class ProjectsService {
     technicalName: string;
     repositoryPath: string;
     addonsPath: string;
-    provisioning: null;
+    provisioning: ScaffoldProvisioningInfo | null;
   }> {
     // on_premise takes its code from a scaffolded local directory; an ai_project
     // has no repository (Repository: None) precisely because its code is meant to
@@ -1229,11 +1308,7 @@ export class ProjectsService {
     technicalName: string;
     repositoryPath: string;
     addonsPath: string;
-    provisioning: {
-      status: ProjectProvisioningStatus;
-      port: number | null;
-      url: string | null;
-    };
+    provisioning: ScaffoldProvisioningInfo;
   }> {
     const directoryName = deriveDirectoryName(input.projectName) ?? '';
     if (!isValidDirectoryName(directoryName)) {
@@ -1255,6 +1330,26 @@ export class ProjectsService {
       throw new BadRequestException(
         `The Odoo instance could not be provisioned: ${result.error ?? 'unknown error'}`,
       );
+    }
+
+    /**
+     * Seals the master password immediately (ADR-040) and discards the
+     * plaintext from this function's own scope as soon as `write` returns.
+     * organizationId-scoped, projectId null: the project row does not exist
+     * yet, exactly the shape createConnection uses for a connection credential
+     * created before its project id would be known if it ever needed to be.
+     * Never logged, never included in the return value, never held past the
+     * one call that seals it.
+     */
+    let masterPasswordRef: string | null = null;
+    if (result.masterPassword) {
+      const sealed = await this.secrets.write({
+        organizationId: input.organizationId,
+        projectId: null,
+        purpose: 'odoo-master-password',
+        value: result.masterPassword,
+      });
+      masterPasswordRef = sealed.ref;
     }
 
     const repositoryPath = join(this.config.provisioning.projectsDir, directoryName);
@@ -1310,7 +1405,14 @@ export class ProjectsService {
       technicalName: directoryName,
       repositoryPath,
       addonsPath,
-      provisioning: { status: 'provisioned', port: result.port, url: result.url },
+      provisioning: {
+        status: 'provisioned',
+        port: result.port,
+        url: result.url,
+        databaseName: result.databaseName,
+        masterPasswordRef,
+        https: result.https,
+      },
     };
   }
 
@@ -1373,6 +1475,15 @@ export class ProjectsService {
     archivedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
+    provisioningStatus?: string;
+    provisioningPort?: number | null;
+    provisioningUrl?: string | null;
+    provisioningError?: string | null;
+    provisioningDatabaseName?: string | null;
+    provisioningMasterPasswordRef?: string | null;
+    provisionedAt?: Date | null;
+    httpsStatus?: string;
+    httpsError?: string | null;
   }) {
     return {
       id: project.id,
@@ -1388,6 +1499,27 @@ export class ProjectsService {
       archivedAt: project.archivedAt,
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
+      /**
+       * The provisioned instance's own connection details (ADR-039, ADR-040).
+       * `hasMasterPassword` is a boolean, never the reference itself: the
+       * reference is an internal handle into secret_records, and the portal
+       * needs only to know whether a "reveal" call would return something.
+       * The plaintext password is never present in this shape, under any
+       * field name, at any point.
+       */
+      provisioning: {
+        status: project.provisioningStatus ?? 'none',
+        port: project.provisioningPort ?? null,
+        url: project.provisioningUrl ?? null,
+        databaseName: project.provisioningDatabaseName ?? null,
+        error: project.provisioningError ?? null,
+        provisionedAt: project.provisionedAt ?? null,
+        hasMasterPassword: Boolean(project.provisioningMasterPasswordRef),
+        https: {
+          status: project.httpsStatus ?? 'none',
+          error: project.httpsError ?? null,
+        },
+      },
     };
   }
 }

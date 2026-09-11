@@ -25,17 +25,24 @@
 #     create_project/create_project_enterprise leave the whole project
 #     directory, including addons/, owned by odoo:odoo mode 750 — unwritable
 #     by the "cartenz" user that must git-init and commit into addons/.
+#   - The fourth is HTTPS issuance for a freshly provisioned project (ADR-040):
+#     infrastructure/provisioning/setup-project-https.sh runs
+#     `certbot --nginx` for the project's own domain, non-interactively, using
+#     the operator's configured PROJECT_HTTPS_EMAIL. It refuses to run against
+#     any domain that is not already the server_name in that project's own
+#     Nginx site.
 #
 #   - `sudo -l -U cartenz` on the host shows exactly this rule; there is no
 #     wildcard sudo access anywhere else for this user.
 #
-# Update the three paths below if this repository, or the operator's scripts,
-# live somewhere other than what ADR-039 assumes.
+# Update the paths below if this repository, or the operator's scripts,
+# live somewhere other than what ADR-039/ADR-040 assumes.
 
 Cmnd_Alias LINKEDERP_PROVISION = \
     /opt/odoo/scripts/create_project, \
     /opt/odoo/scripts/create_project_enterprise, \
-    /opt/cartenz/infrastructure/provisioning/grant-addons-write.sh
+    /opt/cartenz/infrastructure/provisioning/grant-addons-write.sh, \
+    /opt/cartenz/infrastructure/provisioning/setup-project-https.sh
 
 cartenz ALL=(root) NOPASSWD: LINKEDERP_PROVISION
 
