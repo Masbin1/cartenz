@@ -145,16 +145,29 @@ tail -f .runtime/worker.log     # progres agent kelihatan di sini
 
 ## Verifikasi
 
+Satu perintah buat semuanya, dan dia gagal kalau ada satu saja yang gagal:
+
+```bash
+./infrastructure/scripts/verify-all.sh
+```
+
+Tambahkan `--fast` kalau mau lewatin smoke suite-nya. Kalau mau satu-satu:
+
 ```bash
 npm run typecheck                                    # backend + frontend
+npm run lint                                         # backend + frontend
 npm test                                             # unit test backend
 ./infrastructure/scripts/smoke-test.sh               # API dan workflow
 ./infrastructure/scripts/smoke-test-repository.sh    # repository agent
 ./infrastructure/scripts/smoke-test-agent.sh         # model layer + AI boundary
 ./infrastructure/scripts/smoke-test-safety.sh        # push refusal + environment
+./infrastructure/scripts/smoke-test-deletion.sh      # archive, restore, hapus permanen
+./infrastructure/scripts/smoke-test-validation.sh    # run Odoo asli, kalau host-nya punya
+node infrastructure/scripts/probe-push-refusal.js    # runner-nya, disuruh push
+node infrastructure/scripts/probe-write-containment.js  # write tool, diarahkan keluar workspace
 ```
 
-Detail cakupan tiap skrip ada di README bagian 4.
+Detail cakupan tiap skrip ada di README bagian 6.
 
 ---
 
@@ -177,5 +190,10 @@ Detail cakupan tiap skrip ada di README bagian 4.
   di process layer — bukan di tool, jadi nggak ada permission atau approval yang
   bisa membukanya. Buktikan: `node infrastructure/scripts/probe-push-refusal.js`.
 - **Environment `production` ditolak** sebelum satu baris pun ditulis (ADR-021).
-- **Validasi (lint/test) masih disimulasikan** — menjalankan kode repo asing
-  adalah alasan batas microVM itu ada (ADR-013, ADR-019).
+- **Validasi jalan beneran kalau dikonfigurasi** (ADR-027): `VALIDATION_ENABLED=true`,
+  `ODOO_RUNTIMES` nunjuk ke source Odoo, plus role Postgres yang punya `CREATEDB`
+  dan bukan superuser. Kalau belum, tool simulasinya yang jalan dan task-nya
+  ngomong setelan mana yang kurang. Di process layer, `python3` ditolak kecuali
+  setelan itu nyala — dan itu pun cuma `odoo-bin` di dalam runtime yang terdaftar.
+- **`sudo` ditolak** kecuali `PROJECT_PROVISIONING_ENABLED=true`, dan itu pun cuma
+  buat script provisioning operator dengan bentuk argumen yang sudah pasti (ADR-039).

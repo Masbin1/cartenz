@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { dirname } from 'node:path';
 import { OdooSettingsService } from './odoo-settings.service';
 
 /**
@@ -12,7 +13,7 @@ describe('OdooSettingsService', () => {
 
   // Two directories that certainly exist, used as stand-ins for a real estate.
   const realDirectory = process.cwd();
-  const otherRealDirectory = require('node:path').dirname(process.cwd());
+  const otherRealDirectory = dirname(process.cwd());
 
   const config = {
     odooSource: { paths: ['/env/odoo', '/env/enterprise'] },
