@@ -20,16 +20,43 @@ ExecStart=/usr/bin/node dist/main.js
 Restart=always
 RestartSec=5
 
-# Hardening. The platform writes only to its workspace root and its logs.
-NoNewPrivileges=true
+# Hardening. The platform writes to its workspace root and its logs, and — when
+# project provisioning is enabled — to the paths the operator's create_project
+# script writes through this unit: the project directories, the new systemd unit
+# and Nginx site it creates, and Nginx's own log directory (see below).
+#
+# ProtectSystem=strict makes the filesystem read-only inside this unit's mount
+# namespace, and every child inherits that — including a `sudo -n <script>` child
+# that has correctly elevated to root. Root inside that namespace still cannot
+# write outside ReadWritePaths=, which is why provisioning fails with
+# "mkdir: cannot create directory ...: Read-only file system" if a path below is
+# missing. Each write target surfaces as its own error only once the previous one
+# is fixed, so the list is complete rather than discovered one restart at a time:
+#
+#   /opt/odoo/projects                 the project directory create_project makes
+#   /etc/systemd/system                the odoo-<name>.service unit it installs
+#   /etc/nginx/sites-available         the Nginx site it writes
+#   /etc/nginx/sites-enabled           the symlink into it
+#   /var/log/nginx                     nginx -t refuses to run at all if it cannot
+#                                      open error.log/access.log, even for a syntax
+#                                      check — this is not about the project's logs
+#
+# A deployment that never enables provisioning does not need the last five; they
+# are listed because leaving them out produces a failure that reads as a script
+# bug rather than a sandbox one.
+#
+# NoNewPrivileges, ProtectKernelTunables, ProtectKernelModules and RestrictSUIDSGID
+# are deliberately ABSENT: each one forces the kernel's no-new-privs bit (see
+# systemd.exec(5) — so does ProtectSystem=strict's siblings in some versions), and
+# that bit makes every `sudo` call from inside this unit fail with
+# "The 'no new privileges' flag is set, which prevents sudo from running as root",
+# whatever the sudoers rule says. Provisioning needs `sudo -n` to work here.
+# Verified with: grep NoNewPrivs /proc/$(systemctl show cartenz-api -p MainPID --value)/status
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/cartenz/.runtime /var/log/cartenz
-ProtectKernelTunables=true
-ProtectKernelModules=true
+ReadWritePaths=/opt/cartenz/.runtime /var/log/cartenz /opt/odoo/projects /etc/systemd/system /etc/nginx/sites-available /etc/nginx/sites-enabled /var/log/nginx
 ProtectControlGroups=true
-RestrictSUIDSGID=true
 
 StandardOutput=append:/var/log/cartenz/api.log
 StandardError=append:/var/log/cartenz/api.log

@@ -310,6 +310,37 @@ fi
 
 step "8. Services"
 
+# The sudoers rule the platform's provisioning depends on (ADR-039/ADR-040).
+#
+# Installed here rather than left to the operator because it is invisible until it
+# is missing: without it, "create a running Odoo instance" fails at
+# `sudo -n /opt/odoo/scripts/create_project` with "sudo: a password is required",
+# which reads as a broken script rather than an uninstalled rule. The file is
+# inert on a host without those scripts — it grants nothing that exists there.
+#
+# Validated before it is installed, so a bad edit cannot lock sudo out of the host,
+# and installed to the exact path the code's own allow-list names
+# (command-runner.service.ts, assertProvisioningInvocation).
+SUDOERS_SOURCE="$SOURCE_ROOT/infrastructure/provisioning/99-linkederp-provisioning"
+SUDOERS_TARGET=/etc/sudoers.d/99-linkederp-provisioning
+
+if [ ! -f "$SUDOERS_SOURCE" ]; then
+  warn "no sudoers rule in the repository; project provisioning will need it installed by hand"
+elif [ -f "$SUDOERS_TARGET" ]; then
+  skip "$SUDOERS_TARGET exists — left alone (it may carry host-specific paths)"
+elif [ "$DRY_RUN" = "1" ]; then
+  printf '    \033[2mwould validate and install:\033[0m %s\n' "$SUDOERS_TARGET"
+elif ! visudo -cf "$SUDOERS_SOURCE" >/dev/null; then
+  warn "$SUDOERS_SOURCE failed visudo -cf; NOT installed — fix it and re-run"
+else
+  install -o root -g root -m 0440 "$SUDOERS_SOURCE" "$SUDOERS_TARGET"
+  ok "$SUDOERS_TARGET (project provisioning: sudo -n without a password)"
+  if [ ! -x /opt/odoo/scripts/create_project ]; then
+    info "note: /opt/odoo/scripts/create_project is not present — the rule is inert"
+    info "      until the operator's provisioning scripts live there"
+  fi
+fi
+
 for unit in "$UNIT_SOURCE"/*.service; do
   name="$(basename "$unit")"
   run install -m 0644 "$unit" "/etc/systemd/system/$name"

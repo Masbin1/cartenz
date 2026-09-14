@@ -19,16 +19,17 @@ ExecStart=/usr/bin/node dist/worker.js
 Restart=always
 RestartSec=5
 
-# The worker clones into WORKSPACE_ROOT and must be able to write there.
-NoNewPrivileges=true
+# The worker clones into WORKSPACE_ROOT and must be able to write there, and — when
+# project provisioning is enabled — to the paths the operator's create_project script
+# writes through this unit. This unit is the one that actually runs tasks, so it is
+# the one provisioning fails from; the list is identical to cartenz-api.service's for
+# that reason, and the reasoning (including why the no-new-privs-implying directives
+# are absent) is documented there.
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/cartenz/.runtime /var/log/cartenz
-ProtectKernelTunables=true
-ProtectKernelModules=true
+ReadWritePaths=/opt/cartenz/.runtime /var/log/cartenz /opt/odoo/projects /etc/systemd/system /etc/nginx/sites-available /etc/nginx/sites-enabled /var/log/nginx
 ProtectControlGroups=true
-RestrictSUIDSGID=true
 
 StandardOutput=append:/var/log/cartenz/worker.log
 StandardError=append:/var/log/cartenz/worker.log

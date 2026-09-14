@@ -350,6 +350,117 @@ Then, in the portal:
   `.env` and code changes need a worker rebuild + restart — the worker runs
   `backend/dist`, so an unbuilt change silently does nothing.
 
+### 9.1 Moving an existing deployment to a new server
+
+The installer builds a *working* platform; it cannot build *this* platform, because
+part of what makes a deployment this one is not in the repository. Two groups of
+things have to travel, and only one of them is code.
+
+**What travels, and what happens if you forget it:**
+
+| Thing | Where it lives | If it is missed |
+| --- | --- | --- |
+| `SECRETS_ROOT_KEY` | `/opt/cartenz/.env` | **Every stored credential becomes unrecoverable** — repository tokens, Odoo API keys, the per-project GitHub tokens. There is no recovery path (ADR-014). |
+| Platform database | Postgres `linkederp_ai` | Every project, task, connection, approval and audit row is gone. |
+| `JWT_SECRET` | `/opt/cartenz/.env` | Not fatal — a new one just signs everyone out. Keep it if you want sessions to survive. |
+| `GITHUB_TOKEN` / `GITHUB_OWNER` | `/opt/cartenz/.env` | Created projects silently get no repository (the feature reports "skipped"). |
+| `AI_BASE_URL` / `AI_API_KEY` / provider chain | `.env` + the portal's per-organisation rows | The agent cannot call a model. The portal rows travel with the database. |
+| sudoers rule | `/etc/sudoers.d/99-linkederp-provisioning` | Project provisioning fails with `sudo: a password is required`. Source is in the repo (`infrastructure/provisioning/`); nothing installs it for you. |
+| The operator's `create_project` scripts | `/opt/odoo/scripts/` | **Not in this repository.** Without them the platform can still create scaffolded projects, but can never turn one into a running Odoo instance. |
+| Project directories | `/opt/odoo/projects/<name>/` | Each holds the project's git repository (`addons/`), its `config/`, `data/` and `logs/`, and its Odoo *database* is a separate database in the same Postgres cluster. Miss this and the projects exist in the portal but not on the host. |
+| Per-project units and Nginx sites | `/etc/systemd/system/odoo-*.service`, `/etc/nginx/sites-available/` | Already-provisioned instances stop answering. |
+| TLS certificates | `/etc/letsencrypt/` | Every hostname loses HTTPS. Reissuing is usually easier than moving them. |
+
+**Sequence.** The order matters in one place: `.env` must be in place *before* the
+installer runs, or the bootstrap generates a fresh `SECRETS_ROOT_KEY` and the
+restore is pointless.
+
+On the **old** server:
+
+```bash
+# 1. Quiet the platform so nothing writes while it is captured.
+sudo systemctl stop cartenz-worker cartenz-api cartenz-portal
+
+# 2. The platform database.
+pg_dump -U linkederp -h 127.0.0.1 linkederp_ai | gzip > cartenz-db-$(date +%F).sql.gz
+
+# 3. Every project's own Odoo database (skip if there are none).
+sudo -u postgres pg_dumpall --globals-only > cartenz-roles.sql    # roles, including the projects'
+for db in $(sudo -u postgres psql -Atc "select datname from pg_database where datname not in ('postgres','template0','template1')"); do
+  sudo -u postgres pg_dump "$db" | gzip > "cartenz-odoo-${db}-$(date +%F).sql.gz"
+done
+
+# 4. The .env verbatim — this is the one to guard.
+sudo cp /opt/cartenz/.env /secure-backup/cartenz.env
+
+# 5. The host-local pieces that are not in the repository.
+sudo tar czf cartenz-host-local-$(date +%F).tar.gz \
+  /etc/sudoers.d/99-linkederp-provisioning \
+  /opt/odoo/scripts /opt/odoo/projects \
+  /etc/systemd/system/odoo-*.service \
+  /etc/nginx/sites-available /etc/nginx/sites-enabled
+```
+
+On the **new** server, in this order:
+
+```bash
+# 1. Get the code, as the service user.
+sudo useradd --system --create-home --home-dir /opt/cartenz --shell /bin/bash cartenz   # if not yet made
+sudo -u cartenz git clone <your-repository-url> /opt/cartenz
+
+# 2. Put .env in place FIRST. The installer will then leave it alone, and the
+#    platform comes up with the original SECRETS_ROOT_KEY.
+sudo install -o cartenz -g cartenz -m 600 /secure-backup/cartenz.env /opt/cartenz/.env
+
+# 3. Install. It skips an existing .env, so SECRETS_ROOT_KEY survives.
+cd /opt/cartenz
+sudo DRY_RUN=1 ./infrastructure/scripts/install-vps-full.sh    # prints the plan
+sudo ./infrastructure/scripts/install-vps-full.sh
+
+# 4. Restore the databases, then re-run migrations (forward-only, additive).
+sudo systemctl stop cartenz-worker cartenz-api cartenz-portal
+sudo -u postgres psql -f cartenz-roles.sql
+sudo -u postgres pg_restore -d linkederp_ai --clean --if-exists cartenz-db-*.sql.gz   # or psql < file
+for f in cartenz-odoo-*.sql.gz; do zcat "$f" | sudo -u postgres psql; done
+cd /opt/cartenz && sudo -u cartenz npm run db:migrate
+
+# 5. The sudoers rule — validate before installing, and install to the exact path
+#    the code's allow-list names.
+sudo visudo -cf infrastructure/provisioning/99-linkederp-provisioning
+sudo install -o root -g root -m 0440 \
+  infrastructure/provisioning/99-linkederp-provisioning /etc/sudoers.d/99-linkederp-provisioning
+
+# 6. Host-local pieces, then bring it up.
+sudo tar xzf cartenz-host-local-*.tar.gz -C /
+sudo systemctl daemon-reload
+sudo systemctl start cartenz-api cartenz-worker cartenz-portal 9router hermes-api
+```
+
+**Verify it is actually the same platform, not a fresh one:**
+
+```bash
+curl -s http://127.0.0.1:4000/api/v1/health/ready            # postgres + redis up
+curl -s http://127.0.0.1:4000/api/v1/health/posture | python3 -m json.tool
+# Projects, tasks and connections came back:
+psql "$(grep -E '^DATABASE_URL=' /opt/cartenz/.env | cut -d= -f2-)" \
+  -c "select count(*) from projects; select count(*) from project_connections;"
+# The .env settings reached the running processes (they read it once, at start):
+for u in cartenz-api cartenz-worker; do
+  tr '\0' '\n' < /proc/$(systemctl show $u -p MainPID --value)/environ | grep -c '^GITHUB_TOKEN=.\+'
+done
+# Provisioning still works (proves the sudoers rule AND the unit's sandbox):
+sudo -u cartenz sudo -n /opt/odoo/scripts/create_project
+```
+
+Two things to do once it is up:
+
+- **Rotate the credentials that travelled.** The `GITHUB_TOKEN` and every provider
+  key were copied through a backup file; rotating them is cheap and retires the old
+  server's copies.
+- **Take the old server out of service** so its units cannot answer on a shared
+  hostname, and keep its database dump until the new one has been through a full
+  create-a-project cycle.
+
 ---
 
 ## 10. Security Checklist
@@ -372,4 +483,4 @@ Then, in the portal:
 | Full platform install (every step, manual) | `docs/INSTALL-SERVER.md` |
 | Server that already runs Odoo (paths, ownership) | `docs/INSTALL-SERVER-EXISTING-ODOO.md` |
 | Using the platform (projects, branches, run.sh) | `docs/guides/creating-and-running-projects.md` |
-| Architectural decisions | `docs/adr/` (README indexes ADR-011…038) |
+| Architectural decisions | `docs/adr/` (README indexes ADR-011…041) |
