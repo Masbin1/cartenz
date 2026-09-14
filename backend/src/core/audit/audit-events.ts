@@ -27,6 +27,13 @@ export const AUDIT_EVENTS = {
   PROJECT_AGENT_PERMISSIONS_CHANGED: 'project.agent_permissions_changed',
   /** An admin/owner revealed a provisioned instance's Odoo master password (ADR-040). */
   PROJECT_MASTER_PASSWORD_REVEALED: 'project.master_password_revealed',
+  /** A created project was given a repository on GitHub and pushed to it (ADR-041). */
+  PROJECT_GITHUB_REPOSITORY_CONNECTED: 'project.github_repository_connected',
+  /**
+   * ...and it could not be, which is recorded rather than swallowed: the project is
+   * real and usable either way, but a person who expected a remote has to know.
+   */
+  PROJECT_GITHUB_REPOSITORY_FAILED: 'project.github_repository_failed',
 
   /** A document was uploaded to a project for the agent to read (ADR-030). */
   PROJECT_DOCUMENT_UPLOADED: 'project.document_uploaded',
@@ -50,6 +57,13 @@ export const AUDIT_EVENTS = {
   ENVIRONMENT_DEFAULT_CHANGED: 'environment.default_changed',
   /** A task named a production environment and was refused (ADR-021 s2). */
   ENVIRONMENT_TARGET_REFUSED: 'environment.target_refused',
+
+  /**
+   * A commit was pushed without an approval because the task targeted a
+   * development or staging environment (ADR-041). Recorded so that "who authorised
+   * this push" has an answer — the configuration did, deliberately, and here it is.
+   */
+  TASK_PUSH_AUTO_APPROVED: 'task.push_auto_approved',
 
   /** The organisation's model provider was configured, cleared or tested (ADR-023). */
   MODEL_PROVIDER_CONFIGURED: 'model_provider.configured',

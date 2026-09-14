@@ -14,6 +14,7 @@ import {
   readOnlyRootsFromPaths,
   type ReadOnlyRoot,
 } from './workspace-path';
+import { resolveOnPremiseRepository } from './on-premise-repository';
 
 /**
  * A provisioned workspace, in the layout of chapter 8:
@@ -395,10 +396,25 @@ export class WorkspaceManager {
       throw new Error(`The selected project path "${input.onPremiseProjectPath}" is not a directory.`);
     }
 
-    const gitInfo = await stat(join(projectPath, '.git')).catch(() => null);
-    if (!gitInfo) {
+    /**
+     * The directory that actually is the Git repository, which is not always the
+     * directory that was selected (ADR-039).
+     *
+     * A project the operator's create_project script provisioned keeps its
+     * repository in `addons/` and treats the project directory as a container for
+     * `config/`, `data/`, `logs/` and that repository; a project this platform
+     * scaffolded itself has the repository at its root with `addons/` inside it.
+     * Both are accepted by detection rather than by configuration, the same way the
+     * validation runner finds a project's modules — a project recorded before the
+     * distinction was drawn still names the container, and refusing it fails every
+     * task on that project for a reason that reads as the selected directory's
+     * fault rather than a stale record's.
+     */
+    const repositoryPath = await resolveOnPremiseRepository(projectPath);
+    if (!repositoryPath) {
       throw new Error(
-        `The selected project directory "${input.onPremiseProjectPath}" is not a Git repository.`,
+        `The selected project directory "${input.onPremiseProjectPath}" is not a Git repository, ` +
+          'and neither is the addons/ directory inside it.',
       );
     }
 
@@ -410,7 +426,7 @@ export class WorkspaceManager {
     // task already has the agent's own changes in the working tree, so the check
     // is skipped and the saved base commit is reused.
     if (input.baseCommit === null) {
-      const status = await this.git.status(projectPath);
+      const status = await this.git.status(repositoryPath);
       if (!status.clean) {
         throw new Error(
           `The working tree of "${input.onPremiseProjectPath}" has uncommitted changes. ` +
@@ -419,8 +435,8 @@ export class WorkspaceManager {
       }
     }
 
-    await this.git.checkoutBranch(projectPath, branch);
-    const baseCommit = input.baseCommit ?? (await this.git.revParse(projectPath, 'HEAD'));
+    await this.git.checkoutBranch(repositoryPath, branch);
+    const baseCommit = input.baseCommit ?? (await this.git.revParse(repositoryPath, 'HEAD'));
 
     const workspaceId = `ws-${randomUUID().slice(0, 8)}`;
     const metadataRoot = join(this.root, `task-${sanitiseSegment(input.taskReference)}-${workspaceId}`);
@@ -453,6 +469,9 @@ export class WorkspaceManager {
           baseCommit,
           mode: 'on_premise',
           projectPath,
+          // The directory git actually operates on, which differs from
+          // `projectPath` when the repository is the project's addons/ (ADR-039).
+          repositoryPath,
           allocatedAt: new Date().toISOString(),
         },
         null,
@@ -462,14 +481,15 @@ export class WorkspaceManager {
     );
 
     this.logger.log(
-      `On-premise workspace ${workspaceId} ready: operating directly on ${projectPath} (branch ${branch})`,
+      `On-premise workspace ${workspaceId} ready: operating on the repository at ${repositoryPath} ` +
+        `(selected directory ${projectPath}, branch ${branch})`,
     );
 
     return {
       workspaceId,
       taskReference: input.taskReference,
       root: metadataRoot,
-      repositoryPath: projectPath,
+      repositoryPath,
       metadataPath,
       logsPath,
       branch,

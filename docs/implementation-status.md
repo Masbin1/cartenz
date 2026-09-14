@@ -444,3 +444,30 @@ run and say so. With it on but unconfigured, the task narrates exactly which set
 **Blocked on an operator:** a Postgres role with `CREATEDB` and no superuser. The platform's own
 role cannot create databases, and the customer's Odoo role is a cluster superuser whose password
 sits in their `odoo.conf` — authenticating as it is exactly what this design refuses.
+
+---
+
+## Created projects get a GitHub repository (ADR-041)
+
+Closes the gap the operator reported: *"cartenz punya feature untuk create project, tapi ga
+langsung ngepush ke github."* The push machinery was complete and gated; what did not exist was
+the part that makes a repository to push into.
+
+| Concern | Before | Now |
+| --- | --- | --- |
+| A created project's remote | None. The scaffold was a local git repository on this host and nothing else existed anywhere. | With `GITHUB_REPOSITORY_ENABLED` + `GITHUB_TOKEN` + `GITHUB_OWNER` (and `GIT_PUSH_ENABLED`), creation also creates the repository, sets `origin`, seals the credential as the project's `github` connection, and pushes every branch. |
+| The repository of a provisioned project | The workspace layer required `.git` at the recorded `onPremisePath`, which was the project **directory** — so every task died at allocation with "is not a Git repository". | The repository is `addons/` (ADR-039), detected rather than configured, and recorded as its own field. This was a bug fix, not an option. |
+| Which connection supplies a credential | "The first connection holding a secret" — which would have handed an Odoo API key to GitHub on a project holding both. | Filtered to `GIT_CONNECTION_TYPES` (`github`, `gitlab`, `odoo_sh`), oldest first. |
+| Routine non-production pushes | Every push waited for an approval. | `GIT_AUTO_PUSH_ON_TASK=true` pushes `development`/`staging` work on commit (`task.push_auto_approved` audits each). Production remains untargetable. |
+| Pre-existing projects | No remote, no path to one. | `npm run github:backfill` (idempotent, `--dry-run` first). |
+
+**A failure to connect is not a failed project.** The GitHub step runs after the project row, its
+specification, its environments and its directory exist — and for a provisioned project, after a
+running Odoo instance exists. It is logged, audited and reported in the creation response, and the
+project stands.
+
+**The bug this milestone introduced and then fixed:** the repository is recorded as a *connection*,
+but the task-submission guard read only `projects.repository_url`, so it refused development
+requests on exactly the projects creation had just given a repository to. Anything that asks
+"does this project have a repository?" now asks both. See the verification log for the run that
+found it.

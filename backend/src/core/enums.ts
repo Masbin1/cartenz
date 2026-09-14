@@ -36,6 +36,17 @@ export const REPOSITORY_BACKED_PROJECT_TYPES: readonly ProjectType[] = ['reposit
 export const CONNECTION_TYPES = ['github', 'gitlab', 'odoo_sh', 'odoo_api', 'connector'] as const;
 export type ConnectionType = (typeof CONNECTION_TYPES)[number];
 
+/**
+ * The connection types that name a Git remote, and so can supply the credential for
+ * a clone or a push (ADR-041).
+ *
+ * `odoo_api` and `connector` are deliberately absent: their secrets authenticate an
+ * HTTP API, not git, and presenting one to a Git host is a leaked-credential incident
+ * waiting for a project that happens to hold both. This is the list the task layer
+ * filters on when it picks the credential a workspace uses.
+ */
+export const GIT_CONNECTION_TYPES: readonly ConnectionType[] = ['github', 'gitlab', 'odoo_sh'];
+
 /** Connection health. Not enumerated in Table 4; kept minimal and closed. */
 export const CONNECTION_STATUSES = ['pending', 'connected', 'error', 'disabled'] as const;
 export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number];

@@ -30,6 +30,8 @@ import { inferOdooTarget } from './odoo-target';
 import type { OdooFieldSummary } from './model-agent-planner';
 import { OdooValidationRunner } from '../validation/odoo-validation-runner';
 import { changedModules } from '../validation/changed-modules';
+import { AuditService } from '../../core/audit/audit.service';
+import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 
 /**
  * How many matched files are read so they can be ranked, and how many are sent.
@@ -92,6 +94,7 @@ export class AgentWorkflow {
     private readonly validation: OdooValidationRunner,
     private readonly documents: DocumentsService,
     private readonly odooSettings: OdooSettingsService,
+    private readonly audit: AuditService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -1146,6 +1149,75 @@ export class AgentWorkflow {
       return this.tasks.transition(snapshot.taskId, 'committing', 'pushing');
     }
 
+    /**
+     * A non-production task pushes without waiting for a person (ADR-041).
+     *
+     * The approval exists so that nothing leaves the platform unasked (ADR-021), and
+     * that stays true here in the only sense that matters: the deployment asked, once,
+     * by setting GIT_AUTO_PUSH_ON_TASK, and the request is limited to `development`
+     * and `staging`. Production is unaffected because a task cannot target it at all
+     * — it is refused at task creation, before this point is reachable. A task with no
+     * resolved environment keeps the approval: the narrower behaviour is the default
+     * when the platform does not know what it is pushing to.
+     *
+     * Recorded rather than silent, so "who authorised this push" has an answer beyond
+     * the configuration file it came from.
+     */
+    if (
+      this.config.git.pushEnabled &&
+      this.config.git.autoPushOnTask &&
+      isNonProductionTarget(snapshot)
+    ) {
+      /**
+       * Nowhere to push is a fact about the project, not a failure of this task.
+       *
+       * A project created before its repository had a remote — or one whose directory
+       * was never connected — reaches here with the change committed locally. Failing
+       * the task would blame the person's request for a missing remote and lose the
+       * work's status along with it, so this completes and says what is missing, the
+       * same way the disabled-push branch below does.
+       */
+      const remote = onPremise
+        ? await this.git.originUrl(workspace.repositoryPath)
+        : workspace.repositoryUrl;
+
+      if (!remote) {
+        await this.narrate(
+          snapshot,
+          `Committed on ${workspace.branch}. This project has no remote configured, so nothing ` +
+            'was pushed. Connect the project to a repository, or create it through Cartenz so ' +
+            'that its GitHub repository is created with it.',
+        );
+
+        return this.tasks.transition(snapshot.taskId, 'committing', 'completed', {
+          message:
+            `Commit ${commit.slice(0, 8)} is on ${workspace.branch} locally. The project has ` +
+            'no remote, so nothing was pushed.',
+        });
+      }
+
+      await this.audit.record({
+        event: AUDIT_EVENTS.TASK_PUSH_AUTO_APPROVED,
+        organizationId: snapshot.organizationId,
+        projectId: snapshot.projectId,
+        userId: null,
+        metadata: {
+          branch: workspace.branch,
+          commit: commit.slice(0, 12),
+          environment: snapshot.targetEnvironment?.name ?? null,
+          environmentKind: snapshot.targetEnvironment?.kind ?? null,
+        },
+      });
+
+      await this.narrate(
+        snapshot,
+        `Pushing ${workspace.branch} to the remote without an approval: this deployment ` +
+          'pushes development and staging work automatically (GIT_AUTO_PUSH_ON_TASK=true).',
+      );
+
+      return this.tasks.transition(snapshot.taskId, 'committing', 'pushing');
+    }
+
     // With pushing disabled at the process layer, asking for push approval would
     // be asking a person to authorise something the platform cannot do (ADR-021
     // s1). An approval that cannot lead to the act it names teaches people that
@@ -1535,6 +1607,19 @@ export class AgentWorkflow {
   simulatedCapabilities(): readonly string[] {
     return this.registry.simulatedCapabilities();
   }
+}
+
+/**
+ * Whether a task's target environment is one a push may leave without an approval
+ * (ADR-041).
+ *
+ * `development` and `staging` only, and only when the environment actually resolved:
+ * production never reaches this point (refused at task creation, ADR-021 s2), and an
+ * unknown target keeps the approval rather than assuming the permissive case.
+ */
+function isNonProductionTarget(snapshot: TaskExecutionSnapshot): boolean {
+  const kind = snapshot.targetEnvironment?.kind;
+  return kind === 'development' || kind === 'staging';
 }
 
 /**

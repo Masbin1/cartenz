@@ -46,6 +46,59 @@ describe('loadConfig', () => {
   });
 
   /**
+   * ADR-041. The empty-string case is the one that matters: `.env.example` ships
+   * `GITHUB_TOKEN=` as a blank line for an operator to fill in, and a schema that
+   * rejected the empty string would make the default file refuse to boot.
+   */
+  describe('GitHub repository creation (ADR-041)', () => {
+    it('boots with the keys present but empty, and stays off', () => {
+      const config = loadConfig({
+        ...valid,
+        GITHUB_REPOSITORY_ENABLED: 'true',
+        GITHUB_TOKEN: '',
+        GITHUB_OWNER: '',
+      });
+
+      expect(config.github.token).toBeNull();
+      expect(config.github.owner).toBeNull();
+      expect(config.github.repositoryEnabled).toBe(false);
+      expect(config.github.visibility).toBe('private');
+    });
+
+    it('is on only with the switch, a token and an owner together', () => {
+      const complete = loadConfig({
+        ...valid,
+        GITHUB_REPOSITORY_ENABLED: 'true',
+        GITHUB_TOKEN: 'ghp_x',
+        GITHUB_OWNER: 'linkederp',
+      });
+      expect(complete.github.repositoryEnabled).toBe(true);
+
+      // A half-configured pair: off, not a failed boot and not a failed request.
+      const noOwner = loadConfig({
+        ...valid,
+        GITHUB_REPOSITORY_ENABLED: 'true',
+        GITHUB_TOKEN: 'ghp_x',
+        GITHUB_OWNER: '',
+      });
+      expect(noOwner.github.repositoryEnabled).toBe(false);
+
+      const switchOff = loadConfig({
+        ...valid,
+        GITHUB_REPOSITORY_ENABLED: 'false',
+        GITHUB_TOKEN: 'ghp_x',
+        GITHUB_OWNER: 'linkederp',
+      });
+      expect(switchOff.github.repositoryEnabled).toBe(false);
+    });
+
+    it('keeps pushing without an approval off unless it was asked for', () => {
+      expect(loadConfig(valid).git.autoPushOnTask).toBe(false);
+      expect(loadConfig({ ...valid, GIT_AUTO_PUSH_ON_TASK: 'true' }).git.autoPushOnTask).toBe(true);
+    });
+  });
+
+  /**
    * ADR-031. The Odoo source reaches every Odoo project, and a deployment that
    * already configured validation should not have to configure it twice.
    */

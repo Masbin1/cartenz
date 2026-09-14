@@ -156,6 +156,10 @@ Then edit `/opt/cartenz/.env`. The settings that must be reviewed:
 | `AI_API_KEY` | your gateway key | |
 | `AI_MODEL` | e.g. `cc/claude-sonnet-5` | Environment fallback when an organisation has no chain |
 | `GIT_PUSH_ENABLED` | `false` to start | See §7.1 |
+| `GITHUB_REPOSITORY_ENABLED` | `false` to start | See §7.2 |
+| `GITHUB_TOKEN` | empty until §7.2 | Never logged, never returned; sealed per project |
+| `GITHUB_OWNER` | empty until §7.2 | The user or organisation that owns created repositories |
+| `GIT_AUTO_PUSH_ON_TASK` | `false` | Non-production pushes without a per-task approval; see §7.2 |
 | `VALIDATION_ENABLED` | `false` unless §8 is done | Validation is skipped honestly, never faked |
 | `WORKSPACE_ROOT` | `/opt/cartenz/.runtime/workspaces` | Must be writable by `cartenz` |
 | `FRONTEND_PORT` | `3000` | |
@@ -304,6 +308,80 @@ and enable it only when you intend the agent to push to customer repositories.
 
 Production environments are never targetable. Task creation refuses them
 outright and audits the refusal.
+
+### 7.2 A repository on GitHub for every created project (ADR-041)
+
+A project created through Cartenz is scaffolded **on this server** and exists
+nowhere else. `GIT_PUSH_ENABLED=true` therefore changes nothing for it on its own:
+there is no `origin` and no repository to receive a push. Three settings close
+that gap:
+
+| Variable | Value | Why |
+| --- | --- | --- |
+| `GITHUB_REPOSITORY_ENABLED` | `true` to enable | The switch |
+| `GITHUB_TOKEN` | a PAT | Creates the repository under the owner below |
+| `GITHUB_OWNER` | user or organisation | Where created repositories live |
+| `GITHUB_REPOSITORY_VISIBILITY` | `private` (default) or `public` | A scaffold is the customer's code |
+
+All of `GITHUB_REPOSITORY_ENABLED`, `GITHUB_TOKEN` and `GITHUB_OWNER` are
+required. A switch with a token or owner missing leaves the feature **off** rather
+than failing halfway through a project creation, and `GIT_PUSH_ENABLED=true` is
+required too — without it the process layer would refuse the push that populates
+the repository, so the feature reports "skipped" and does nothing.
+
+The token needs **Administration: read and write** (to create the repository) and
+**Contents: read and write** (to push) under the owner. A classic PAT with `repo`
+scope also works. `GITHUB_OWNER` may be a user account or an organisation;
+`GITHUB_TOKEN` may belong to either — if the token's account and `GITHUB_OWNER`
+disagree, repository creation fails with a message naming the mismatch rather than
+creating the repository under the wrong owner.
+
+What creation does, in order, all of it after the project itself exists: creates
+the repository (or **adopts** it, if a previous attempt already made one — a
+retried creation must not fail on its own earlier work), points the project's
+repository at it as `origin` with a credential-free URL, seals the token against
+the project as its `github` connection, and pushes every branch the project has.
+
+**A failure here does not fail the project.** By this point the project row and
+its directory exist, and for a provisioned project so does a running Odoo instance.
+The failure is logged, audited (`project.github_repository_failed`) and reported in
+the creation response; the project stands, minus its remote.
+
+Pre-existing projects have no remote and are not touched by anything above. To give
+them one:
+
+```bash
+cd /opt/cartenz/backend
+sudo -u cartenz npm run build                        # the script runs from dist/
+sudo -u cartenz bash -c 'set -a; . /opt/cartenz/.env; set +a; \
+  node dist/scripts/backfill-github-repositories.js --dry-run'
+```
+
+`--dry-run` prints what would happen; drop it to perform it. The script is
+idempotent — a project whose repository already has an `origin` is reported and
+skipped, so re-running after a partial failure is safe. `--force` redoes one that
+already has an `origin`. Pass project names to limit the run to those.
+
+Both `cartenz-api` and `cartenz-worker` read `.env` **once at start**: after editing
+these settings, restart them, or the running process keeps the old (empty) values
+and every created project silently gets no repository.
+
+### 7.3 Pushing without a per-task approval
+
+`GIT_AUTO_PUSH_ON_TASK=true` (together with `GIT_PUSH_ENABLED=true`) makes a task
+targeting a `development` or `staging` environment push as soon as it commits,
+instead of waiting in `waiting_approval` for a person to approve the push. The
+approval gate is not removed, it is moved: the deployment asks once, in
+configuration, and the scope of that permission is the two non-production
+environments. `production` cannot be reached this way because it cannot be targeted
+at all. A task with no resolved environment keeps the approval.
+
+Every auto-approved push is written to the audit trail as
+`task.push_auto_approved`.
+
+`/tasks/agent/capabilities` reports the effective posture (`pushEnabled`,
+`autoPushOnTask`, and the `github` block) so a person can read it from the server
+rather than infer it from whether a project happens to have a remote.
 
 ---
 

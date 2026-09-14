@@ -50,9 +50,47 @@ only if you specifically want its per-project memory for conversational work
 
 ### 1.3 Will the agent push to customer repositories and run Odoo tests?
 
-- Start with `GIT_PUSH_ENABLED=false` and `VALIDATION_ENABLED=false`. Both are
-  refused at the process layer, not just by policy. Turn them on deliberately
-  once the platform behaves as expected (§7, §8 of `INSTALL-SERVER.md`).
+- Start with `GIT_PUSH_ENABLED=false`, `GITHUB_REPOSITORY_ENABLED=false` and
+  `VALIDATION_ENABLED=false`. Pushing and repository creation are refused at the
+  process layer, not just by policy. Turn them on deliberately once the platform
+  behaves as expected (§7, §8 of `INSTALL-SERVER.md`).
+
+### 1.4 Should a project created here also get a repository on GitHub?
+
+Optional, and off by default. With `GITHUB_REPOSITORY_ENABLED=true` plus a
+`GITHUB_TOKEN` and `GITHUB_OWNER`, creating a project also creates its repository
+on GitHub — private unless you set `GITHUB_REPOSITORY_VISIBILITY=public` — points
+the project's repository at it, and pushes its `main`, `staging` and `development`
+branches. All three settings are required: switch on with a token or owner missing
+leaves the feature **off** rather than failing at project-creation time.
+
+`GIT_PUSH_ENABLED=true` must also be set, or the whole feature is inert: the
+process layer would refuse the push that populates the repository. A created
+project with `GIT_PUSH_ENABLED=false` and a working token reports "skipped" and
+gets no repository.
+
+The token is a deployment credential: it creates repositories and is then sealed
+per project through the secrets store as that project's `github` connection, which
+is what a task's push reads. It is never logged and never returned in a response.
+A classic PAT with `repo` scope works; the fine-grained equivalent needs
+**Administration: read and write** (to create the repository under the owner) and
+**Contents: read and write** (to push).
+
+Projects created *before* this is enabled keep their local repository and have no
+remote. `npm run github:backfill` in `backend/` walks them and does what creation
+now does, idempotently — run it with `--dry-run` first to see the plan.
+
+### 1.5 Should a task push without waiting for an approval?
+
+`GIT_AUTO_PUSH_ON_TASK=true` (with `GIT_PUSH_ENABLED=true`) makes a task that
+targets a `development` or `staging` environment push as soon as it commits,
+instead of parking in `waiting_approval` until a person approves the push.
+
+The gate is not removed, it is moved: the deployment asks once, in configuration.
+`production` is unreachable either way — a task cannot target it at all (refused
+at task creation, ADR-021). A task with no resolved environment keeps the
+approval. Every auto-approved push is recorded as `task.push_auto_approved`, so
+"who authorised this" has an answer beyond the configuration file.
 
 ---
 
@@ -319,7 +357,7 @@ Then, in the portal:
 - [ ] `.env` is `chmod 600`, owned by `cartenz`; `SECRETS_ROOT_KEY` backed up off the server
 - [ ] Postgres, Redis, 9router and Hermes bound to loopback only
 - [ ] Only 443 (and SSH) open in the firewall; TLS terminated at the proxy
-- [ ] `GIT_PUSH_ENABLED=false` until push is intended
+- [ ] `GIT_PUSH_ENABLED=false` until push is intended; `GITHUB_REPOSITORY_ENABLED=false` until repositories should be created automatically
 - [ ] Services run as the `cartenz` user, never root
 - [ ] If Odoo is wired: `cartenz` can read base/enterprise but owns neither; validation uses a dedicated role, not the Odoo superuser
 - [ ] Provider chain tested row by row; structured-outputs flag correct per model

@@ -5,13 +5,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import {
   agentActions,
   agentSessions,
   agentTaskEvents,
   agentTasks,
+  projectConnections,
   projectDocuments,
   projectEnvironments,
   approvals,
@@ -29,7 +30,7 @@ import {
   type AgentOrchestrator,
 } from '../../agent/orchestration/agent-orchestrator.interface';
 import { isTerminalStatus, type AgentTaskStatus } from '../../agent/task-state';
-import { REPOSITORY_BACKED_PROJECT_TYPES, type AgentTaskKind, type ProjectType } from '../../core/enums';
+import { REPOSITORY_BACKED_PROJECT_TYPES, GIT_CONNECTION_TYPES, type AgentTaskKind, type ProjectType } from '../../core/enums';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import type { CreateTaskDto } from './dto/task.dto';
 
@@ -53,6 +54,36 @@ export class TasksService {
     private readonly environments: ProjectEnvironmentsService,
     @Inject(AGENT_ORCHESTRATOR) private readonly orchestrator: AgentOrchestrator,
   ) {}
+
+  /**
+   * The Git connection a workspace would take its credential from, or null.
+   *
+   * The same query `TaskRepository` runs to build a task's snapshot, kept in step
+   * with it deliberately: the question a development request has to answer is
+   * "will the workspace have a credential?", and answering it against a different
+   * filter than the one that supplies the credential is how a project with a
+   * perfectly good GitHub connection got refused (ADR-041).
+   *
+   * The oldest qualifying connection wins, as it does there, and only connection
+   * types that are Git remotes qualify — an `odoo_api` secret authenticates an
+   * HTTP API and is not a clone credential.
+   */
+  private async gitConnectionFor(projectId: string) {
+    const [connection] = await this.database.db
+      .select({ id: projectConnections.id })
+      .from(projectConnections)
+      .where(
+        and(
+          eq(projectConnections.projectId, projectId),
+          isNotNull(projectConnections.secretRef),
+          inArray(projectConnections.connectionType, [...GIT_CONNECTION_TYPES]),
+        ),
+      )
+      .orderBy(projectConnections.createdAt)
+      .limit(1);
+
+    return connection ?? null;
+  }
 
   async create(user: AuthenticatedUser, projectId: string, dto: CreateTaskDto) {
     // Which product shape this task is (ADR-029). `change` is the existing
@@ -86,12 +117,31 @@ export class TasksService {
      * through; their own surface is validated at workspace allocation or by the
      * Odoo Online tools.
      *
+     * An `ai_project` is not repository-backed, and creation gives it a GitHub
+     * repository without recording it on `projects.repository_url`: the repository
+     * is recorded as the project's `github` *connection*, which is where a task's
+     * credential comes from. Reading only `repository_url` therefore refused
+     * development requests on exactly the projects this platform had just finished
+     * giving a repository to, and named a connection that was already connected
+     * (ADR-041). So this branch asks whether the project has a Git connection
+     * before it asks whether it has a repository URL.
+     *
      * A `chat` task on an `ai_project` is allowed despite the missing repository
      * (ADR-029): it needs nothing to clone, and answers from the project
      * specification. A `chat` on a repository-backed project still requires the
      * repository, because reading it is how the agent answers.
      */
-    if (kind !== 'chat' && !project.repositoryUrl && project.projectType === 'ai_project') {
+    const hasGitConnection =
+      project.projectType === 'ai_project'
+        ? (await this.gitConnectionFor(projectId)) !== null
+        : false;
+
+    if (
+      kind !== 'chat' &&
+      !project.repositoryUrl &&
+      !hasGitConnection &&
+      project.projectType === 'ai_project'
+    ) {
       throw new BadRequestException(
         'This project was created from a specification and has no repository yet. ' +
           'Connect one before submitting a development request.',

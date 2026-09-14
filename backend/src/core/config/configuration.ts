@@ -283,6 +283,51 @@ const environmentSchema = z.object({
    * host key and makes the connection trivially man-in-the-middleable.
    */
   GIT_SSH_HOST_KEY_POLICY: z.enum(['yes', 'accept-new']).default('accept-new'),
+
+  /**
+   * Pushing without a per-task approval, for work that is not production.
+   *
+   * Off by default. With `GIT_PUSH_ENABLED=false` this does nothing at all: the
+   * process layer refuses the subcommand before an approval could matter. With both
+   * on, a task whose target environment is `development` or `staging` pushes as soon
+   * as it commits instead of parking in `waiting_approval` until a person clicks
+   * (ADR-041). `production` is unaffected because a task cannot target production in
+   * the first place (ADR-021 s2) - it is refused at task creation.
+   */
+  GIT_AUTO_PUSH_ON_TASK: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+
+  /**
+   * GitHub, for a project this platform creates (ADR-041).
+   *
+   * A created project's code lives only on this host. `GIT_PUSH_ENABLED` alone
+   * therefore changes nothing for it: there is no remote to push to, and no
+   * repository on the other end. When these are set, creating a project also
+   * creates its GitHub repository, points the project's repository at it, and
+   * pushes the initial commit and every environment branch.
+   *
+   * `GITHUB_OWNER` is the user or organisation that owns the created repositories -
+   * not necessarily the account the token belongs to, which is why the two are
+   * separate settings.
+   *
+   * The token is a fine-grained PAT needing **Administration: read and write** (to
+   * create a repository under the owner) and **Contents: read and write** (to push).
+   * It is a deployment credential: never logged, never returned in a response, and
+   * sealed through the secrets store per project before any push uses it.
+   */
+  GITHUB_TOKEN: z.string().default(''),
+  GITHUB_OWNER: z.string().default(''),
+  GITHUB_REPOSITORY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  /**
+   * Private by default. A project scaffold is a customer's code and starts
+   * unpublished; a deployment that wants public repositories says so explicitly.
+   */
+  GITHUB_REPOSITORY_VISIBILITY: z.enum(['private', 'public']).default('private'),
   /**
    * Validation: running the repository's own Odoo modules (ADR-027).
    *
@@ -448,7 +493,16 @@ export interface AppConfig {
     readonly authorEmail: string;
     readonly allowLocalRemotes: boolean;
     readonly pushEnabled: boolean;
+    /** Push a non-production task without a per-task approval (ADR-041). */
+    readonly autoPushOnTask: boolean;
     readonly sshHostKeyPolicy: Environment['GIT_SSH_HOST_KEY_POLICY'];
+  };
+  /** Creating and pushing to a GitHub repository for a created project (ADR-041). */
+  readonly github: {
+    readonly token: string | null;
+    readonly owner: string | null;
+    readonly repositoryEnabled: boolean;
+    readonly visibility: Environment['GITHUB_REPOSITORY_VISIBILITY'];
   };
   readonly validation: {
     readonly enabled: boolean;
@@ -764,7 +818,21 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       authorEmail: env.GIT_AUTHOR_EMAIL,
       allowLocalRemotes: env.GIT_ALLOW_LOCAL_REMOTES,
       pushEnabled: env.GIT_PUSH_ENABLED,
+      autoPushOnTask: env.GIT_AUTO_PUSH_ON_TASK,
       sshHostKeyPolicy: env.GIT_SSH_HOST_KEY_POLICY,
+    },
+    github: {
+      token: emptyToUndefined(env.GITHUB_TOKEN) ?? null,
+      owner: emptyToUndefined(env.GITHUB_OWNER) ?? null,
+      // Requires both the switch and something to authenticate with and create
+      // under: a token with no owner cannot decide where a repository goes, and an
+      // owner with no token cannot create one. A half-configured pair is off rather
+      // than an error at project-creation time.
+      repositoryEnabled:
+        env.GITHUB_REPOSITORY_ENABLED &&
+        Boolean(emptyToUndefined(env.GITHUB_TOKEN)) &&
+        Boolean(emptyToUndefined(env.GITHUB_OWNER)),
+      visibility: env.GITHUB_REPOSITORY_VISIBILITY,
     },
     validation: {
       enabled: env.VALIDATION_ENABLED,

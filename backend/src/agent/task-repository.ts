@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
-import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { DatabaseService } from '../core/database/database.service';
 import { withSequenceRetry } from '../core/database/task-sequence';
 import {
@@ -15,7 +15,12 @@ import { AuditService } from '../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../core/audit/audit-events';
 import { TaskEventPublisher } from '../core/events/task-event-publisher.service';
 import { resolveAgentPermissions, type AgentPermission } from '../core/authz/agent-permissions';
-import type { AgentTaskKind, OdooEdition, ProjectType } from '../core/enums';
+import {
+  GIT_CONNECTION_TYPES,
+  type AgentTaskKind,
+  type OdooEdition,
+  type ProjectType,
+} from '../core/enums';
 import { assertTransition, isTerminalStatus, type AgentTaskStatus } from './task-state';
 import { executionModeFor, type ExecutionMode } from './executors/execution-mode';
 import type { ImplementationPlan, ModifiedFile, TaskTestResults } from './orchestration/agent-plan';
@@ -151,8 +156,16 @@ export class TaskRepository {
 
     if (!row) throw new NotFoundException(`Task ${taskId} not found`);
 
-    // The first connection holding a credential is the one used to clone. A
-    // project with several is out of scope: the MVP connects one repository.
+    /**
+     * The credential a clone or a push uses.
+     *
+     * Restricted to connection types that *are* a Git remote (ADR-041). A project can
+     * hold more than one connection - an Odoo Online API key for `odoo_api`, a
+     * repository for `github` - and "the first one with a secret" stops being an
+     * answer once one of them is not a Git credential at all: the push would present
+     * an Odoo API key to GitHub. Among the qualifying connections the oldest wins, as
+     * it did before, so nothing about an existing single-connection project changes.
+     */
     const [connection] = await this.database.db
       .select({
         secretRef: projectConnections.secretRef,
@@ -165,8 +178,10 @@ export class TaskRepository {
         and(
           eq(projectConnections.projectId, row.projectId),
           isNotNull(projectConnections.secretRef),
+          inArray(projectConnections.connectionType, [...GIT_CONNECTION_TYPES]),
         ),
       )
+      .orderBy(projectConnections.createdAt)
       .limit(1);
 
     /**

@@ -116,3 +116,101 @@ describe('TasksService.create — main branch restriction', () => {
     );
   });
 });
+
+/**
+ * A created project's repository is recorded as a connection, not on
+ * `projects.repository_url` (ADR-041).
+ *
+ * The regression this covers: creation gave an `ai_project` a GitHub repository and
+ * a `github` connection, `repository_url` stayed null, and the submission guard -
+ * which read only `repository_url` - refused every development request on exactly
+ * those projects with "has no repository yet. Connect one before submitting a
+ * development request." The feature that created the repository was the reason the
+ * next step was refused, and the message sent the person to connect a repository
+ * that was already connected.
+ */
+describe('TasksService.create — a project whose repository is a connection (ADR-041)', () => {
+  const makeAiService = (options: {
+    repositoryUrl?: string | null;
+    gitConnection?: { id: string } | null;
+    branch?: string;
+  }) => {
+    const project = {
+      projectType: 'ai_project',
+      repositoryUrl: options.repositoryUrl ?? null,
+      name: 'P',
+    };
+
+    const database = {
+      db: {
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              limit: async () => [project],
+              // The connection lookup continues past `where` to order and limit.
+              orderBy: () => ({
+                limit: async () => (options.gitConnection ? [options.gitConnection] : []),
+              }),
+            }),
+          }),
+        }),
+      },
+    } as unknown as DatabaseService;
+
+    const authz = {
+      requireProjectAccess: async () => ({
+        organizationId: 'org-1',
+        projectId: 'project-1',
+        agentPermissions: resolveAgentPermissions({}),
+      }),
+    } as unknown as AuthorizationService;
+
+    const environments = {
+      resolveTarget: async () => ({
+        id: 'env-1',
+        name: 'Development',
+        branch: options.branch ?? 'development',
+        kind: 'development',
+      }),
+    } as unknown as ProjectEnvironmentsService;
+
+    return new TasksService(
+      database,
+      authz,
+      { record: async () => undefined } as unknown as AuditService,
+      {} as TaskRepository,
+      {} as ToolRegistry,
+      {} as ModelCallRecorder,
+      environments,
+      {} as AgentOrchestrator,
+    );
+  };
+
+  const submit = (service: TasksService, kind?: string) =>
+    service.create({ userId: 'u' } as never, 'project-1', {
+      prompt: 'add a field',
+      ...(kind ? { kind } : {}),
+    } as never);
+
+  it('permits a development request when the repository is a GitHub connection', async () => {
+    // `rejects.not.toThrow(BadRequestException)` rather than resolving: later steps
+    // still need the database. What is asserted is that this guard does not fire.
+    await expect(
+      submit(makeAiService({ gitConnection: { id: 'conn-1' } })),
+    ).rejects.not.toThrow(BadRequestException);
+  });
+
+  it('permits one when the repository URL is recorded instead', async () => {
+    await expect(
+      submit(makeAiService({ repositoryUrl: 'https://github.com/o/p.git' })),
+    ).rejects.not.toThrow(BadRequestException);
+  });
+
+  it('still refuses a project with neither a repository URL nor a Git connection', async () => {
+    await expect(submit(makeAiService({}))).rejects.toThrow(/no repository yet/);
+  });
+
+  it('still permits a chat task on a project with no repository at all', async () => {
+    await expect(submit(makeAiService({}), 'chat')).rejects.not.toThrow(BadRequestException);
+  });
+});

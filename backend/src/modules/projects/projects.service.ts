@@ -52,6 +52,10 @@ import {
 } from './project-environments.service';
 import { OdooSettingsService } from '../organizations/odoo-settings.service';
 import { ProjectProvisioningService } from './project-provisioning.service';
+import {
+  GitHubRepositoryService,
+  type GitHubConnectionResult,
+} from './github-repository.service';
 import { WorkspaceManager } from '../../agent/workspace/workspace-manager';
 import { TERMINAL_TASK_STATUSES } from '../../agent/task-state';
 import { assertSafeRemoteUrl, UnsafeRemoteUrlError } from '../../agent/git/git-url';
@@ -111,6 +115,7 @@ export class ProjectsService {
     private readonly odooSettings: OdooSettingsService,
     private readonly odooOnline: OdooOnlineClient,
     private readonly provisioning: ProjectProvisioningService,
+    private readonly githubRepositories: GitHubRepositoryService,
   ) {}
 
   /**
@@ -342,7 +347,7 @@ export class ProjectsService {
       defaultBranch,
       repositoryUrl: dto.repositoryUrl ?? null,
       environmentConfig: scaffolded
-        ? { ...environmentConfig, onPremisePath: scaffolded.repositoryPath }
+        ? { ...environmentConfig, onPremisePath: scaffolded.gitRootPath }
         : environmentConfig,
       createdByUserId: user.userId,
     });
@@ -364,7 +369,27 @@ export class ProjectsService {
       metadata: { name: project.name, projectType: project.projectType, flow: 'connect_existing' },
     });
 
-    return this.present(project);
+    /**
+     * A scaffolded directory is a repository on this host and nowhere else, so a
+     * project created this way gets the same GitHub repository a Create-with-AI
+     * project does (ADR-041). A repository-backed project is left alone: its code
+     * already lives in the repository it connects to.
+     */
+    const github = scaffolded
+      ? await this.connectGitHubRepository({
+          organizationId: dto.organizationId,
+          projectId: project.id,
+          userId: user.userId,
+          projectName: project.name,
+          technicalName: scaffolded.technicalName,
+          description: dto.description ?? null,
+          gitRootPath: scaffolded.gitRootPath,
+          defaultBranch,
+          branches: (resolvedEnvironments ?? []).map((environment) => environment.branch),
+        })
+      : null;
+
+    return github ? { ...this.present(project), github } : this.present(project);
   }
 
   /**
@@ -443,10 +468,12 @@ export class ProjectsService {
             defaultBranch: 'main',
             // The scaffolded directory is where on-premise execution works
             // (ADR-036). Recording it here is what turns this project's tasks
-            // from plan-only into a real on-premise run.
+            // from plan-only into a real on-premise run — and it has to be the
+            // directory that is the Git repository, which for a provisioned
+            // project is its `addons/`, not the project directory (ADR-039).
             environmentConfig: {
               targetEnvironment: 'development',
-              onPremisePath: scaffolded.repositoryPath,
+              onPremisePath: scaffolded.gitRootPath,
             },
             agentPermissions: { ...DEFAULT_AGENT_PERMISSIONS },
             createdByUserId: user.userId,
@@ -537,7 +564,112 @@ export class ProjectsService {
       metadata: { version: 1 },
     });
 
-    return { ...this.present(result.project), specification: result.spec.specification };
+    /**
+     * The repository, if this deployment creates one (ADR-041). Last, because it is
+     * the only step that leaves the platform: the project, its specification and its
+     * environments are already committed by this point, and a GitHub that is
+     * unreachable leaves a working local project rather than a failed request.
+     */
+    const github = await this.connectGitHubRepository({
+      organizationId: dto.organizationId,
+      projectId: result.project.id,
+      userId: user.userId,
+      projectName: result.project.name,
+      technicalName: scaffolded.technicalName,
+      description: dto.description ?? null,
+      gitRootPath: scaffolded.gitRootPath,
+      defaultBranch: 'main',
+      branches: scaffoldEnvironments.map((environment) => environment.branch),
+    });
+
+    return {
+      ...this.present(result.project),
+      specification: result.spec.specification,
+      github,
+    };
+  }
+
+  /**
+   * Gives a freshly created project a repository on GitHub and pushes its branches
+   * into it (ADR-041).
+   *
+   * Called after the project row exists, because the credential is sealed against a
+   * project id and recorded as the project's connection. A failure is logged and
+   * audited rather than thrown: by the time this runs the project directory is real
+   * and, for a provisioned project, so is a running Odoo instance with a database, a
+   * systemd unit and an Nginx site. Throwing would report a working project as a
+   * failed request and invite a retry that collides with the directory that exists.
+   * The result says which of the three things happened, and the response carries it.
+   */
+  private async connectGitHubRepository(input: {
+    organizationId: string;
+    projectId: string;
+    userId: string;
+    projectName: string;
+    technicalName: string;
+    description: string | null;
+    gitRootPath: string;
+    defaultBranch: string;
+    branches: readonly string[];
+  }): Promise<GitHubConnectionResult> {
+    try {
+      const result = await this.githubRepositories.connect({
+        organizationId: input.organizationId,
+        projectId: input.projectId,
+        projectName: input.projectName,
+        repositoryName: input.technicalName,
+        description: input.description,
+        gitRootPath: input.gitRootPath,
+        defaultBranch: input.defaultBranch,
+        branches: input.branches,
+      });
+
+      await this.audit.record({
+        event:
+          result.status === 'connected'
+            ? AUDIT_EVENTS.PROJECT_GITHUB_REPOSITORY_CONNECTED
+            : AUDIT_EVENTS.PROJECT_GITHUB_REPOSITORY_FAILED,
+        organizationId: input.organizationId,
+        projectId: input.projectId,
+        userId: input.userId,
+        metadata: {
+          repository: result.repository,
+          url: result.url,
+          pushed: [...result.pushed],
+          skipped: result.status === 'skipped',
+          reason: result.reason,
+        },
+      });
+
+      if (result.status === 'skipped') {
+        this.logger.log(
+          `Project "${input.projectName}" has no GitHub repository: ${result.reason}`,
+        );
+      }
+      return result;
+    } catch (error) {
+      const message = (error as Error).message;
+      this.logger.error(
+        `Project "${input.projectName}" was created, but its GitHub repository could not be ` +
+          `prepared: ${message}. The project itself is unaffected.`,
+      );
+
+      await this.audit.record({
+        event: AUDIT_EVENTS.PROJECT_GITHUB_REPOSITORY_FAILED,
+        organizationId: input.organizationId,
+        projectId: input.projectId,
+        userId: input.userId,
+        metadata: { reason: message },
+      });
+
+      return {
+        status: 'skipped',
+        repository: null,
+        url: null,
+        pushed: [],
+        reason: message,
+      };
+    }
   }
 
   async findOne(user: AuthenticatedUser, projectId: string) {
@@ -1181,6 +1313,18 @@ export class ProjectsService {
     technicalName: string;
     repositoryPath: string;
     addonsPath: string;
+    /**
+     * The directory that IS the Git repository (ADR-039).
+     *
+     * For a scaffold the platform made itself, the repository root is the project
+     * directory and `addons/` sits inside it. For a directory the operator's
+     * create_project provisioned, the repository root is `addons/` itself. Callers
+     * that need a repository (the workspace layer) must use this, not
+     * `repositoryPath`: recording the project root for a provisioned project
+     * pointed the agent at a directory holding no `.git`, and every task on it
+     * failed at allocation with "is not a Git repository".
+     */
+    gitRootPath: string;
     provisioning: ScaffoldProvisioningInfo | null;
   }> {
     // on_premise takes its code from a scaffolded local directory; an ai_project
@@ -1272,7 +1416,14 @@ export class ProjectsService {
         `on branch ${input.defaultBranch}; addons at ${addonsPath}`,
     );
 
-    return { technicalName: directoryName, repositoryPath, addonsPath, provisioning: null };
+    return {
+      technicalName: directoryName,
+      repositoryPath,
+      addonsPath,
+      // The scaffold made this repository at the project root, with addons/ inside.
+      gitRootPath: repositoryPath,
+      provisioning: null,
+    };
   }
 
   /**
@@ -1308,6 +1459,14 @@ export class ProjectsService {
     technicalName: string;
     repositoryPath: string;
     addonsPath: string;
+    /**
+     * The repository root, which for a provisioned project is `addons/` itself
+     * (ADR-039): the operator's script created the project directory with its own
+     * `config/`, `data/` and `logs/` beside a plain `addons/`, and the git init
+     * below happens *in* `addons/`. Callers that need a repository use this and
+     * not `repositoryPath` — see the same field's note on `scaffoldCustomAddon`.
+     */
+    gitRootPath: string;
     provisioning: ScaffoldProvisioningInfo;
   }> {
     const directoryName = deriveDirectoryName(input.projectName) ?? '';
@@ -1405,6 +1564,8 @@ export class ProjectsService {
       technicalName: directoryName,
       repositoryPath,
       addonsPath,
+      // The git repository is addons/ here, not the project directory (ADR-039).
+      gitRootPath: addonsPath,
       provisioning: {
         status: 'provisioned',
         port: result.port,
@@ -1530,7 +1691,7 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /** The selected on-premise directory, stored in a project's environment config. */
-function readOnPremisePath(
+export function readOnPremisePath(
   environmentConfig: Record<string, unknown> | null | undefined,
 ): string | null {
   if (!environmentConfig || typeof environmentConfig !== 'object') return null;

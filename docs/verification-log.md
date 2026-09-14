@@ -800,3 +800,79 @@ command that lies about its own result undermines all of them.
 
 The third is the one worth keeping: a suite that could not run has not passed, and counting it as
 skipped beside a green total is exactly how a broken build looks healthy.
+
+---
+
+## A created project's repository, and the guard that refused it (2026-09-14)
+
+Two things were verified against a real GitHub account and a real API, and one bug was found and
+fixed. Everything below is a command that was run and its returned result.
+
+**Environment:** the Cartenz host (`/opt/cartenz`), services `cartenz-api` and `cartenz-worker`
+running from `backend/dist`, a classic PAT for the `BintangLinked` user account.
+
+### Enabling repository creation
+
+- `.env` was given `GITHUB_TOKEN` and `GITHUB_OWNER=BintangLinked`, backed up first as
+  `.env.bak-github-token-<timestamp>`. `GITHUB_REPOSITORY_ENABLED=true` was already present.
+- The token was validated **before** being written: `GET /user` returned
+  `login: BintangLinked`, `type: User`, and `x-oauth-scopes` listed `repo` — so the classic-PAT
+  path is accepted, not only the fine-grained Administration+Contents PAT the template documents.
+- The credential was exercised end to end **without creating a real project**: the exact payload
+  `GitHubClient` posts (`{"name":...,"private":true,"auto_init":false}`) was sent to `/user/repos`
+  and returned `HTTP 201`; a `main` and a `development` branch were pushed to it with a
+  `GIT_ASKPASS` helper holding the token in the environment (never in argv or a URL), and
+  `git ls-remote --heads` showed both; `DELETE /repos/...` returned `204` and a follow-up `GET`
+  returned `404`. Nothing was left behind.
+- **A `.env` edit is invisible to a running service.** `/proc/<pid>/environ` for both units
+  reported `GITHUB_TOKEN` empty after the edit; after the restart it was present. This is why
+  "the token is set but projects get no repository" is the expected symptom of a missing restart,
+  not a code fault.
+
+### Backfilling the projects that predate the feature
+
+`node dist/scripts/backfill-github-repositories.js --dry-run` first, then without it:
+
+| Project | Result |
+| --- | --- |
+| `Bankcook` | created `BintangLinked/bankcook`, pushed `main`, `development`, `staging` |
+| `GuitarTuna` | created `BintangLinked/guitartuna`, pushed `main`, `development`, `staging` |
+| `Omaga` | created `BintangLinked/omaga`, pushed `main`, `development`, `staging` |
+| `Vania` | skipped — `odoo_online` project with no local directory, correctly |
+
+Confirmed independently against the GitHub API (`/repos/...` returned `private: true`,
+`default_branch: main`, and `/branches` listed all three) and against the app database
+(`project_connections` holds a `github` row per project with a non-null `secret_ref`).
+
+### The bug: a repository that existed, refused for not existing
+
+A development request on `Bankcook` — a project the run above had *just* given a repository —
+was refused with:
+
+> This project was created from a specification and has no repository yet. Connect one before
+> submitting a development request.
+
+The cause was two representations of the same fact. Creation records the repository as the
+project's `github` **connection**; `projects.repository_url` stays null. The submission guard in
+`tasks.service.ts` read only `repository_url`, so it refused every development request on exactly
+the projects creation had just finished connecting, and told the operator to connect a repository
+that was already connected.
+
+Fixed in `backend/src/modules/tasks/tasks.service.ts`: the guard now also consults the Git
+connection for an `ai_project`, using the same filter (`GIT_CONNECTION_TYPES`, a non-null
+`secret_ref`, oldest first) that supplies the workspace credential — so the guard cannot pass a
+project the workspace would then fail on.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Types | `npx tsc -p tsconfig.json --noEmit` (in `backend/`) | exit 0, no output |
+| Regression tests | `npm run test --workspace backend -- --testPathPattern="tasks.service"` | 9 passed |
+| Surrounding suites | `--testPathPattern="tasks.service\|github-client\|git-remote\|workspace-manager\|configuration"` | 5 suites, 71 passed |
+| Build | `npm run build --workspace backend` | exit 0; `gitConnectionFor` present in the compiled `dist/modules/tasks/tasks.service.js` |
+
+The four new cases in `tasks.service.spec.ts` are the ones that matter here: a project whose
+repository is a connection is permitted, one whose repository is a `repository_url` is permitted,
+one with neither is still refused, and a `chat` task with neither is still permitted.
+
+**Not yet run:** a development request submitted through the portal on the restarted API. The
+guard is proven not to fire; the rest of the task path was already covered by the suites above.

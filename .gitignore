@@ -45,3 +45,20 @@ venv/
 
 # Local workspaces created by the workspace manager
 workspaces/
+
+# Agent session state on the host the platform runs on: the operator's shell
+# profile, tool caches, editor state, and the Hermes install that drives an agent
+# session. None of it is part of the platform, and all of it is host-specific, so a
+# fresh clone must not inherit it. (.runtime/ and logs above are already ignored.)
+.hermes/
+.9router/
+.claude/
+.claude.json
+.cache/
+.config/
+.local/
+.npm/
+.bash_profile
+.profile
+.zshrc
+.gitconfig

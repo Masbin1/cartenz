@@ -106,6 +106,8 @@ export class TasksController {
   @Get('agent/capabilities')
   capabilities() {
     const pushEnabled = this.config.git.pushEnabled;
+    const autoPushOnTask = pushEnabled && this.config.git.autoPushOnTask;
+    const repositoryCreation = this.config.github.repositoryEnabled;
 
     return {
       tools: this.registry.describe(),
@@ -113,11 +115,36 @@ export class TasksController {
         pushEnabled,
         // Phrased for a person deciding whether to connect their repository.
         pushReason: pushEnabled
-          ? 'Pushing is enabled (GIT_PUSH_ENABLED=true). Pushes still require an approval.'
+          ? autoPushOnTask
+            ? 'Pushing is enabled (GIT_PUSH_ENABLED=true) and a task targeting development ' +
+              'or staging pushes as soon as it commits (GIT_AUTO_PUSH_ON_TASK=true). Any ' +
+              'other target waits for a push approval, and production cannot be targeted ' +
+              'at all (ADR-021).'
+            : 'Pushing is enabled (GIT_PUSH_ENABLED=true). Pushes still require an approval.'
           : 'Pushing is disabled (GIT_PUSH_ENABLED=false). The process layer refuses ' +
             '"git push" before a process is built, so no permission or approval can ' +
             'cause a push. Enabling it is an operator change to the server configuration.',
+        /** Development and staging work leaves the platform without a per-task approval. */
+        autoPushOnTask,
         sshHostKeyPolicy: this.config.git.sshHostKeyPolicy,
+      },
+      /**
+       * Whether a project created here also gets a repository on GitHub (ADR-041).
+       * Reported for the same reason as the push posture: a person should read this
+       * from the server rather than infer it from whether a project has a remote.
+       */
+      github: {
+        repositoryCreation,
+        owner: repositoryCreation ? this.config.github.owner : null,
+        visibility: this.config.github.visibility,
+        reason: repositoryCreation
+          ? 'A created project also gets a repository under ' +
+            `${this.config.github.owner ?? '(no owner)'} and its branches are pushed to it.`
+          : 'A created project gets no repository: set GITHUB_REPOSITORY_ENABLED=true with ' +
+            'GITHUB_TOKEN and GITHUB_OWNER to enable it (an operator change to the server ' +
+            'configuration). Pushing is ' +
+            (pushEnabled ? 'already enabled' : 'also disabled') +
+            ' on this server.',
       },
       taskStatuses: AGENT_TASK_STATUSES.map((status) => ({
         value: status,

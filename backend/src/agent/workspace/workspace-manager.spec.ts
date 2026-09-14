@@ -173,6 +173,26 @@ describe('on-premise workspace allocation', () => {
     ).rejects.toThrow(/not a Git repository/i);
   });
 
+  /**
+   * ADR-039. A project the operator's create_project provisioned keeps its
+   * repository in `addons/` and treats the project directory as a container for
+   * `config/`, `data/` and `logs/`. A project row recorded before that was
+   * distinguished names the container, so the repository has to be found inside it
+   * — otherwise every task on such a project fails at allocation.
+   */
+  it('takes the repository from addons/ when the selected directory is a provisioned project', async () => {
+    const provisioned = join(onPremiseRoot, 'guitartuna');
+    await mkdir(join(provisioned, 'addons', '.git'), { recursive: true });
+    await mkdir(join(provisioned, 'config'), { recursive: true });
+
+    const workspace = await manager().allocate(
+      input({ taskReference: 'task_4b', onPremiseProjectPath: provisioned }),
+    );
+
+    expect(workspace.repositoryPath).toBe(join(provisioned, 'addons'));
+    expect(workspace.simulated).toBe(false);
+  });
+
   it('refuses a dirty working tree so the customer’s changes are never committed', async () => {
     await expect(
       manager({ dirty: true }).allocate(input({ taskReference: 'task_5' })),

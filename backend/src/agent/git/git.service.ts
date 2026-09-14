@@ -627,6 +627,43 @@ export class GitService {
     return url.length > 0 ? url : null;
   }
 
+  /**
+   * Points a named remote at a URL, replacing whatever it pointed at (ADR-041).
+   *
+   * Idempotent on purpose: project creation is retried after a failure, and
+   * `remote add` against a name that already exists fails, so the existing remote is
+   * removed first and the removal's exit code deliberately ignored — "no such
+   * remote" is the normal case for a freshly scaffolded repository.
+   *
+   * The URL passes through the same `assertSafeRemoteUrl` a push uses, so nothing
+   * can be stored here that a push would later refuse, and a URL carrying an
+   * embedded credential is refused here rather than written into the repository's
+   * own config. The credential for a push is supplied per push, through the lease.
+   */
+  async setRemote(repositoryPath: string, name: string, url: string): Promise<void> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)) {
+      throw new Error(`"${name}" is not a usable git remote name.`);
+    }
+    const remote = assertSafeRemoteUrl(url, { allowLocal: this.config.git.allowLocalRemotes });
+
+    await this.run(repositoryPath, ['remote', 'remove', name]);
+    const added = await this.run(repositoryPath, ['remote', 'add', name, remote.url]);
+    if (added.exitCode !== 0) {
+      throw new GitCommandError(`remote add ${name}`, added.exitCode, summariseFailure(added));
+    }
+
+    // Read back rather than trusting the exit code: the point of this call is that
+    // the remote a push will use is the one that was asked for.
+    const stored = await this.run(repositoryPath, ['remote', 'get-url', name]);
+    if (stored.exitCode !== 0 || stored.stdout.trim() !== remote.url) {
+      throw new GitCommandError(
+        `remote get-url ${name}`,
+        stored.exitCode,
+        `the remote was set to "${stored.stdout.trim() || 'nothing'}" instead of "${remote.url}"`,
+      );
+    }
+  }
+
   /** Runs a git command inside a repository, with the hardening flags applied. */
   private run(
     repositoryPath: string,

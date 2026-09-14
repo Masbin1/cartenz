@@ -16,7 +16,8 @@
     "test:watch": "jest --watch",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "ts-node -r tsconfig-paths/register src/core/database/migrate.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "github:backfill": "node dist/scripts/backfill-github-repositories.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.114",
