@@ -3,6 +3,7 @@ import {
   DocumentExtractionError,
   extractDocumentText,
   isAcceptedDocumentMimeType,
+  isAcceptedImageMimeType,
   normalizeMimeType,
 } from './document-extraction';
 
@@ -25,6 +26,21 @@ describe('document-extraction', () => {
         ),
       ).toBe(true);
       expect(isAcceptedDocumentMimeType('application/octet-stream')).toBe(false);
+    });
+  });
+
+  describe('isAcceptedImageMimeType', () => {
+    it('accepts the four documented image types only (ADR-042)', () => {
+      expect(isAcceptedImageMimeType('image/png')).toBe(true);
+      expect(isAcceptedImageMimeType('image/jpeg')).toBe(true);
+      expect(isAcceptedImageMimeType('image/webp')).toBe(true);
+      expect(isAcceptedImageMimeType('image/gif')).toBe(true);
+      expect(isAcceptedImageMimeType('image/svg+xml')).toBe(false);
+      expect(isAcceptedImageMimeType('application/pdf')).toBe(false);
+    });
+
+    it('does not treat an image type as a document type', () => {
+      expect(isAcceptedDocumentMimeType('image/png')).toBe(false);
     });
   });
 

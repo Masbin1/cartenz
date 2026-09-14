@@ -11,6 +11,7 @@ import {
   ModelProviderError,
   type ModelProvider,
   type ModelResult,
+  type PromptPart,
   type StructuredRequest,
   type ToolLoopOutcome,
   type ToolLoopRequest,
@@ -178,9 +179,50 @@ export class AiSdkModelProvider implements ModelProvider {
     return compatible(settings.model);
   }
 
+  /**
+   * Builds the SDK call's message input from prompt parts (ADR-042).
+   *
+   * With no image attachment this returns `{ prompt: <text> }` exactly as
+   * before — the text-only path is byte-for-byte unchanged, so every existing
+   * task produces the same request. When one or more parts carry an image, it
+   * returns a single user `message` whose content is the assembled text followed
+   * by one image block per attachment, which both the Anthropic and
+   * OpenAI-compatible bindings accept and a multimodal model can see.
+   *
+   * The image bytes are the operator's own pasted input (ADR-042 point 5), the
+   * same trust class as the prompt; they are not repository egress and do not
+   * pass the text data boundary.
+   */
+  private buildInput(
+    parts: readonly PromptPart[],
+    nonce: string,
+  ):
+    | { prompt: string }
+    | { messages: { role: 'user'; content: unknown[] }[] } {
+    const prompt = assemblePrompt(parts, nonce);
+    const images = parts.filter(
+      (part): part is PromptPart & { image: NonNullable<PromptPart['image']> } =>
+        part.image !== undefined,
+    );
+
+    if (images.length === 0) {
+      return { prompt: prompt.text };
+    }
+
+    const content: unknown[] = [{ type: 'text', text: prompt.text }];
+    for (const part of images) {
+      content.push({
+        type: 'image',
+        image: `data:${part.image.mimeType};base64,${part.image.base64}`,
+      });
+    }
+
+    return { messages: [{ role: 'user', content }] };
+  }
+
   async generateStructured<T>(request: StructuredRequest<T>): Promise<ModelResult<T>> {
     const nonce = randomUUID().slice(0, 8);
-    const prompt = assemblePrompt(request.parts, nonce);
+    const input = this.buildInput(request.parts, nonce);
     const startedAt = Date.now();
 
     /**
@@ -195,7 +237,7 @@ export class AiSdkModelProvider implements ModelProvider {
     const options = {
       model: this.language,
       system: request.system,
-      prompt: prompt.text,
+      ...input,
       schema: request.schema,
       schemaName: request.schemaName,
       temperature: this.config.ai.temperature,
@@ -247,7 +289,7 @@ export class AiSdkModelProvider implements ModelProvider {
 
   async runToolLoop(request: ToolLoopRequest): Promise<ModelResult<ToolLoopOutcome>> {
     const nonce = randomUUID().slice(0, 8);
-    const prompt = assemblePrompt(request.parts, nonce);
+    const input = this.buildInput(request.parts, nonce);
     const startedAt = Date.now();
 
     let toolCalls = 0;
@@ -289,16 +331,22 @@ export class AiSdkModelProvider implements ModelProvider {
     );
 
     try {
-      const result = await generateText({
+      // The input is a union of { prompt } | { messages }; generateText accepts
+      // either, but the union spread defeats its overload selection, so the
+      // options are assembled and cast — the same accommodation generateObject
+      // needs above. Only the compile-time shape is loosened; the SDK validates
+      // the request at runtime.
+      const textOptions = {
         model: this.language,
         system: request.system,
-        prompt: prompt.text,
+        ...input,
         tools,
         stopWhen: stepCountIs(request.maxSteps),
         temperature: this.config.ai.temperature,
         maxOutputTokens: request.maxTokens ?? this.config.ai.maxOutputTokens,
         abortSignal: AbortSignal.timeout(this.config.ai.requestTimeoutMs),
-      });
+      };
+      const result = await generateText(textOptions as never);
 
       const steps = result.steps?.length ?? 1;
       if (steps >= request.maxSteps && !haltReason) {

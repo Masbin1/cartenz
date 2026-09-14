@@ -20,6 +20,16 @@ export interface PromptPart {
    * the assembled prompt (ADR-020): a hint to the model, not a control.
    */
   readonly untrusted?: boolean;
+  /**
+   * An image attachment (ADR-042). When set, the part carries an image the
+   * operator pasted; the provider sends it to a multimodal model as an image
+   * content block rather than as text. `content` still holds the text label
+   * (e.g. `[Image: mockup.png]`) so a text-only assembly still names it.
+   */
+  readonly image?: {
+    readonly base64: string;
+    readonly mimeType: string;
+  };
 }
 
 export interface ModelUsage {

@@ -465,9 +465,17 @@ export const projectDocuments = pgTable(
     /**
      * The document as extracted text (ADR-030). The original binary is not
      * stored. Bounded on write; a document whose extraction yields no text is
-     * refused rather than stored empty.
+     * refused rather than stored empty. For an image attachment (ADR-042) this
+     * holds a short placeholder (`[Image: <name>]`) and the bytes live in
+     * `imageDataBase64` instead.
      */
     textContent: text('text_content').notNull(),
+    /**
+     * Base64 of the original image bytes for an image attachment (ADR-042), null
+     * for a text document. Set together with an `image/*` MIME type; the pair is
+     * what distinguishes an image attachment from a text one.
+     */
+    imageDataBase64: text('image_data_base64'),
     ...timestamps,
   },
   (table) => ({

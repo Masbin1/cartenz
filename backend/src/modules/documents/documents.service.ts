@@ -13,6 +13,9 @@ import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import {
   DocumentExtractionError,
   extractDocumentText,
+  isAcceptedImageMimeType,
+  normalizeMimeType,
+  IMAGE_MAX_FILE_BYTES,
 } from './document-extraction';
 
 /** A document as the list view shows it: metadata, never the text. */
@@ -55,14 +58,33 @@ export class DocumentsService {
       throw new BadRequestException('The uploaded file is empty.');
     }
 
+    const mimeType = normalizeMimeType(file.mimetype);
+    const isImage = isAcceptedImageMimeType(mimeType);
+
     let textContent: string;
-    try {
-      textContent = await extractDocumentText(file.mimetype, file.buffer);
-    } catch (error) {
-      if (error instanceof DocumentExtractionError) {
-        throw new BadRequestException(error.message);
+    let imageDataBase64: string | null = null;
+
+    if (isImage) {
+      // An image is not text-extracted (ADR-042): its bytes are stored so a
+      // multimodal model can see it. The text column holds a placeholder so the
+      // NOT NULL invariant and the list/read views keep working, and a
+      // non-vision model still learns an image was attached.
+      if (file.buffer.length > IMAGE_MAX_FILE_BYTES) {
+        throw new BadRequestException(
+          `The image is ${Math.round(file.buffer.length / 1024 / 1024)} MiB; the limit is 5 MiB.`,
+        );
       }
-      throw error;
+      imageDataBase64 = file.buffer.toString('base64');
+      textContent = `[Image: ${file.originalname || 'image'}]`;
+    } else {
+      try {
+        textContent = await extractDocumentText(file.mimetype, file.buffer);
+      } catch (error) {
+        if (error instanceof DocumentExtractionError) {
+          throw new BadRequestException(error.message);
+        }
+        throw error;
+      }
     }
 
     const [row] = await this.database.db
@@ -71,10 +93,11 @@ export class DocumentsService {
         organizationId: context.organizationId,
         projectId,
         uploadedByUserId: user.userId,
-        filename: file.originalname || 'document',
+        filename: file.originalname || (isImage ? 'image' : 'document'),
         mimeType: file.mimetype,
         byteSize: file.size,
         textContent,
+        imageDataBase64,
       })
       .returning({
         id: projectDocuments.id,
@@ -191,7 +214,15 @@ export class DocumentsService {
   async loadForTask(
     projectId: string,
     documentIds: readonly string[],
-  ): Promise<readonly { id: string; filename: string; content: string }[]> {
+  ): Promise<
+    readonly {
+      id: string;
+      filename: string;
+      content: string;
+      imageDataBase64: string | null;
+      mimeType: string;
+    }[]
+  > {
     if (documentIds.length === 0) return [];
 
     const rows = await this.database.db
@@ -199,6 +230,8 @@ export class DocumentsService {
         id: projectDocuments.id,
         filename: projectDocuments.filename,
         textContent: projectDocuments.textContent,
+        imageDataBase64: projectDocuments.imageDataBase64,
+        mimeType: projectDocuments.mimeType,
       })
       .from(projectDocuments)
       .where(
@@ -212,6 +245,12 @@ export class DocumentsService {
     return documentIds
       .map((id) => byId.get(id))
       .filter((r): r is NonNullable<typeof r> => r !== undefined)
-      .map((r) => ({ id: r.id, filename: r.filename, content: r.textContent }));
+      .map((r) => ({
+        id: r.id,
+        filename: r.filename,
+        content: r.textContent,
+        imageDataBase64: r.imageDataBase64,
+        mimeType: r.mimeType,
+      }));
   }
 }

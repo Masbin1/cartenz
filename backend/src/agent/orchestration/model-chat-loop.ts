@@ -56,8 +56,14 @@ export interface ChatLoopInput {
   /**
    * Documents attached to the task (ADR-030). Each is rendered as a prompt part
    * labelled with its filename and marked untrusted so the boundary redacts it.
+   * An image attachment (ADR-042) additionally carries its bytes so a multimodal
+   * model can see it.
    */
-  readonly documents?: readonly { name: string; content: string }[];
+  readonly documents?: readonly {
+    name: string;
+    content: string;
+    image?: { base64: string; mimeType: string };
+  }[];
   /** Read-only Odoo source prefixes available to this task (ADR-031). */
   readonly odooSourcePrefixes?: readonly string[];
   readonly run: ChatLoopToolRunner;
@@ -229,9 +235,10 @@ export class ChatLoop {
 
     for (const document of input.documents ?? []) {
       parts.push({
-        label: `Attached document: ${document.name}`,
+        label: document.image ? `Attached image: ${document.name}` : `Attached document: ${document.name}`,
         content: document.content,
-        untrusted: true,
+        untrusted: !document.image,
+        ...(document.image ? { image: document.image } : {}),
       });
     }
 

@@ -38,11 +38,22 @@ export interface ModelPlanningInput {
   readonly grantedTools: readonly string[];
   /**
    * Documents attached to the task (ADR-030). Rendered as untrusted prompt parts
-   * so the boundary redacts them like repository content.
+   * so the boundary redacts them like repository content; an image (ADR-042)
+   * rides as an image part instead.
    */
-  readonly documents?: readonly { name: string; content: string }[];
+  readonly documents?: readonly AttachedDocument[];
   /** Read-only Odoo source prefixes available to this task (ADR-031). */
   readonly odooSourcePrefixes?: readonly string[];
+}
+
+/**
+ * A document (or image) attached to the task (ADR-030, ADR-042). An image
+ * carries its bytes so a multimodal model can see it; a text document does not.
+ */
+export interface AttachedDocument {
+  readonly name: string;
+  readonly content: string;
+  readonly image?: { base64: string; mimeType: string };
 }
 
 /** A field as the plan needs to see it: enough to be true to the model, no rows. */
@@ -68,7 +79,7 @@ export interface OdooOnlinePlanningInput {
   readonly fields: readonly OdooFieldSummary[];
   readonly grantedTools: readonly string[];
   /** Documents attached to the task (ADR-030), rendered as untrusted parts. */
-  readonly documents?: readonly { name: string; content: string }[];
+  readonly documents?: readonly AttachedDocument[];
 }
 
 export interface PlanningOutcome {
@@ -192,9 +203,12 @@ export class ModelAgentPlanner {
 
     for (const document of input.documents ?? []) {
       parts.push({
-        label: `Attached document: ${document.name}`,
+        label: document.image
+          ? `Attached image: ${document.name}`
+          : `Attached document: ${document.name}`,
         content: document.content,
-        untrusted: true,
+        untrusted: !document.image,
+        ...(document.image ? { image: document.image } : {}),
       });
     }
 
@@ -318,9 +332,12 @@ export class ModelAgentPlanner {
 
     for (const document of input.documents ?? []) {
       parts.push({
-        label: `Attached document: ${document.name}`,
+        label: document.image
+          ? `Attached image: ${document.name}`
+          : `Attached document: ${document.name}`,
         content: document.content,
-        untrusted: true,
+        untrusted: !document.image,
+        ...(document.image ? { image: document.image } : {}),
       });
     }
 

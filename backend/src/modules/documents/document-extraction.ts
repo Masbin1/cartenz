@@ -29,8 +29,33 @@ export function isAcceptedDocumentMimeType(value: string): value is AcceptedDocu
   return (ACCEPTED_DOCUMENT_MIME_TYPES as readonly string[]).includes(value);
 }
 
+/**
+ * Image types the upload accepts (ADR-042). An image is not text-extracted; its
+ * bytes are stored so a multimodal model can see it. Kept separate from the
+ * document allowlist because the two are handled differently at every step.
+ */
+export const ACCEPTED_IMAGE_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+] as const;
+
+export type AcceptedImageMimeType = (typeof ACCEPTED_IMAGE_MIME_TYPES)[number];
+
+export function isAcceptedImageMimeType(value: string): value is AcceptedImageMimeType {
+  return (ACCEPTED_IMAGE_MIME_TYPES as readonly string[]).includes(value);
+}
+
 /** Whole-file cap: an upload larger than this is refused before extraction. */
 export const DOCUMENT_MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MiB
+
+/**
+ * Image cap (ADR-042): tighter than a document because the base64 lands in a row
+ * and in every model request that attaches it. A screenshot has no business
+ * being larger.
+ */
+export const IMAGE_MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MiB
 
 /** Extracted-text cap: a document longer than this is refused, not truncated. */
 export const DOCUMENT_MAX_TEXT_CHARS = 1024 * 1024; // 1 MiB

@@ -104,13 +104,25 @@ export class AgentWorkflow {
    */
   private async attachedDocuments(
     snapshot: TaskExecutionSnapshot,
-  ): Promise<readonly { name: string; content: string }[]> {
+  ): Promise<
+    readonly {
+      name: string;
+      content: string;
+      image?: { base64: string; mimeType: string };
+    }[]
+  > {
     if (snapshot.attachedDocumentIds.length === 0) return [];
     const rows = await this.documents.loadForTask(
       snapshot.projectId,
       snapshot.attachedDocumentIds,
     );
-    return rows.map((row) => ({ name: row.filename, content: row.content }));
+    return rows.map((row) => ({
+      name: row.filename,
+      content: row.content,
+      ...(row.imageDataBase64
+        ? { image: { base64: row.imageDataBase64, mimeType: row.mimeType } }
+        : {}),
+    }));
   }
 
   /** Advances a task as far as it can go, returning when it settles or suspends. */

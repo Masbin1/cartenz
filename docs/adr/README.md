@@ -39,3 +39,4 @@ with the condition under which it is retired.
 | [ADR-037](ADR-037-odoo-edition-per-project.md) | Odoo edition (Community or Enterprise) is chosen per project | Accepted |
 | [ADR-038](ADR-038-scaffold-staging-development-branches.md) | A scaffolded project is created with staging and development branches | Accepted |
 | [ADR-041](ADR-041-created-project-github-repository.md) | A created project gets a GitHub repository, and its pushes land in it | Accepted |
+| [ADR-042](ADR-042-image-attachments-vision.md) | Image attachments — paste a screenshot or mock-up and have the agent see it | Accepted |

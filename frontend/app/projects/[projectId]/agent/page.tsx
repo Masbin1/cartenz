@@ -240,6 +240,15 @@ export default function AgentWorkspacePage() {
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    await uploadFile(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  /**
+   * Uploads one file and attaches it. Shared by the file picker and the paste
+   * handler so a pasted screenshot and a chosen file take the same path.
+   */
+  const uploadFile = async (file: File) => {
     setUploading(true);
     setError(null);
     try {
@@ -250,8 +259,30 @@ export default function AgentWorkspacePage() {
       setError(caught instanceof ApiError ? caught.message : 'The document could not be uploaded.');
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  /**
+   * Pasting an image into the prompt uploads and attaches it (ADR-042). A paste
+   * that carries no image is left alone, so ordinary text paste is unaffected.
+   */
+  const handlePaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageItem = Array.from(event.clipboardData.items).find((item) =>
+      item.type.startsWith('image/'),
+    );
+    if (!imageItem) return;
+    const file = imageItem.getAsFile();
+    if (!file) return;
+    event.preventDefault();
+    // Clipboard images often arrive named "image.png" or unnamed; give it a
+    // stable, unique name so the attachment list is readable.
+    const named =
+      file.name && file.name !== 'image.png'
+        ? file
+        : new File([file], `pasted-${Date.now()}.${file.type.split('/')[1] || 'png'}`, {
+            type: file.type,
+          });
+    await uploadFile(named);
   };
 
   const removeDocument = async (documentId: string) => {
@@ -406,6 +437,7 @@ export default function AgentWorkspacePage() {
                   void submitPrompt(event as unknown as React.FormEvent);
                 }
               }}
+              onPaste={(event) => void handlePaste(event)}
               placeholder="Add a customer reference field to Sales Order and Invoice."
               className="field-input resize-none"
             />
@@ -419,14 +451,14 @@ export default function AgentWorkspacePage() {
             <div className="mt-3 border-t border-surface-border pt-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-2xs font-medium text-content-subtle">
-                  Attach documents (PRD, spec) — {attachedIds.size} selected
+                  Attach documents or images — {attachedIds.size} selected
                 </span>
                 <label className="btn-ghost cursor-pointer px-2 py-1 text-2xs">
-                  {uploading ? 'Uploading…' : 'Upload document'}
+                  {uploading ? 'Uploading…' : 'Upload file'}
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".md,.markdown,.txt,.pdf,.docx,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    accept=".md,.markdown,.txt,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/gif"
                     onChange={handleUpload}
                     disabled={uploading}
                     className="hidden"
@@ -454,6 +486,11 @@ export default function AgentWorkspacePage() {
                           className="accent-[var(--color-accent)]"
                         />
                         <span className="truncate font-mono">{document.filename}</span>
+                        {document.mimeType.startsWith('image/') ? (
+                          <span className="shrink-0 rounded bg-accent/10 px-1 text-[10px] uppercase tracking-wide text-accent">
+                            image
+                          </span>
+                        ) : null}
                         <span className="shrink-0 text-content-muted">
                           {Math.max(1, Math.round(document.byteSize / 1024))} KB
                         </span>
@@ -471,7 +508,9 @@ export default function AgentWorkspacePage() {
                 </ul>
               )}
               <p className="mt-1.5 text-2xs text-content-muted">
-                Markdown, plain text, PDF and DOCX, up to 10 MiB.
+                Markdown, plain text, PDF, DOCX and images (PNG, JPEG, WebP, GIF). Documents up
+                to 10 MiB, images up to 5 MiB. You can also paste a screenshot straight into the
+                box above.
               </p>
             </div>
             {environments.length > 0 ? (
