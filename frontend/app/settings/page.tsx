@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRequireAuth } from '@/lib/auth';
 import { ApiError, api } from '@/lib/api';
 import { AppShell } from '@/components/ui/app-shell';
+import { MembersPanel } from '@/components/organizations/members-panel';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
 import type {
@@ -619,7 +620,7 @@ export default function OrganizationSettingsPage() {
         </select>
         <p className="mt-1.5 text-2xs text-content-subtle">
           DeepSeek rejects response_format json_schema and accepts only json_object,
-          so it must be "no schema" and the SDK checks the shape instead.
+          so it must be &quot;no schema&quot; and the SDK checks the shape instead.
         </p>
       </div>
 
@@ -661,6 +662,14 @@ export default function OrganizationSettingsPage() {
 
       {error ? <Alert tone="error">{error}</Alert> : null}
       {notice ? <Alert tone="success">{notice}</Alert> : null}
+
+      {organizationId && organization && user ? (
+        <MembersPanel
+          organizationId={organizationId}
+          currentUserId={user.id}
+          viewerRole={organization.role}
+        />
+      ) : null}
 
       <section className="panel">
         <div className="panel-header">

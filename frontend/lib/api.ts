@@ -9,6 +9,8 @@ import type {
   ModelProviderList,
   ModelProviderRow,
   ModelProviderTestResult,
+  OrganizationMember,
+  OrganizationRole,
   PendingApprovalSummary,
   ProjectDetail,
   ProjectDocument,
@@ -246,9 +248,29 @@ export const api = {
         body,
       }),
     members: (organizationId: string) =>
-      request<
-        { userId: string; email: string; name: string; role: string; joinedAt: string }[]
-      >(`/organizations/${organizationId}/members`),
+      request<OrganizationMember[]>(`/organizations/${organizationId}/members`),
+
+    /**
+     * Adds an existing account to the organisation. The person must already have
+     * registered — the server refuses an email with no account rather than
+     * issuing credentials on their behalf (ADR-015).
+     */
+    addMember: (organizationId: string, body: { email: string; role: OrganizationRole }) =>
+      request<OrganizationMember>(`/organizations/${organizationId}/members`, {
+        method: 'POST',
+        body,
+      }),
+
+    updateMemberRole: (organizationId: string, memberUserId: string, role: OrganizationRole) =>
+      request<{ userId: string; role: OrganizationRole }>(
+        `/organizations/${organizationId}/members/${memberUserId}`,
+        { method: 'PATCH', body: { role } },
+      ),
+
+    removeMember: (organizationId: string, memberUserId: string) =>
+      request<void>(`/organizations/${organizationId}/members/${memberUserId}`, {
+        method: 'DELETE',
+      }),
     auditLogs: (organizationId: string, limit = 50) =>
       request<AuditLogEntry[]>(
         `/organizations/${organizationId}/audit-logs?limit=${limit}`,

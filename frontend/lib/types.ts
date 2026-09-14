@@ -62,6 +62,14 @@ export interface CurrentUser extends AuthUser {
   organizations: OrganizationMembership[];
 }
 
+export interface OrganizationMember {
+  userId: string;
+  email: string;
+  name: string;
+  role: OrganizationRole;
+  joinedAt: string;
+}
+
 export interface ProjectSummary {
   id: string;
   name: string;
