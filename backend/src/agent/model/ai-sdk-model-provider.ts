@@ -2,7 +2,15 @@ import { Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateObject, generateText, jsonSchema, NoObjectGeneratedError, stepCountIs, tool } from 'ai';
+import {
+  asSchema,
+  generateObject,
+  generateText,
+  jsonSchema,
+  NoObjectGeneratedError,
+  stepCountIs,
+  tool,
+} from 'ai';
 import type { LanguageModel } from 'ai';
 import type { AppConfig } from '../../core/config/configuration';
 import { isLoopbackUrl } from '../../core/enums';
@@ -71,6 +79,17 @@ export class AiSdkModelProvider implements ModelProvider {
    * llama.cpp, for which a keyless row is correct.
    */
   private usingPlaceholderKey = false;
+
+  /**
+   * True when this endpoint is asked for JSON without a schema (`json_object`).
+   *
+   * Set for an OpenAI-compatible endpoint with structured outputs off, which is
+   * the mode DeepSeek and an agent-backed endpoint are configured in. It changes
+   * what generateStructured has to say for itself: in `json_schema` mode the
+   * endpoint is told the shape, in `json_object` mode nobody has told it
+   * anything, so the prompt must.
+   */
+  private jsonObjectMode = false;
 
   readonly id: string;
   readonly model: string;
@@ -142,6 +161,7 @@ export class AiSdkModelProvider implements ModelProvider {
 
     const structuredOutputsEnabled =
       settings.structuredOutputs ?? this.config.ai.structuredOutputs;
+    this.jsonObjectMode = !structuredOutputsEnabled;
 
     const compatible = createOpenAICompatible({
       name: 'linkederp-self-hosted',
@@ -226,6 +246,24 @@ export class AiSdkModelProvider implements ModelProvider {
     const startedAt = Date.now();
 
     /**
+     * In `json_object` mode the schema never reaches the endpoint, so the prompt
+     * carries it (ADR-023). Two things depend on this and both were failing:
+     *
+     * - DeepSeek refuses `response_format: json_object` outright unless the
+     *   prompt contains the word "json", answering HTTP 400 "Prompt must contain
+     *   the word 'json' in some form". Nothing in the planning prompts said it,
+     *   so every DeepSeek plan failed, and a 400 does not fail over.
+     * - An agent-backed endpoint is not told the shape by anything else and
+     *   replies in prose, which cannot be parsed into a plan.
+     *
+     * In `json_schema` mode this is not added: the endpoint has the schema and
+     * enforces it, and repeating it would only spend tokens.
+     */
+    const system = this.jsonObjectMode
+      ? `${request.system}\n\n${await jsonObjectInstruction(request.schema, request.schemaName)}`
+      : request.system;
+
+    /**
      * The schema is passed opaquely and the result asserted back.
      *
      * generateObject infers its return type from the schema, and the plan schema
@@ -236,13 +274,24 @@ export class AiSdkModelProvider implements ModelProvider {
      */
     const options = {
       model: this.language,
-      system: request.system,
+      system,
       ...input,
       schema: request.schema,
       schemaName: request.schemaName,
       temperature: this.config.ai.temperature,
       maxOutputTokens: request.maxTokens ?? this.config.ai.maxOutputTokens,
       abortSignal: AbortSignal.timeout(this.config.ai.requestTimeoutMs),
+      /**
+       * Recovers the object from an endpoint that answered with one and said
+       * something either side of it — a sentence of introduction, a markdown
+       * fence, a closing offer to help. An agent-backed endpoint does this even
+       * when told not to, and the SDK parses the whole response or nothing.
+       *
+       * It only ever narrows the text to a JSON object it found: the schema is
+       * still validated afterwards, so this cannot turn a wrong answer into an
+       * accepted one.
+       */
+      experimental_repairText: async ({ text }: { text: string }) => extractJsonObject(text),
     };
 
     // One retry, and only for NoObjectGeneratedError: the model answered but the
@@ -398,6 +447,7 @@ export class AiSdkModelProvider implements ModelProvider {
       retryable,
       status,
       NoObjectGeneratedError.isInstance(error) || name === 'ZodError',
+      this.model,
     );
   }
 
@@ -537,5 +587,82 @@ function withJsonObjectMode(body: Record<string, unknown>): Record<string, unkno
   const withStream = withExplicitStream(body);
   // A caller that already set a response_format knows better than this default.
   if ('response_format' in withStream) return withStream;
+  /**
+   * The tool loop is not a JSON-mode call and must not be turned into one. It
+   * asks for tool calls and a closing sentence, not an object, and its prompt
+   * never mentions JSON - which is exactly what DeepSeek rejects with HTTP 400
+   * when `json_object` is set. This used to be applied to every request through
+   * the model, so an implementation or chat turn on a `json_object` provider
+   * failed before it began.
+   */
+  if (Array.isArray(withStream.tools) && withStream.tools.length > 0) return withStream;
   return { ...withStream, response_format: { type: 'json_object' } };
+}
+
+/**
+ * What a `json_object` endpoint has to be told, because nothing else tells it.
+ *
+ * The schema is rendered into the prompt rather than described, so the answer is
+ * judged against the same shape the SDK validates. The word "json" is present by
+ * construction, which is what DeepSeek's request validator looks for.
+ */
+async function jsonObjectInstruction(
+  schema: StructuredRequest<unknown>['schema'],
+  schemaName: string,
+): Promise<string> {
+  const resolved = await Promise.resolve(asSchema(schema).jsonSchema);
+
+  return [
+    '# Response format',
+    'Answer with a single JSON object and nothing else. No sentence before it, no',
+    'sentence after it, no markdown code fence, no explanation: the entire response',
+    'must parse as JSON.',
+    '',
+    `The object must satisfy this JSON schema (${schemaName}):`,
+    JSON.stringify(resolved),
+  ].join('\n');
+}
+
+/**
+ * The first complete JSON object in a response that also contains other text.
+ *
+ * Scans rather than matching a pattern, because a plan's own strings contain
+ * braces - a regular expression stops at the first `}` inside a code snippet and
+ * yields something that parses but is not the object. Quoted text and escapes are
+ * tracked so a brace inside a string does not change the depth.
+ *
+ * Returns null when there is no object to find, which leaves the SDK's original
+ * parse failure as the reported error rather than replacing it with a worse one.
+ */
+function extractJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (inString) {
+      if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+
+    if (character === '"') inString = true;
+    else if (character === '{') depth += 1;
+    else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+
+  return null;
 }

@@ -1394,12 +1394,19 @@ export class AgentWorkflow {
     const attemptedProvider =
       error instanceof ModelProviderError ? error.provider : this.config.ai.provider;
 
+    // And its model, for the same reason. A chain's members have different ones,
+    // so recording the environment's model here reported a failure against an
+    // endpoint that had not been called - the portal named `hermes-agent` for a
+    // request DeepSeek had refused.
+    const attemptedModel =
+      (error instanceof ModelProviderError ? error.model : undefined) ?? this.config.ai.model;
+
     await this.modelCalls.record({
       taskId: snapshot.taskId,
       organizationId: snapshot.organizationId,
       operation,
       providerId: attemptedProvider,
-      model: this.config.ai.model,
+      model: attemptedModel,
       calledExternalService: attemptedProvider !== 'mock',
       inputTokens: 0,
       outputTokens: 0,

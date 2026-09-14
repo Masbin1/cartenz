@@ -182,3 +182,39 @@ does authenticate.
 | A third-party endpoint with no key is still refused | PASS |
 | An `openai-compatible` endpoint with no model name is refused, naming examples | PASS |
 | `localhost.example.com` is not treated as local | PASS |
+
+### An endpoint without structured outputs must be told what JSON means
+
+A row with structured outputs off is sent `response_format: json_object`, which says "return JSON"
+without saying what shape. Two things followed from nobody saying the rest.
+
+**DeepSeek refused the request.** Its API requires the prompt to contain the word "json" before it
+will accept `json_object`, and answered `400 Prompt must contain the word 'json' in some form`.
+Neither the system prompt nor the planning instruction said it, so every plan on that row failed —
+and a 400 stops the chain rather than failing over, because a malformed request is normally a fact
+about the request rather than the provider. The planning prompt now carries a response-format
+section naming the schema, so the word is present by construction and the endpoint is told the shape
+the SDK is going to validate against.
+
+**The tool loop was put into JSON mode too.** `transformRequestBody` is set on the model, not on the
+call, so the same `response_format` was attached to the implementation and chat turns — which ask
+for tool calls and a closing sentence, not an object, and whose prompt could never contain the word
+DeepSeek was looking for. It is now omitted whenever the request carries tools.
+
+**An agent-backed endpoint answers with prose around the object.** A Hermes-style endpoint ignores
+`response_format` and introduces its answer before it and offers to continue after it. The object is
+still there, so `generateObject` is given a repair step that narrows the text to the first complete
+JSON object. The schema is still validated afterwards: this recovers a well-formed answer that was
+merely wrapped, and cannot turn a wrong one into an accepted one.
+
+**A failure named the wrong model.** The task record took its model from the environment, so a
+DeepSeek row refusing a request was recorded and displayed as the environment's `hermes-agent` —
+sending a person to read the logs of an endpoint that had not been called. `ModelProviderError` now
+carries the model that failed, and the environment's is only the fallback.
+
+| What | Result |
+| --- | --- |
+| A `json_object` request contains the word "json" and the schema | PASS |
+| The tool loop is sent with no `response_format` | PASS |
+| An object wrapped in prose and a code fence is recovered | PASS |
+| A plan is still asked for with `response_format: json_object` | PASS |

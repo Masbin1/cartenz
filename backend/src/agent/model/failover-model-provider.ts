@@ -136,6 +136,9 @@ export class FailoverModelProvider implements ModelProvider {
         `(${primary.member.label}): ${primary.error.message}` +
         (others ? ` Then ${others}` : ''),
       retryable,
+      undefined,
+      false,
+      primary.member.provider.model,
     );
   }
 }

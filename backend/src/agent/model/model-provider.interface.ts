@@ -144,6 +144,15 @@ export class ModelProviderError extends Error {
      * provider rather than about the request.
      */
     readonly schemaMismatch: boolean = false,
+    /**
+     * The model that failed, when the failure reached one.
+     *
+     * Kept because a chain's members have different models, and the task record
+     * used to report the environment's model whatever had actually been called.
+     * A DeepSeek row failing was recorded as the environment's `hermes-agent`,
+     * which sent a person to read the wrong endpoint's logs.
+     */
+    readonly model?: string,
   ) {
     super(message);
     this.name = 'ModelProviderError';
