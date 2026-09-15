@@ -8,17 +8,20 @@ import {
 } from '@nestjs/common';
 import { mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { and, count, desc, eq, isNull, notInArray, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import {
   agentTasks,
+  projectAccessRequests,
   projectConnections,
   projectEnvironments,
+  projectMembers,
   projectSpecifications,
   projects,
   secretRecords,
 } from '../../core/database/schema';
 import { AuthorizationService } from '../../core/authz/authorization.service';
+import { decideProjectAccess } from '../../core/authz/project-access';
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import {
@@ -98,6 +101,35 @@ interface ScaffoldProvisioningInfo {
  * the authorisation service returned, so a project can only be reached through an
  * organisation the caller belongs to.
  */
+/**
+ * A project row as the list returns it, with the fields a locked row withholds.
+ *
+ * Exported and pure so the redaction can be asserted without a database - it is
+ * the part of this feature most likely to be quietly undone by someone adding a
+ * field to the select.
+ */
+export function redactLockedProject<
+  T extends {
+    description: string | null;
+    repositoryUrl: string | null;
+    taskCount: number;
+    openTaskCount: number;
+  },
+>(row: T, hasAccess: boolean) {
+  if (hasAccess) {
+    return { ...row, hasAccess: true };
+  }
+
+  return {
+    ...row,
+    description: null,
+    repositoryUrl: null,
+    taskCount: null,
+    openTaskCount: null,
+    hasAccess: false,
+  };
+}
+
 @Injectable()
 export class ProjectsService {
   private readonly logger = new Logger(ProjectsService.name);
@@ -232,13 +264,13 @@ export class ProjectsService {
   }
 
   async list(user: AuthenticatedUser, query: ListProjectsQueryDto) {
-    await this.authz.requireOrganizationMember(user, query.organizationId);
+    const membership = await this.authz.requireOrganizationMember(user, query.organizationId);
 
     const where = query.includeArchived
       ? eq(projects.organizationId, query.organizationId)
       : and(eq(projects.organizationId, query.organizationId), isNull(projects.archivedAt));
 
-    return this.database.db
+    const rows = await this.database.db
       .select({
         id: projects.id,
         name: projects.name,
@@ -248,6 +280,7 @@ export class ProjectsService {
         defaultBranch: projects.defaultBranch,
         repositoryUrl: projects.repositoryUrl,
         archivedAt: projects.archivedAt,
+        createdByUserId: projects.createdByUserId,
         createdAt: projects.createdAt,
         updatedAt: projects.updatedAt,
         taskCount: sql<number>`(
@@ -262,6 +295,72 @@ export class ProjectsService {
       .from(projects)
       .where(where)
       .orderBy(desc(projects.updatedAt));
+
+    /**
+     * Every project in the organisation is listed, including the ones this
+     * caller cannot open (ADR-043). What is withheld is access, not existence -
+     * so the two lookups below are read once for the whole page rather than once
+     * per row.
+     */
+    const projectIds = rows.map((row) => row.id);
+
+    const grantedIds = new Set(
+      projectIds.length === 0
+        ? []
+        : (
+            await this.database.db
+              .select({ projectId: projectMembers.projectId })
+              .from(projectMembers)
+              .where(
+                and(
+                  eq(projectMembers.userId, user.userId),
+                  inArray(projectMembers.projectId, projectIds),
+                ),
+              )
+          ).map((row) => row.projectId),
+    );
+
+    // Only a request that still tells the portal something is worth fetching: a
+    // pending one ("awaiting approval") or a rejected one (which shows the note
+    // and allows asking again). An approved one is indistinguishable from the
+    // grant it produced.
+    const requestStatuses = new Map<string, 'pending' | 'rejected'>(
+      projectIds.length === 0
+        ? []
+        : (
+            await this.database.db
+              .select({
+                projectId: projectAccessRequests.projectId,
+                status: projectAccessRequests.status,
+              })
+              .from(projectAccessRequests)
+              .where(
+                and(
+                  eq(projectAccessRequests.userId, user.userId),
+                  inArray(projectAccessRequests.projectId, projectIds),
+                  inArray(projectAccessRequests.status, ['pending', 'rejected']),
+                ),
+              )
+              .orderBy(desc(projectAccessRequests.createdAt))
+          ).map((row): [string, 'pending' | 'rejected'] => [
+            row.projectId,
+            row.status as 'pending' | 'rejected',
+          ]),
+    );
+
+    return rows.map(({ createdByUserId, ...row }) => {
+      const decision = decideProjectAccess({
+        role: membership.role,
+        userId: user.userId,
+        createdByUserId,
+        hasGrant: grantedIds.has(row.id),
+      });
+
+      return {
+        ...redactLockedProject(row, decision.allowed),
+        accessRequestStatus: decision.allowed ? null : requestStatuses.get(row.id) ?? null,
+      };
+    });
   }
 
   /** Connect an existing project. Requires the developer role or above. */

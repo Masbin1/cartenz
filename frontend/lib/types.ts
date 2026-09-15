@@ -73,16 +73,47 @@ export interface OrganizationMember {
 export interface ProjectSummary {
   id: string;
   name: string;
+  /** Null when the caller cannot open the project (ADR-043). */
   description: string | null;
   projectType: ProjectType;
   odooVersion: string | null;
   defaultBranch: string;
+  /** Null when the caller cannot open the project. */
   repositoryUrl: string | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  taskCount: number;
-  openTaskCount: number;
+  /** Null when the caller cannot open the project. */
+  taskCount: number | null;
+  openTaskCount: number | null;
+  /** Whether this caller may open the project at all. */
+  hasAccess: boolean;
+  /** Their standing request, when they have one worth showing. */
+  accessRequestStatus: 'pending' | 'rejected' | null;
+}
+
+/** A member of the organisation, as the project access panel sees them (ADR-043). */
+export interface ProjectAccessMember {
+  userId: string;
+  email: string;
+  name: string;
+  role: OrganizationRole;
+  hasAccess: boolean;
+  /** Where the access comes from: their rank, having created it, or a grant. */
+  source: 'role' | 'creator' | 'grant' | 'none';
+  /** Only a grant can be taken away. Rank and authorship cannot. */
+  revocable: boolean;
+}
+
+export interface PendingAccessRequest {
+  id: string;
+  projectId: string;
+  projectName: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  reason: string | null;
+  createdAt: string;
 }
 
 export interface ProjectConnection {
