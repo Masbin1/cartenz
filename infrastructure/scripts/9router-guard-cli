@@ -1,0 +1,98 @@
+#!/usr/bin/env node
+/**
+ * Guard wrapper for the global `9router` CLI — shadows /usr/bin/9router (an
+ * npm-managed symlink into /usr/lib/node_modules/9router/cli.js). Install to
+ * /usr/local/bin/9router so PATH wins; `npm update -g 9router` never touches it.
+ *
+ * Typing `9router` here gives the same "Choose Interface" menu, but the safe
+ * implementation (9router-menu.js) instead of the vendor launcher flow. The
+ * vendor flow runs killAllAppProcesses() — `kill -9` on every process whose ps
+ * line contains "next-server", cartenz-portal included — plus killProcessOnPort()
+ * (`lsof -ti:20128`, which as root kills 9router.service's own server) BEFORE its
+ * menu appears, then spawns a second server on 0.0.0.0:20128 with data dir
+ * ~/.9router. Orphan that child and the port is held forever while the unit
+ * crash-loops. Never again by accident:
+ *
+ *   9router            Choose Interface menu (Web UI / Terminal UI / Tray / Exit)
+ *   9router tui        Terminal UI straight away, against the running gateway
+ *   9router web        dashboard URL
+ *   9router status     unit state + who owns port 20128
+ *   xai ... | --version| -v   passthrough (these bypass the vendor launcher)
+ *
+ * Deliberate escape hatch for the real vendor launcher (e.g. Claude OAuth
+ * re-login), two steps so it cannot happen by accident:
+ *   systemctl stop 9router
+ *   NINE_ROUTER_ALLOW_LEGACY=1 /usr/bin/9router
+ *   systemctl start 9router
+ */
+const { spawnSync } = require('child_process');
+
+const REAL_CLI = '/usr/lib/node_modules/9router/cli.js';
+const MENU = '/opt/cartenz/infrastructure/scripts/9router-menu.js';
+const TUI = '/opt/cartenz/infrastructure/scripts/9router-tui.js';
+const SAFE_FIRST_ARGS = new Set(['xai', '--version', '-v']);
+
+const args = process.argv.slice(2);
+const first = args[0];
+
+function run(file, argv) {
+  const r = spawnSync(process.execPath, [file, ...argv], { stdio: 'inherit' });
+  process.exit(r.status === null ? 1 : r.status);
+}
+
+function help() {
+  console.log(`
+9router (guard wrapper)
+
+  9router             Choose Interface menu (Web UI / Terminal UI / Exit)
+  9router tui         Terminal UI against the running gateway
+  9router web         print the dashboard URL
+  9router status      unit state + owner of port 20128
+  xai video ...       Grok Imagine video via the running gateway
+  --version, -v       installed package version
+  --help, -h          this message
+
+The bare vendor launcher is not available: on this host it kills every
+next-server (cartenz-portal included) and takes port 20128 away from
+9router.service, which then crash-loops. If you really need it:
+
+  systemctl stop 9router
+  NINE_ROUTER_ALLOW_LEGACY=1 /usr/bin/9router
+  systemctl start 9router
+`);
+}
+
+if (first === '--help' || first === '-h') { help(); process.exit(0); }
+if (first === 'tui') run(TUI, []);
+if (first === 'web') run(MENU, ['web']);
+
+if (first === 'status') {
+  spawnSync('bash', ['-c',
+    'systemctl status 9router --no-pager -l | head -12; echo; ss -ltnp | grep 20128 || echo "port 20128: free"'
+  ], { stdio: 'inherit' });
+  process.exit(0);
+}
+
+if (SAFE_FIRST_ARGS.has(first)) run(REAL_CLI, args);
+
+if (process.env.NINE_ROUTER_ALLOW_LEGACY === '1') run(REAL_CLI, args);
+
+if (first === undefined) run(MENU, []);          // bare `9router` -> safe menu
+
+if (first.startsWith('-')) { help(); process.exit(1); }
+
+console.error(`
+\x1b[31mRefusing to run the vendor 9router launcher with those arguments.\x1b[0m
+
+It would kill every next-server on this host (cartenz-portal included) and take
+port 20128 away from 9router.service, which then crash-loops.
+
+Use instead:
+  \x1b[33m9router\x1b[0m          Choose Interface menu
+  \x1b[33m9router tui\x1b[0m      Terminal UI against the running gateway
+  \x1b[33m9router --help\x1b[0m   all options
+
+Deliberate escape hatch (with the service stopped first):
+  systemctl stop 9router && NINE_ROUTER_ALLOW_LEGACY=1 /usr/bin/9router
+`);
+process.exit(1);

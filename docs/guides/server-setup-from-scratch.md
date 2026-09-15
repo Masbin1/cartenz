@@ -166,6 +166,12 @@ The WebSocket location matters: an agent task runs for minutes, so set
 
 This is §9 of `INSTALL-SERVER.md`, expanded for the engine choice from §1.2.
 
+The gateway behind these rows (where it runs, how to reach its dashboard, how to
+verify a model is genuinely alive, and how to reset it) has its own guide:
+`docs/guides/9router-gateway.md`. The "Test" button below is the probe described
+there — when it says `Not reachable`, read the gateway log before changing a URL
+or a key.
+
 ### 5.1 Register the first account and organisation
 
 Open `https://cartenz.example.com`, register the first account (it becomes the

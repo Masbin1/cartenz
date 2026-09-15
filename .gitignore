@@ -9,6 +9,10 @@ build/
 .next/
 out/
 *.tsbuildinfo
+# Damaged build trees renamed aside during a recovery (see
+# docs/guides/service-management.md). They are incomplete by definition and are not
+# part of the platform.
+dist.broken-root-*/
 
 # Environment - never commit real secrets
 .env
@@ -19,6 +23,10 @@ out/
 .env.bak*
 .env.*.bak
 *.env.backup
+# A plain copy of .env (e.g. `cp .env .env.save` before an edit) carries the same
+# secrets as the file above and is just as publishable by accident.
+.env.save
+.env.save.*
 !.env.example
 
 # Runtime state (local development)
@@ -67,3 +75,4 @@ backend/test-provider*.js
 .profile
 .zshrc
 .gitconfig
+.agent-browser/
