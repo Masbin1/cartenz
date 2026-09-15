@@ -11,7 +11,9 @@ import type {
   ModelProviderTestResult,
   OrganizationMember,
   OrganizationRole,
+  PendingAccessRequest,
   PendingApprovalSummary,
+  ProjectAccessMember,
   ProjectDetail,
   ProjectDocument,
   ProjectDocumentDetail,
@@ -486,6 +488,41 @@ export const api = {
         secretsDestroyed: number;
         workspacesDiscarded: number;
       }>(`/projects/${projectId}/permanent`, { method: 'DELETE', body: { confirmName } }),
+  },
+
+  /** Per-project access: who may open a project, and requests to (ADR-043). */
+  access: {
+    members: (projectId: string) =>
+      request<ProjectAccessMember[]>(`/projects/${projectId}/members`),
+
+    grant: (projectId: string, userId: string) =>
+      request<{ granted: boolean }>(`/projects/${projectId}/members`, {
+        method: 'POST',
+        body: { userId },
+      }),
+
+    revoke: (projectId: string, userId: string) =>
+      request<void>(`/projects/${projectId}/members/${userId}`, { method: 'DELETE' }),
+
+    requestAccess: (projectId: string, reason?: string) =>
+      request<{ id: string }>(`/projects/${projectId}/access-requests`, {
+        method: 'POST',
+        body: { reason },
+      }),
+
+    pendingRequests: (organizationId: string) =>
+      request<PendingAccessRequest[]>(`/organizations/${organizationId}/access-requests`),
+
+    decide: (
+      projectId: string,
+      requestId: string,
+      decision: 'approved' | 'rejected',
+      note?: string,
+    ) =>
+      request<{ decision: string }>(`/projects/${projectId}/access-requests/${requestId}`, {
+        method: 'PATCH',
+        body: { decision, note },
+      }),
   },
 
   tasks: {
