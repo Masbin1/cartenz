@@ -15,6 +15,7 @@ import { HealthModule } from './modules/health/health.module';
 import { ModelSettingsModule } from './modules/organizations/model-settings.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { ProjectsModule } from './modules/projects/projects.module';
+import { ProjectAccessModule } from './modules/project-access/project-access.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { TasksModule } from './modules/tasks/tasks.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
@@ -48,6 +49,7 @@ import { AuditController } from './modules/organizations/audit.controller';
     ModelSettingsModule,
     OrganizationsModule,
     ProjectsModule,
+    ProjectAccessModule,
     DocumentsModule,
     AgentModule,
     TasksModule,
