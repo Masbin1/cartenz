@@ -221,10 +221,13 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now cartenz-api cartenz-worker cartenz-portal
 ```
 
-Check all four:
+Check all four — plus `hermes-api`, which is the fifth unit of the runtime when Hermes
+is used as a provider. Starting, stopping and restarting them (with the safe order, what
+a restart does *not* fix, and how to verify recovery) is
+`docs/guides/service-management.md`:
 
 ```bash
-systemctl status 9router cartenz-api cartenz-worker cartenz-portal --no-pager
+systemctl status 9router cartenz-api cartenz-worker cartenz-portal hermes-api --no-pager
 curl -s http://127.0.0.1:4000/api/v1/health/ready
 ```
 
@@ -456,15 +459,24 @@ sudo cp /opt/cartenz/.env /secure-backup/cartenz.env
 
 ```bash
 cd /opt/cartenz
-sudo systemctl stop cartenz-api cartenz-worker cartenz-portal
+sudo systemctl stop cartenz-portal cartenz-worker cartenz-api
 sudo -u cartenz git pull
 sudo -u cartenz npm ci
-sudo -u cartenz npm run build
+# On a ~2 GB host `npm run build` cannot finish: its type check needs >1.4 GB and the
+# build dies mid-emit, leaving a dist/ with no entrypoints (see docs/guides/
+# service-management.md). Emit without the type check instead, and run
+# `npm run typecheck` on a machine with room before releasing.
+sudo -u cartenz bash -c 'cd backend && rm -rf dist && npx tsc -p tsconfig.build.json --noCheck'
 sudo -u cartenz npm run db:migrate
 sudo systemctl start cartenz-api cartenz-worker cartenz-portal
 ```
 
 Migrations are forward-only. Take a database dump before upgrading.
+
+Verify the build emitted before starting the units — `ls backend/dist/main.js
+backend/dist/worker.js` and `find backend/dist -name '*.js' | wc -l` (150 = complete,
+~57 = truncated). Starting on a truncated `dist/` is a silent crash-loop and a 502 on
+every API call.
 
 ### 10.3 Health
 
@@ -472,7 +484,7 @@ Migrations are forward-only. Take a database dump before upgrading.
 | --- | --- |
 | Readiness | `curl -s localhost:4000/api/v1/health/ready` |
 | Posture | `curl -s localhost:4000/api/v1/health/posture` |
-| Services | `systemctl status cartenz-* 9router` |
+| Services | `systemctl status cartenz-* 9router hermes-api` |
 | Worker log | `tail -f /var/log/cartenz/worker.log` |
 
 `health/posture` reports whether push is enabled, whether the database is

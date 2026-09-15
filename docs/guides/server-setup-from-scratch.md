@@ -345,10 +345,15 @@ Then, in the portal:
   ```
 - **Upgrade:** stop services → `git pull` → `npm ci` → `npm run build` →
   `npm run db:migrate` → start services. Migrations are forward-only; dump first.
-  (Full sequence in `INSTALL-SERVER.md §10.2`.)
+  (Full sequence in `INSTALL-SERVER.md §10.2`.) On this host `npm run build` cannot
+  finish — see §9.2 for the emit-only build that replaces it, and for why a failed
+  build here turns into a 502 on every API call.
 - **Restart after `.env` changes:** provider-row edits apply on the next task, but
   `.env` and code changes need a worker rebuild + restart — the worker runs
   `backend/dist`, so an unbuilt change silently does nothing.
+- **Start / stop / restart the units:** per-intent commands, the safe order, when a
+  restart is *not* what is needed, and how to verify recovery —
+  `docs/guides/service-management.md`.
 
 ### 9.1 Moving an existing deployment to a new server
 
@@ -460,6 +465,72 @@ Two things to do once it is up:
 - **Take the old server out of service** so its units cannot answer on a shared
   hostname, and keep its database dump until the new one has been through a full
   create-a-project cycle.
+
+### 9.2 Building `backend/` when the host is short on RAM
+
+`nest build` type-checks the whole project, and on this deployment's ~2 GB host the
+checker wants more than 1.4 GB of heap — more than the machine can give it while
+Postgres, Redis, the portal, 9router and Hermes are resident. The build then dies
+mid-emit:
+
+```
+FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory
+Aborted (core dumped)   ->  npm error code 134
+```
+
+`backend/nest-cli.json` sets `deleteOutDir: true`, so `nest build` empties `dist/`
+*before* it emits anything. A build that dies leaves a few dozen `.js` files and **no
+`main.js`/`worker.js`**. Because `cartenz-api`/`cartenz-worker` run with
+`Restart=always` and `StartLimitIntervalSec=0`, that becomes a silent crash-loop
+(thousands of restarts) and every `/api/` request through Nginx answers **502** while
+the portal login page itself still loads normally. Raising `--max-old-space-size` does
+not rescue it — 1408 MB and 1536 MB were both tried and both failed, and the 1536 MB
+run additionally swapped into a livelock; the heap has to *fit in RAM* or the kernel
+grinds the build to a halt.
+
+Diagnose:
+
+```bash
+cd /opt/cartenz/backend
+ls dist/main.js dist/worker.js        # missing = truncated build
+find dist -name '*.js' | wc -l        # ~57 = truncated, 150 = complete
+ls -ld dist                           # root-owned = someone built as root
+tail -3 /var/log/cartenz/api.log      # Cannot find module '.../dist/main.js'
+```
+
+Recover by emitting without the type check — same compiler, same output, ~270 MB of
+heap and ~30 s instead of >1.4 GB:
+
+```bash
+cd /opt/cartenz/backend
+rm -rf dist                                     # works once dist is cartenz-owned
+npx tsc -p tsconfig.build.json --noCheck        # emits main.js + worker.js, 150 files
+ls dist/main.js dist/worker.js && ls -ld dist   # entrypoints present, cartenz-owned
+```
+
+Both units then pick the new build up by themselves within ~5 s — no `systemctl
+restart` is needed for this failure mode. Confirm with
+`systemctl show cartenz-api -p ActiveEnterTimestamp --value` (timestamp moves),
+`ss -tlnp | grep 4000` (API listening) and a `POST /api/v1/auth/login` through Nginx
+(expect `401`, not `502`).
+
+Three traps around that recovery:
+
+- `--noCheck` skips type checking, so it emits code with type errors quite happily. Run
+  `npm run typecheck` somewhere with room before releasing anything that matters.
+  `design:paramtypes` metadata is still emitted correctly — verified by booting the API
+  on a spare port and getting `200` from `/api/v1/health`, so Nest's DI still resolves.
+- Never build as root here: a root-owned `dist/` cannot be removed by `cartenz`
+  afterwards (rename it aside instead, `mv dist dist.broken-root-$(date +%Y%m%d-%H%M%S)`).
+- A smoke test must not force `NODE_ENV=production`. The units declare
+  `Environment=NODE_ENV=production`, but `/opt/cartenz/.env`'s `NODE_ENV=development`
+  wins at exec time; forcing production makes the API refuse to start with
+  `SECRETS_PROVIDER=envelope is not permitted in production` (ADR-014) — a config
+  rejection that looks like a broken build but is not.
+
+The durable fix is more RAM on this host, or making the emit-only build the standard
+route (the `@swc/core` builder, or a `build` script that runs `--noCheck` plus a
+separate `typecheck` step).
 
 ---
 
