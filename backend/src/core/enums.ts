@@ -104,6 +104,22 @@ export const ROLE_RANK: Readonly<Record<OrganizationRole, number>> = {
   owner: 3,
 };
 
+/**
+ * The lifecycle of a request for access to a project (ADR-043).
+ *
+ * A decided request is kept rather than deleted: "has this been asked before,
+ * and what was said" is the question the queue exists to answer. `cancelled` is
+ * the requester withdrawing their own ask, which is not the same as a refusal
+ * and must not read as one.
+ */
+export const PROJECT_ACCESS_REQUEST_STATUSES = [
+  'pending',
+  'approved',
+  'rejected',
+  'cancelled',
+] as const;
+export type ProjectAccessRequestStatus = (typeof PROJECT_ACCESS_REQUEST_STATUSES)[number];
+
 /** Agent session lifecycle. */
 export const AGENT_SESSION_STATUSES = ['active', 'ended'] as const;
 export type AgentSessionStatus = (typeof AGENT_SESSION_STATUSES)[number];

@@ -24,6 +24,7 @@ import {
   CONNECTION_TYPES,
   ODOO_EDITIONS,
   ORGANIZATION_ROLES,
+  PROJECT_ACCESS_REQUEST_STATUSES,
   PROJECT_PROVISIONING_STATUSES,
   PROJECT_TYPES,
 } from '../enums';
@@ -485,6 +486,83 @@ export const projectDocuments = pgTable(
 
 export type ProjectDocumentRow = typeof projectDocuments.$inferSelect;
 
+/**
+ * Who may open a project (ADR-043).
+ *
+ * The row is the whole grant: it carries no role, no permission set and no
+ * expiry. What a person may do inside a project stays governed by their
+ * organisation role, so that a single authorisation decision never has to choose
+ * between two ranks for the same person.
+ *
+ * Owners and admins are absent by design - they reach every project by rank, and
+ * a row for them would imply a revoke that would not work.
+ */
+export const projectMembers = pgTable(
+  'project_members',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Null for rows the migration backfilled: nobody decided them. */
+    grantedByUserId: uuid('granted_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    ...timestamps,
+  },
+  (table) => ({
+    grantUnique: uniqueIndex('project_members_project_user_unique').on(
+      table.projectId,
+      table.userId,
+    ),
+    // The project list asks "everything this user may open" on every page load.
+    byUser: index('project_members_user_idx').on(table.userId),
+  }),
+);
+
+/**
+ * A request for access to a project, and what was decided (ADR-043).
+ *
+ * One pending request per (project, user) is enforced by a partial unique index
+ * in the migration rather than by a read-then-write, for the reason the approval
+ * dedup in 0007 was: two parallel requests can both read no pending row and both
+ * insert, and the duplicate then sits in the queue forever.
+ */
+export const projectAccessRequests = pgTable(
+  'project_access_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Free text from the requester. Optional: a reason should not be a toll gate. */
+    reason: text('reason'),
+    status: text('status', { enum: asEnum(PROJECT_ACCESS_REQUEST_STATUSES) })
+      .notNull()
+      .default('pending'),
+    decidedByUserId: uuid('decided_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    /** Shown back to the requester, so a refusal can say why. */
+    decisionNote: text('decision_note'),
+    ...timestamps,
+  },
+  (table) => ({
+    byProject: index('project_access_requests_project_idx').on(table.projectId),
+    byUser: index('project_access_requests_user_idx').on(table.userId),
+  }),
+);
+
+export type ProjectMemberRow = typeof projectMembers.$inferSelect;
+export type ProjectAccessRequestRow = typeof projectAccessRequests.$inferSelect;
+
 export const agentSessions = pgTable(
   'agent_sessions',
   {
@@ -755,6 +833,19 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   connections: many(projectConnections),
   specifications: many(projectSpecifications),
   tasks: many(agentTasks),
+}));
+
+export const projectMembersRelations = relations(projectMembers, ({ one }) => ({
+  project: one(projects, { fields: [projectMembers.projectId], references: [projects.id] }),
+  user: one(users, { fields: [projectMembers.userId], references: [users.id] }),
+}));
+
+export const projectAccessRequestsRelations = relations(projectAccessRequests, ({ one }) => ({
+  project: one(projects, {
+    fields: [projectAccessRequests.projectId],
+    references: [projects.id],
+  }),
+  user: one(users, { fields: [projectAccessRequests.userId], references: [users.id] }),
 }));
 
 export const agentTasksRelations = relations(agentTasks, ({ one, many }) => ({
