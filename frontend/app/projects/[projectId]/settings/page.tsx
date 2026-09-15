@@ -10,6 +10,7 @@ import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
 import { humanise, relativeTime } from '@/lib/format';
 import { EnvironmentKindBadge } from '@/components/projects/environment-editor';
+import { ProjectAccessPanel } from '@/components/projects/project-access-panel';
 import type {
   AgentCapabilities,
   EnvironmentKind,
@@ -532,6 +533,9 @@ export default function ProjectSettingsPage() {
             </ul>
           )}
         </section>
+
+        {/* Only an owner or admin may change who reaches this project (ADR-043). */}
+        {canEdit ? <ProjectAccessPanel projectId={projectId} /> : null}
 
         <section className="panel mt-5 border-state-failure/30">
           <div className="panel-header">

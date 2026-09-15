@@ -5,6 +5,7 @@ import { useRequireAuth } from '@/lib/auth';
 import { ApiError, api } from '@/lib/api';
 import { AppShell } from '@/components/ui/app-shell';
 import { MembersPanel } from '@/components/organizations/members-panel';
+import { AccessRequestsPanel } from '@/components/organizations/access-requests-panel';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
 import type {
@@ -669,6 +670,11 @@ export default function OrganizationSettingsPage() {
           currentUserId={user.id}
           viewerRole={organization.role}
         />
+      ) : null}
+
+      {/* Only an owner or admin may decide a request; the server refuses anyone else. */}
+      {organizationId && (organization?.role === 'owner' || organization?.role === 'admin') ? (
+        <AccessRequestsPanel organizationId={organizationId} />
       ) : null}
 
       <section className="panel">
