@@ -669,6 +669,41 @@ found it.
 
 ---
 
+## Per-project access control (ADR-043)
+
+Implemented 15 September 2026. Membership of the organisation no longer implies access to every
+project in it: a member sees the whole list, and the projects they were not granted are locked
+rather than hidden.
+
+| Concern | Before | Now |
+| --- | --- | --- |
+| Who reaches a project | Any member of the organisation reached every project in it. | Owners and admins still do, by rank, and so does whoever created the project. A developer or viewer needs an explicit grant in `project_members`. |
+| What a locked project looks like | n/a | Listed, with `description`, `repositoryUrl`, `taskCount` and `openTaskCount` withheld, `hasAccess: false`, and a way to ask. |
+| Opening one | n/a | **403**, not 404. The organisation publishes that the project exists; what is withheld is access to it. Hiding it would contradict the list. |
+| Asking for access | n/a | `project_access_requests` queues one pending row per person per project (a partial unique index enforces it); an owner or admin approves or rejects. |
+| Existing members | n/a | The migration backfills a grant for every non-admin member of every project's organisation, so nobody lost access on the day this shipped. |
+
+**One decision point.** The rule lives in `decideProjectAccess` — a pure function, unit-tested — and
+is applied at `AuthorizationService.requireProjectAccess`, which all 28 project-scoped call sites
+already reached (ADR-015). Nothing else had to be taught the rule.
+
+**What the grant carries:** access, and nothing else. A grant is a boolean "may open this project";
+what a person may then *do* stays governed by their organisation role. A per-project role would be
+a second permission model to keep in step with the first.
+
+**Verified end to end** by `infrastructure/scripts/smoke-test-access.sh` — 24 checks, all passing on
+the development host: the project is listed and redacted for an ungranted developer, opening it is
+403, a request is created and cannot be duplicated, the owner sees it queued, approving it makes the
+same request 200, the panel reports the access as revocable because it came from a grant, and a
+revoke returns the 403. The decision and the grant are written in one transaction, so no request can
+read `approved` with no grant behind it.
+
+**Not built, deliberately:** notifications. One organisation, few people, and a request that waits
+an hour costs nothing. The count on the owner's settings page is the whole mechanism until a
+request is seen getting stuck.
+
+---
+
 ## Where this leaves the platform
 
 Every phase through 5 is delivered. What remains is the list in section 4 — the deferred
