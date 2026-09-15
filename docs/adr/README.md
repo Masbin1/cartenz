@@ -42,3 +42,4 @@ with the condition under which it is retired.
 | [ADR-040](ADR-040-provisioned-instance-https-and-credentials.md) | A provisioned instance gets HTTPS, and its master password is sealed | Accepted |
 | [ADR-041](ADR-041-created-project-github-repository.md) | A created project gets a GitHub repository, and its pushes land in it | Accepted |
 | [ADR-042](ADR-042-image-attachments-vision.md) | Image attachments — paste a screenshot or mock-up and have the agent see it | Accepted |
+| [ADR-043](ADR-043-per-project-access-control.md) | Per-project access control | Accepted |
