@@ -876,3 +876,70 @@ one with neither is still refused, and a `chat` task with neither is still permi
 
 **Not yet run:** a development request submitted through the portal on the restarted API. The
 guard is proven not to fire; the rest of the task path was already covered by the suites above.
+
+---
+
+## Documentation revised against the tree, high level to execution (2026-09-14)
+
+The documentation set had drifted from the code across twelve days and fourteen ADRs. This pass
+reconciled it and, in doing so, found three things wrong in the repository rather than in the prose.
+
+### What the audit found
+
+| Finding | Evidence |
+| --- | --- |
+| **Two accepted decisions had no ADR.** ADR-039 and ADR-040 were cited by `projects.service.ts`, `command-runner.service.ts`, the sudoers rule, the installer, the frontend and ADR-041 itself — and neither file existed | `grep -rn "ADR-039\|ADR-040"` returned 20 source and doc references against 0 files; `docs/adr/` jumped 038 → 041 |
+| **`README.md` described a platform three milestones behind.** It claimed validation was simulated, that targeted edits were unbuilt, that `CommandRunner` starts only `git`, and — in a section of its own — that "a real model has not been called" | The file was last touched 2026-09-02; `ALLOWED_EXECUTABLES` now holds `git`, `python3` and `sudo` |
+| **`README.md` contradicted itself.** "Two capabilities remain simulated" introduced a list of one; section 1 said `edit_file` replaces one quoted region while section 7 said the write tools replace a whole file | Lines 39–42 against 75 and 323–326 of the previous revision |
+| **The status document's front matter said "28 August 2026, Phase 3"** while its appended sections ran to 2026-09-14, and its milestone log stopped at ADR-027 | `docs/implementation-status.md` |
+| **`RUNNING.md` told the operator validation was simulated** and pointed at a README section number that no longer existed | Lines 157 and 179–181 |
+| **Backend lint was failing.** `npm run lint` exited 1 | `@typescript-eslint/no-var-requires` — an inline `require('node:path')` in `odoo-settings.spec.ts:15` |
+| **Frontend lint was failing.** Two `react/no-unescaped-entities` errors | `app/settings/page.tsx:622` |
+
+The last two matter beyond tidiness: the status document was about to record "lint clean" on the
+strength of a number copied from an earlier milestone. Running the command instead of trusting the
+table is what caught it.
+
+### Fixed
+
+- **`docs/adr/ADR-039-provisioned-odoo-instance.md`** and
+  **`docs/adr/ADR-040-provisioned-instance-https-and-credentials.md`** written from the code and the
+  commits that introduced them (`ddfc33e`, `17734cf`), and added to the ADR index. The index now
+  lists 31 rows against 31 files, with none missing.
+- **`README.md`** rewritten: the three execution modes given a section of their own, the safety
+  properties collected into one place with where each is enforced, the architecture table extended,
+  the workflow corrected (validation and push are real), the self-contradictions removed, and the
+  test count corrected from 402 to 631.
+- **`docs/implementation-status.md`** brought current: front matter, the component tables, the
+  not-implemented list, the ADR table (now ADR-011 … ADR-041), the verification table, and a
+  continuous milestone log with the six sections that were missing — ADR-028 through ADR-040. The
+  Phase 4 section's heading said "foundations … the runner is not written" directly above a
+  paragraph describing the runner being built; it now says complete. The ADR-026 section, which
+  argued that cloning was itself a safety property, carries a note that ADR-028 superseded it.
+- **`RUNNING.md`**: the validation and `sudo` postures corrected, `verify-all.sh` added, the README
+  cross-reference repointed.
+- **`backend/src/modules/organizations/odoo-settings.spec.ts`**: the inline `require` replaced with
+  a top-level `import { dirname } from 'node:path'`.
+- **`frontend/app/settings/page.tsx`**: the two quotes escaped.
+
+### Verified
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Unit tests | `npm test` | **631 passed, 53 suites, 0 failed** |
+| The repaired spec | `npx jest src/modules/organizations/odoo-settings.spec.ts` | 11 passed |
+| Backend typecheck | `npm run typecheck` | exit 0, no output |
+| Frontend typecheck | `npm run typecheck` | exit 0, no output |
+| Backend lint | `npx eslint src --ext .ts` | exit 0 — was 1 problem before the fix |
+| Frontend lint | `npx next lint` | "No ESLint warnings or errors" — was 2 errors |
+| ADR index completeness | every `ADR-*.md` matched against a row in `docs/adr/README.md` | 31 files, 31 rows, 0 missing |
+
+### Not verified
+
+The smoke suites were not re-run in this pass, so the status document records them as passing *as
+of Phase 5* rather than as of today, and says so in the table. The known gap is unchanged and is now
+stated explicitly at the end of that document: two suites were failing the last time they were run
+against a real model provider, and those failures have not been diagnosed. Until they are, "all
+suites pass" is a claim about the scripted provider.
+
+The Docker Compose path remains unverified on this host, which has no container runtime (ADR-012).

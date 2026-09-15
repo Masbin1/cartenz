@@ -38,5 +38,7 @@ with the condition under which it is retired.
 | [ADR-036](ADR-036-ai-project-scaffolded-and-runnable.md) | A Create-with-AI project is scaffolded locally and runs on-premise | Accepted |
 | [ADR-037](ADR-037-odoo-edition-per-project.md) | Odoo edition (Community or Enterprise) is chosen per project | Accepted |
 | [ADR-038](ADR-038-scaffold-staging-development-branches.md) | A scaffolded project is created with staging and development branches | Accepted |
+| [ADR-039](ADR-039-provisioned-odoo-instance.md) | A created project is a running Odoo instance, provisioned by the operator's scripts | Accepted |
+| [ADR-040](ADR-040-provisioned-instance-https-and-credentials.md) | A provisioned instance gets HTTPS, and its master password is sealed | Accepted |
 | [ADR-041](ADR-041-created-project-github-repository.md) | A created project gets a GitHub repository, and its pushes land in it | Accepted |
 | [ADR-042](ADR-042-image-attachments-vision.md) | Image attachments — paste a screenshot or mock-up and have the agent see it | Accepted |

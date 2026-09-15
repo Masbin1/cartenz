@@ -3,9 +3,9 @@
 | Field | Value |
 | --- | --- |
 | Document owner | Lead Software Architect |
-| Last updated | 28 August 2026 |
-| Milestone in progress | Phase 3 — AI Development Agent (complete) |
-| Governing documents | `docs/reference/` (Technical Architecture v1.2, Framework and Technology Selection v1.0) |
+| Last updated | 14 September 2026 |
+| Milestone delivered | Phase 5 — Odoo-aware development (Phases 1–4 complete) |
+| Governing documents | `docs/reference/` (Technical Architecture v1.3, Framework and Technology Selection v1.0) |
 
 This document records the state of the implementation against the approved architecture. It is
 updated at the end of every milestone. It is a working engineering record, not a client deliverable.
@@ -16,7 +16,7 @@ updated at the end of every milestone. It is a working engineering record, not a
 
 The primary source of truth is the pair of approved documents held in `docs/reference/`:
 
-1. `LinkedERP_AIDevAgent_TechArchitecture_v1.2_2026-08-27_1.docx`
+1. `LinkedERP_AIDevAgent_TechArchitecture_v1.3_2026-09-14_1.docx`
 2. `LinkedERP_AIDevAgent_FrameworkSelection_v1.0_2026-08-27_1.docx`
 
 The Framework and Technology Selection record (ADR-01 to ADR-10) supersedes any earlier indicative
@@ -30,14 +30,14 @@ stack. The approved stack is summarised below.
 | ORM | Drizzle | Yes |
 | Cache, queue, pub/sub | Redis (BullMQ) | Yes |
 | Realtime | WebSocket | Yes |
-| Model abstraction | Vercel AI SDK (provider-agnostic) | Yes, behind `ModelProvider`; SDK not exercised without a key |
+| Model abstraction | Vercel AI SDK (provider-agnostic) | Yes, behind `ModelProvider`, and exercised against a real provider |
 | Agent orchestration | Explicit tool loop | Yes, behind `AgentOrchestrator` |
 | Durable execution | Temporal (self-hosted) | Deferred — see ADR-011 |
 | Workspace isolation | Firecracker microVMs / Kata | Deferred — see ADR-013 |
 | Secret management | HashiCorp Vault | Deferred — see ADR-014 |
 | Identity | OAuth / JWT via Keycloak or Ory | Deferred — see ADR-015 |
 | Infrastructure | Docker Compose (dev), Kubernetes (prod) | Compose authored; see ADR-012 |
-| On-premise connector | Python | Not started (Phase 6) |
+| On-premise connector | Python | Not started (Phase 6); the on-premise execution mode (ADR-028) does not require it |
 
 ---
 
@@ -68,8 +68,12 @@ different risk from executing the repository's own code, and is controlled diffe
 | Diff | Statistics of zero | Real numstat, with a reviewable patch |
 | Commit | A placeholder string | A real 40-character object id |
 | Plan | Named plausible paths | Names paths the search actually found |
-| Validation | Simulated | **Still simulated** - executes repository code |
-| Push | Simulated | **Still simulated** - Phase 5 |
+| Validation | Simulated | Simulated at the time - executes repository code |
+| Push | Simulated | Simulated at the time - Phase 5 |
+
+> This table records Phase 2 as it was delivered. Both of its last two rows have since been closed:
+> push is real (ADR-021, ADR-041) and validation runs a real Odoo where a runtime is configured
+> (ADR-027).
 
 The single `simulated` boolean on a task could not express this, so
 `agent_tasks.simulated_capabilities` names the categories that are still fabricated, and the portal
@@ -180,6 +184,21 @@ has been reviewed.
 | Agent orchestrator and workflow | Complete |
 | WebSocket gateway for task events | Complete |
 | Worker entry point (BullMQ) | Complete |
+| Push safety: process-layer refusal, environments, SSH remotes | Complete (ADR-021) |
+| Targeted edits (`edit_file`) and the destructive-rewrite guard | Complete (ADR-022) |
+| Portal-managed model provider, per organisation | Complete (ADR-023) |
+| Project archive, restore and permanent delete | Complete (ADR-024) |
+| Odoo model index: files ranked by what they declare | Complete (ADR-025) |
+| Database isolation posture (`GET /health/posture`) | Complete (ADR-026) |
+| Odoo validation runtime: registry, scratch databases, runner | Complete (ADR-027) |
+| Three execution modes behind adapters | Complete (ADR-028) |
+| Conversational task kind with inline write approval | Complete (ADR-029) |
+| Document ingestion (Markdown, plain text, PDF, DOCX) | Complete (ADR-030) |
+| Odoo source as a read-only reference; organisation Odoo settings | Complete (ADR-031, ADR-033) |
+| Project scaffolding, runnable dev server, edition, branches | Complete (ADR-032, ADR-034–038) |
+| Instance provisioning via the operator's scripts, behind `sudo` | Complete (ADR-039) |
+| HTTPS issuance and the sealed instance master password | Complete (ADR-040) |
+| GitHub repository creation for a created project | Complete (ADR-041) |
 
 ### 3.3 Frontend (Next.js)
 
@@ -195,33 +214,43 @@ has been reviewed.
 | Diff review, per file, with line numbers | Complete (Phase 2) |
 | Project memory panel | Complete (Phase 2) |
 | Model provenance and boundary activity per task | Complete (Phase 3) |
+| Target environment selection and the push posture | Complete (ADR-021) |
+| Provider configuration screen, with a connection test | Complete (ADR-023) |
+| Archive, restore and permanent-delete surfaces | Complete (ADR-024) |
+| Conversational task view | Complete (ADR-029) |
+| Project document upload and list | Complete (ADR-030) |
+| Organisation Odoo settings (base, enterprise, projects root) | Complete (ADR-033) |
+| Create-with-AI flow, with edition selection | Complete (ADR-036, ADR-037) |
+| Instance panel: URL, database, HTTPS status, master-password reveal | Complete (ADR-040) |
+| On-premise location picker | Complete (ADR-028) |
 
 ---
 
 ## 4. Components not implemented
 
-The following are deliberately out of scope for the foundation milestone. Each is recorded in an ADR
-where a deviation from the approved architecture is involved.
+The following are deliberately out of scope. Each is recorded in an ADR where a deviation from the
+approved architecture is involved.
 
 1. Temporal durable execution (ADR-011).
-2. Firecracker or Kata workspace isolation, and execution of repository or AI-authored code
-   (ADR-013, ADR-019). This is what keeps the validation tools simulated.
+2. Firecracker or Kata workspace isolation (ADR-013, ADR-019). Validation now executes real Odoo
+   code, bounded by the controls of ADR-027 — a scratch database, a fixed runtime, no customer
+   credential, and a process chokepoint that will start only an `odoo-bin` inside a configured
+   runtime — rather than by a microVM. The microVM remains the correct long-term boundary; until it
+   exists, that bound is code and configuration rather than hardware.
 3. HashiCorp Vault (ADR-014).
 4. Keycloak or Ory, and OAuth provider sign-in (ADR-015).
-5. A push to a customer repository - Phase 5. Everything up to and including the commit is real;
-   the push is not.
-6. Production deployment automation and production database access - out of scope for the MVP by
-   the architecture itself.
-7. The Python on-premise connector (Phase 6).
-8. Targeted edits. The write tools replace a whole file, which is why a file containing a
-   credential cannot be rewritten at all (ADR-020, section 5).
+5. Production deployment automation, production database access and unrestricted shell execution —
+   out of scope for the MVP by the architecture itself.
+6. The Python on-premise connector (Phase 6). The on-premise execution mode of ADR-028 operates
+   directly on a local directory and does not require it.
 
-A **real model call** is implemented but unexercised: no API key exists on this host. The
-scripted provider runs the same path, so everything but the SDK integration itself is verified.
+**Delivered since this list was first written**, and struck from it: a real push (ADR-021,
+ADR-041); targeted edits (ADR-022); a real model call, first against a hosted provider and then
+against a local OpenAI-compatible gateway (ADR-023); and real validation (ADR-027).
 
 ---
 
-## 5. Decisions taken during this milestone
+## 5. Decisions taken
 
 All decisions are recorded as ADRs in `docs/adr/`. ADR-001 to ADR-010 are the approved decisions in
 the Framework and Technology Selection record and are not restated. ADR-011 onward are
@@ -239,6 +268,27 @@ implementation decisions taken by the engineering team.
 | ADR-018 | Thirteen task states, reconciling the chapter 6 prose with the chapter 6 diagram |
 | ADR-019 | Real repository operations ahead of microVM isolation, with the controls that make them safe |
 | ADR-020 | Model provider binding, the AI data boundary, and the prompt-injection posture |
+| ADR-021 | Push safety, target environments, and SSH remotes |
+| ADR-022 | Tool output fidelity and targeted edits |
+| ADR-023 | The model provider is configured in the portal, per organisation |
+| ADR-024 | Project removal: archive, restore, and a permanent delete that destroys sealed secrets |
+| ADR-025 | Candidate files are ranked by what they declare, not by text match |
+| ADR-026 | On-premise deployment, and reporting which databases the platform's own role can reach |
+| ADR-027 | Running a real Odoo for validation, in a scratch database, behind a narrowed process grant |
+| ADR-028 | Three execution modes (`odoo_online`, `odoo_sh`, `on_premise`) behind separate adapters |
+| ADR-029 | Conversational agent mode, with inline approval for a write |
+| ADR-030 | Document ingestion: a project's PRD is read, and a task may be executed from it |
+| ADR-031 | The Odoo source is a read-only reference on every Odoo project |
+| ADR-032 | Scaffolding a custom addon when an Odoo project is created |
+| ADR-033 | Odoo paths are organisation settings, and each project gets its own addons directory |
+| ADR-034 | A new project is ready to run: environments, addons path and module detection |
+| ADR-035 | A scaffolded project runs as a local dev server, without Docker |
+| ADR-036 | A Create-with-AI project is scaffolded locally and runs on-premise |
+| ADR-037 | The Odoo edition (Community or Enterprise) is chosen per project |
+| ADR-038 | A scaffolded project is created with staging and development branches |
+| ADR-039 | A created project is a running Odoo instance, provisioned by the operator's own scripts |
+| ADR-040 | A provisioned instance gets HTTPS, and its master password is sealed rather than shown |
+| ADR-041 | A created project gets a GitHub repository, and its pushes land in it |
 
 ---
 
@@ -246,50 +296,47 @@ implementation decisions taken by the engineering team.
 
 Summarised here; `docs/verification-log.md` holds the commands and their output.
 
-| Check | Result |
-| --- | --- |
-| Backend typecheck (`tsc --noEmit`) | Clean |
-| Frontend typecheck (`tsc --noEmit`) | Clean |
-| Backend lint (ESLint) | Clean |
-| Frontend lint (`next lint`) | Clean |
-| Backend build (`nest build`) | Succeeds |
-| Frontend build (`next build`) | Succeeds, 10 routes |
-| Backend unit tests | 233 passed, 19 suites |
-| API smoke test | 55 checks passed, 0 failed |
-| Repository agent smoke test | 38 checks passed, 0 failed |
-| AI agent smoke test | 31 checks passed, 0 failed |
-| Manual walkthrough in a browser | Phases 1-2 only; the pane did not composite for Phase 3 |
-| Docker Compose path | **Not verified** — no container runtime on this host (ADR-012) |
+| Check | Result | When |
+| --- | --- | --- |
+| Backend unit tests | **631 passed, 53 suites, 0 failed** | 14 September 2026 |
+| Backend typecheck (`tsc --noEmit`) | Clean | 14 September 2026 |
+| Frontend typecheck (`tsc --noEmit`) | Clean | 14 September 2026 |
+| Backend lint (ESLint) | Clean | 14 September 2026 |
+| Frontend lint (`next lint`) | Clean | 14 September 2026 |
+| Backend build (`nest build`) | Succeeds | Phase 5 |
+| Frontend build (`next build`) | Succeeds | Phase 5 |
+| API smoke test | Passing | Phase 5 |
+| Repository agent smoke test | Passing | Phase 5 |
+| AI agent smoke test | Passing | Phase 5 |
+| Safety, deletion and validation smoke tests | Passing | Phase 5 |
+| Migration applied against the live database | Confirmed via `psql` | 11 September 2026 |
+| Docker Compose path | **Not verified** — no container runtime on this host (ADR-012) | — |
 
-Twenty-three defects were found across the three milestones and fixed; each is listed in the
-verification log with its cause and its fix. The most serious was in Phase 3: the AI data boundary
-was silently deleting customer credentials from files the agent rewrote.
+The unit-test total has grown from 233 at the end of Phase 3 to 631, and the growth is mostly
+refusal tests: a path-containment or a grant-narrowing test that only checked the happy case would
+pass against an implementation that checks nothing.
+
+Defects found and fixed across the milestones are listed individually in the verification log with
+their cause and their fix. The ones worth knowing about:
+
+| Defect | Why it mattered |
+| --- | --- |
+| The AI data boundary silently deleted customer credentials from files the agent rewrote | Phase 3. A redaction written back is data loss, not protection |
+| `redactMetadata` was applied to the value returned to the agent, not only to the stored copy | `read_file` returned the first ~55 lines of any larger file; a write-back destroyed the rest — 1043 lines of a real customer module, reported as success. Every fixture was under 2 KB, so nothing caught it |
+| Archiving was a trapdoor | An archived project could not be read, restored or deleted |
+| A plain project delete orphaned sealed credentials | `secret_records.project_id` has no foreign key by design (ADR-014), so the database's cascade reached nothing |
+| Environment validation was inverted | Declaring a production branch was refused while declaring the same branch as development was accepted — a whole-set rule reused for a single addition |
+| The platform's Postgres role could open every customer database on the host | A fresh Postgres grants `CONNECT` to `PUBLIC` (ADR-026) |
+| The provisioned master password was sealed with `projectId` null | The project-scoped delete cleanup would have walked past it, leaving a live Odoo master password owned by nothing (ADR-040) |
+| The task-submission guard read only `projects.repository_url` | It refused development requests on exactly the projects creation had just given a repository to (ADR-041) |
 
 ---
 
-## 7. Next milestone
+## 7. Milestone log
 
-Two things are worth doing before another phase, and both are small.
-
-**Configure a provider and run the agent for real.** Setting `AI_PROVIDER` and `AI_API_KEY` is the
-whole of it. That closes the one gap Phase 3 could not: the SDK integration, the structured-output
-parsing, the error mapping, and whether a real model produces a plan worth approving. It also
-makes the prompt-injection test meaningful — show the model a hostile file and confirm the refused
-tool call appears in the audit trail.
-
-**Targeted edits — done (ADR-022).** `edit_file` takes an exact fragment and its replacement and
-requires the fragment to appear once, so it cannot delete what the caller has not quoted.
-`update_file` remains, refuses a rewrite that halves a substantial file, and is named a last
-resort in the model instruction. Built after the first real repository showed why: the whole-file
-contract deleted 1043 lines of a customer's module and reported success.
-
-After those: **Phase 5 (Git automation)** is the natural next milestone — a real push, a pull
-request, and build monitoring — because everything up to the commit is already real and the
-approval gate for the push already exists.
-
-**Phase 4 (validation)** must still wait for the isolation boundary of ADR-013. Running a
-repository's own test suite is exactly the untrusted-code execution that microVMs exist for, and
-nothing in Phase 3 changes that.
+The sections that follow record each milestone as it was delivered, in order, with what it
+changed and what was found while building it. The current state of the platform is the sum of
+them; section 4 above is the list of what is still deliberately absent.
 
 ---
 
@@ -404,10 +451,16 @@ once a provider is configured rather than less.
 
 Verified against a real on-premise host rather than a description of one.
 
-**What works:** the platform reads a local working copy through a `file://` clone, detects the Odoo
-version from the manifests, and plans against the right module. Because it clones, nothing untracked
-in the working tree reaches the workspace — which on the host inspected kept an uncommitted settings
-file holding a live API key out of the agent's reach entirely.
+**What works:** the platform reads a local working copy, detects the Odoo version from the
+manifests, and plans against the right module.
+
+> **Superseded in part by ADR-028.** As written, this milestone reached the working copy through a
+> `file://` clone, and argued that cloning was itself a safety property: nothing untracked reached
+> the workspace, which on the host inspected kept an uncommitted settings file holding a live API
+> key out of the agent's reach. That is true and it is not what the product needs — a change that
+> lands only in a throwaway clone lands nowhere the customer can use it. On-premise now operates
+> **in place** on the selected directory, and the protection the clone gave incidentally is carried
+> deliberately by `realpath` path containment and read-only roots instead.
 
 **What an operator must do.** On a shared Postgres, a fresh database grants `CONNECT` to `PUBLIC`,
 so the platform's role can open every Odoo database on the host. The platform names them at every
@@ -422,10 +475,11 @@ GRANT CONNECT ON DATABASE "<odoo-db>" TO odoo;
 
 ---
 
-## Phase 4 — validation (foundations, ADR-027)
+## Phase 4 — validation (complete, ADR-027)
 
-Not complete. The containment is built and proven; the runner that stitches it together is not
-written, so validation is still simulated and every task still says so.
+The containment was built and proven first, the runner second. Validation now executes a real Odoo
+test run where a runtime is configured. Where one is not, the simulated tools run and the task says
+so, naming the settings that are missing rather than failing obscurely.
 
 **Built and verified:** a runtime registry mapping an Odoo series to a core, so 17, 18, 19 and
 whatever 20 becomes are configuration rather than code; a generated `odoo.conf` that carries no
@@ -441,9 +495,150 @@ The modules to install come from `git diff` rather than from the plan.
 With validation off, which is every deployment today, behaviour is unchanged: the simulated tools
 run and say so. With it on but unconfigured, the task narrates exactly which settings are missing.
 
-**Blocked on an operator:** a Postgres role with `CREATEDB` and no superuser. The platform's own
-role cannot create databases, and the customer's Odoo role is a cluster superuser whose password
-sits in their `odoo.conf` — authenticating as it is exactly what this design refuses.
+**What each host still has to do:** provide a Postgres role with `CREATEDB` and no superuser. The
+platform's own role cannot create databases, and the customer's Odoo role is a cluster superuser
+whose password sits in their `odoo.conf` — authenticating as it is exactly what this design
+refuses. `create-validation-role.sh` and `reset-validation-password.sh` do it. On the development
+host the role exists and `VALIDATION_DB_PASSWORD` is still empty, so validation there is enabled
+but cannot yet connect, and tasks say so.
+
+---
+
+## Three execution modes (ADR-028)
+
+The single "clone the repository into a workspace" model was wrong for two of the three kinds of
+project the product sells to. It is now one of three modes, chosen once, by one mapping from
+project type — so no tool, workflow or validator answers the question a second time and differently.
+
+| Mode | Works on | Git | Filesystem |
+| --- | --- | --- | --- |
+| `odoo_sh` | A per-task clone, destroyed with the run | Managed by the platform; pushes to the remote | The workspace |
+| `on_premise` | The selected local directory, **in place** | The directory's own repository | That directory, with base and enterprise read-only |
+| `odoo_online` | The instance, through Studio | None | None |
+
+The consequential half is `on_premise` operating **in place**. A clone-and-diff approach produces a
+patch that exists nowhere the customer can use; working in the directory the customer actually runs
+is what makes the agent useful on a host that already serves their Odoo. It also moves the safety
+argument: nothing is bounded by throwing the workspace away afterwards, so containment is entirely
+`realpath`-based path resolution plus read-only roots, and that is where the tests are.
+
+`WorkspaceManager.allocateOnPremise` refuses unless `ON_PREMISE_ROOT` is set, a project path was
+given, its `realpath` lies inside that root, it is a directory, and it is a Git repository.
+
+**Found here:** a clone-based run leaves the customer's repository untouched while reporting a
+successful diff. The operator was right to say nothing had happened to their project; the workspace
+diff was real and irrelevant.
+
+---
+
+## Conversational mode and document ingestion (ADR-029, ADR-030)
+
+Two additions that change what a task can be, without adding an execution path.
+
+**A task has a `kind`.** `change` is the existing development run. `chat` is conversational: the
+agent reads freely and answers in natural language, with no plan gate — because the plan gate exists
+to review a change before it happens, and a conversation changes nothing. A chat task that answered
+and changed nothing completes successfully, where a `change` task that touched nothing is a failure.
+The answer is stored on the task and narrated into the action log, so it survives the destroyed
+workspace exactly as a diff does. The moment a chat task intends to write, it goes through
+`ToolExecutionService` and the same approval as everything else: there is no chat-only write path.
+
+**A project can hold documents.** `POST /projects/:id/documents` accepts Markdown, plain text, PDF
+and DOCX, one per call; PDF and DOCX are extracted server-side and **the extracted text is what is
+stored — the original bytes are discarded**, because the text is what the agent reads and what must
+pass the data boundary. Bounded like everything else: 10 MiB file, 1 MiB extracted text, refused
+above. An upload that yields no text (an image-only PDF) is refused rather than stored empty.
+Documents cascade on project delete (ADR-024).
+
+---
+
+## The Odoo source as a reference, and a writable place per project (ADR-031, ADR-033)
+
+An agent that cannot read `sale.order` cannot extend it correctly. Both of these are about giving it
+that, and nothing more.
+
+**The Odoo source is readable on every Odoo project**, not just on-premise — `repository` and
+`odoo_sh` derive `readOnlyRoots` from configuration too; `odoo_online` keeps none, having no
+filesystem. One configuration surface feeds it (`ODOO_SOURCE_PATHS`, falling back to the union of
+the on-premise read-only paths, the shared addon paths and the runtime paths), so a deployment that
+configured validation gets the reference with no new setting.
+
+**Read-only is enforced where writes are resolved**, not in the prompt: `resolveWritePath` refuses a
+read-only root, and a task that tries is denied and audited like any other refused write. The system
+prompt names the reference and carries the Odoo conventions that were previously implicit — extend
+with `_inherit` rather than redefining, models under `models/`, views under `views/`, declare every
+new model in `ir.model.access.csv`.
+
+**Odoo paths became organisation settings** (`organization_odoo_settings`: base, enterprise, projects
+root), edited in the portal beside the AI providers, with the environment as fallback rather than
+authority. The endpoint reports which paths actually exist on the host, because a path that is
+merely stored is a task-time failure waiting to happen.
+
+**Each project gets `<projects_root>/<name>/addons/`**, and that directory is the only writable Odoo
+path. This is the point of the layout: a task can read all of Odoo and write only into its own
+project's addons directory.
+
+---
+
+## Creating a project, not only connecting one (ADR-032, ADR-034 – ADR-038)
+
+The product's second flow. A project can now be created here rather than pointed at, and what it
+gets has grown one decision at a time:
+
+| ADR | What a created project gains |
+| --- | --- |
+| ADR-032 | A scaffolded custom addon: `__manifest__.py`, `models/`, `security/ir.model.access.csv`, a git repository. The technical name is derived from the project name (`"Vania Sales"` → `vania_sales`) because an Odoo module name is a Python package name — a constraint, not a formatting preference. An existing directory is **refused, never reused or overwritten** |
+| ADR-034 | Environments built in the same transaction as the project row, so a project without one cannot exist; `addons/` put on the validation addons path; `changedModules` taught to skip a leading `addons/` segment |
+| ADR-035 | A runnable `odoo.conf` and a `run.sh` launcher, committed with the scaffold, so a fresh project starts with one command and no Docker. Best-effort: when the base path holds no `odoo-bin` the scaffold still succeeds, because a missing launcher is an inconvenience and a failed project creation is not |
+| ADR-036 | A Create-with-AI project is scaffolded locally and runs on-premise — `ai_project` stops being a permanently inert type and gains an execution mode once it has a directory |
+| ADR-037 | An edition per project. Community omits the enterprise path from the generated conf; that is the whole functional difference |
+| ADR-038 | `staging` and `development` branches and their two environments, laid down at creation, so a task can target either and each has a real branch to commit to |
+
+Branch creation is part of the scaffold's atomic step: if any branch cannot be created the whole
+scaffold is torn down, so a project never points at a repository missing a branch its environment
+names.
+
+---
+
+## A created project is a running instance (ADR-039, ADR-040)
+
+Scaffolding produced files. It did not produce anything a person could open — no database, no
+service, no address. For a platform whose purpose is to change a customer's Odoo, "create a project"
+that creates no Odoo is half a feature.
+
+**The privilege question decided the design.** Provisioning needs root. Reimplementing it inside the
+platform would mean a standing root-equivalent grant held by the same process that runs
+model-authored tool calls — the opposite of every other decision here. So the platform calls the
+operator's own `create_project` scripts, and the grant is narrowed twice by gates that do not trust
+each other:
+
+- a sudoers `Cmnd_Alias` naming exact absolute script paths with **no wildcard in any argument**;
+- `assertProvisioningInvocation` in `CommandRunner`, re-validating the script path, the project name
+  and the port before a process is built.
+
+`sudo` therefore joins `git` and `python3` as an allowed executable, and is refused outright unless
+`PROJECT_PROVISIONING_ENABLED=true` — the same chokepoint pattern as `GIT_PUSH_ENABLED` and
+`VALIDATION_ENABLED`.
+
+**HTTPS** is issued by `certbot --nginx` for the project's own domain, and the script **refuses any
+domain that is not already that project's Nginx `server_name`** — so a project name cannot decide
+which host gets a certificate. A failure degrades to plain HTTP with the reason recorded, rather
+than failing the project: a certificate is an improvement to a working instance.
+
+**The master password** that `create_project` prints is sealed on arrival and discarded from the
+service's scope. `findOne` carries only a `hasMasterPassword` boolean — the response shape has no
+field that could ever carry the secret — and revealing it is a separate, audited, owner-only
+endpoint.
+
+**Found here:** the password is sealed before the project row exists, so it is sealed with
+`projectId` null, and ADR-024's project-scoped delete cleanup would have walked straight past it,
+leaving a live Odoo master password encrypted in the database and owned by nothing. This is the
+second time `secret_records` having no foreign key by design required the delete path to be told
+explicitly what to destroy.
+
+**Also found:** `create_project` leaves the project directory owned by `odoo:odoo` mode 750, so the
+platform user cannot write into `addons/` — which is exactly where it must commit. A fourth fixed
+script shape fixes the ownership, rather than widening the grant.
 
 ---
 
@@ -471,3 +666,26 @@ but the task-submission guard read only `projects.repository_url`, so it refused
 requests on exactly the projects creation had just given a repository to. Anything that asks
 "does this project have a repository?" now asks both. See the verification log for the run that
 found it.
+
+---
+
+## Where this leaves the platform
+
+Every phase through 5 is delivered. What remains is the list in section 4 — the deferred
+infrastructure (Temporal, microVMs, Vault, Keycloak) and the Phase 6 connector — plus the
+configuration each host must still supply before the capabilities that are built will actually run:
+
+| To use | Set | State on the development host |
+| --- | --- | --- |
+| Real validation | `VALIDATION_ENABLED`, a `CREATEDB` role and its password, `ODOO_RUNTIMES` | Enabled, role created, **password still empty** |
+| Pushing | `GIT_PUSH_ENABLED`, a credential on the project | Disabled |
+| Provisioning and HTTPS | `PROJECT_PROVISIONING_ENABLED`, `PROJECT_HTTPS_ENABLED`, the sudoers rule installed as root | Not configured |
+| A GitHub remote for created projects | `GITHUB_REPOSITORY_ENABLED`, `GITHUB_TOKEN`, `GITHUB_OWNER` | Not configured |
+
+Each of these is off by default and refused at the process layer, which is the intended posture: a
+capability that is built is not thereby enabled, and enabling one is a deliberate operator act on a
+particular host.
+
+The honest gap in the record is that the smoke suites have not all been re-run against a real model
+provider. Two were failing the last time they were tried that way, and the failures were not
+diagnosed. Until they are, "all suites pass" is a claim about the scripted provider.
