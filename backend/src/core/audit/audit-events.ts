@@ -35,6 +35,13 @@ export const AUDIT_EVENTS = {
    */
   PROJECT_GITHUB_REPOSITORY_FAILED: 'project.github_repository_failed',
 
+  /** A person was given, or had withdrawn, access to a single project (ADR-043). */
+  PROJECT_ACCESS_GRANTED: 'project.access_granted',
+  PROJECT_ACCESS_REVOKED: 'project.access_revoked',
+  /** Somebody asked for access to a project they could not open, and what was decided. */
+  PROJECT_ACCESS_REQUESTED: 'project.access_requested',
+  PROJECT_ACCESS_DECIDED: 'project.access_decided',
+
   /** A document was uploaded to a project for the agent to read (ADR-030). */
   PROJECT_DOCUMENT_UPLOADED: 'project.document_uploaded',
   PROJECT_DOCUMENT_DELETED: 'project.document_deleted',

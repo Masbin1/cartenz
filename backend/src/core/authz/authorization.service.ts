@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, isNull } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service';
-import { organizationMembers, projects } from '../database/schema';
+import { organizationMembers, projectMembers, projects } from '../database/schema';
 import { ROLE_RANK, OrganizationRole } from '../enums';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_EVENTS } from '../audit/audit-events';
@@ -11,6 +11,11 @@ import {
   APPROVAL_BEARING_PERMISSIONS,
   resolveAgentPermissions,
 } from './agent-permissions';
+import {
+  decideProjectAccess,
+  PROJECT_ACCESS_BYPASS_ROLE,
+  type ProjectAccessReason,
+} from './project-access';
 
 /** A membership resolved for an authorisation decision. */
 export interface MembershipContext {
@@ -25,6 +30,13 @@ export interface ProjectContext {
   readonly organizationId: string;
   readonly membership: MembershipContext;
   readonly agentPermissions: Record<AgentPermission, boolean>;
+  /**
+   * Why this caller is allowed in (ADR-043): their rank, having created the
+   * project, or an explicit grant. Carried so a caller that renders the
+   * difference does not have to ask again.
+   */
+  readonly accessReason: ProjectAccessReason;
+  readonly hasProjectGrant: boolean;
 }
 
 /**
@@ -125,6 +137,7 @@ export class AuthorizationService {
         id: projects.id,
         organizationId: projects.organizationId,
         agentPermissions: projects.agentPermissions,
+        createdByUserId: projects.createdByUserId,
       })
       .from(projects)
       .where(scope)
@@ -140,11 +153,64 @@ export class AuthorizationService {
       minimumRole,
     );
 
+    /**
+     * Organisation membership is necessary but no longer sufficient (ADR-043).
+     *
+     * The grant is only read when the rule might need it: an admin is in by rank
+     * and a creator by the row already fetched, so the common paths cost nothing.
+     */
+    const bypasses =
+      ROLE_RANK[membership.role] >= ROLE_RANK[PROJECT_ACCESS_BYPASS_ROLE] ||
+      project.createdByUserId === user.userId;
+
+    const hasGrant = bypasses
+      ? false
+      : (
+          await this.database.db
+            .select({ id: projectMembers.id })
+            .from(projectMembers)
+            .where(
+              and(
+                eq(projectMembers.projectId, project.id),
+                eq(projectMembers.userId, user.userId),
+              ),
+            )
+            .limit(1)
+        ).length > 0;
+
+    const decision = decideProjectAccess({
+      role: membership.role,
+      userId: user.userId,
+      createdByUserId: project.createdByUserId,
+      hasGrant,
+    });
+
+    if (!decision.allowed) {
+      await this.recordDenial(
+        user,
+        project.organizationId,
+        project.id,
+        'no grant for this project',
+      );
+      /**
+       * Forbidden, not NotFound - deliberately unlike the organisation refusal
+       * above, which hides an organisation's existence from a non-member. A
+       * project's existence is published in the list on purpose, so hiding it
+       * here would conceal nothing and would leave the portal's "Request access"
+       * button with nothing to point at.
+       */
+      throw new ForbiddenException(
+        'You do not have access to this project. You can request access from the projects list.',
+      );
+    }
+
     return {
       projectId: project.id,
       organizationId: project.organizationId,
       membership,
       agentPermissions: resolveAgentPermissions(project.agentPermissions),
+      accessReason: decision.reason,
+      hasProjectGrant: decision.reason === 'grant',
     };
   }
 
