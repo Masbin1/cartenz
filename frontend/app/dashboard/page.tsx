@@ -45,7 +45,9 @@ export default function DashboardPage() {
       setApprovals(pending);
 
       // Recent tasks are gathered from the projects that have any, newest first.
-      const withTasks = projectList.filter((project) => project.taskCount > 0).slice(0, 8);
+      // A locked project reports a null count and is skipped: it has no tasks
+      // this person may read (ADR-043).
+      const withTasks = projectList.filter((project) => (project.taskCount ?? 0) > 0).slice(0, 8);
       const taskLists = await Promise.all(
         withTasks.map(async (project) => {
           const list = await api.tasks.listForProject(project.id);
@@ -192,12 +194,9 @@ export default function DashboardPage() {
               />
             ) : (
               <ul className="divide-y divide-surface-border">
-                {projects.slice(0, 6).map((project) => (
-                  <li key={project.id}>
-                    <Link
-                      href={`/projects/${project.id}`}
-                      className="flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-surface-overlay"
-                    >
+                {projects.slice(0, 6).map((project) => {
+                  const body = (
+                    <>
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{project.name}</p>
                         <p className="mt-0.5 text-2xs text-content-subtle">
@@ -206,14 +205,31 @@ export default function DashboardPage() {
                         </p>
                       </div>
                       <div className="shrink-0 text-right text-2xs text-content-subtle">
-                        <p>{project.taskCount} tasks</p>
-                        {project.openTaskCount > 0 ? (
+                        <p>{project.hasAccess ? `${project.taskCount ?? 0} tasks` : 'Locked'}</p>
+                        {(project.openTaskCount ?? 0) > 0 ? (
                           <p className="text-state-running">{project.openTaskCount} open</p>
                         ) : null}
                       </div>
-                    </Link>
-                  </li>
-                ))}
+                    </>
+                  );
+                  const rowClasses = 'flex items-center justify-between gap-4 px-4 py-3';
+                  return (
+                    <li key={project.id}>
+                      {project.hasAccess ? (
+                        <Link
+                          href={`/projects/${project.id}`}
+                          className={`${rowClasses} transition-colors hover:bg-surface-overlay`}
+                        >
+                          {body}
+                        </Link>
+                      ) : (
+                        /* Listed, not linked: the link would only lead to a 403.
+                           Asking for access happens on /projects (ADR-043). */
+                        <div className={`${rowClasses} opacity-60`}>{body}</div>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>
