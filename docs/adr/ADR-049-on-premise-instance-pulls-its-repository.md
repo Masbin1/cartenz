@@ -100,15 +100,29 @@ whose every press is refused by the other gate reads like a bug in the platform.
   unreachable remote leaves the checkout where it was.
 - Nothing is automatic yet. There is no webhook and no scheduled pull.
 
-## What this does not decide
+## What this decides about the `on_premise` project type
 
-The `on_premise` project type still asks for a **folder on the server**
-(`GET /projects/on-premise-locations`) and is not in `REPOSITORY_BACKED_PROJECT_TYPES`, so it
-has no repository, no branch and no environments. Making it repository-backed — so that a
-person supplies a repository URL the way they do for odoo.sh, and the platform pulls it — is a
-change to project *creation* rather than to deployment, and is deliberately left as its own
-decision. The mechanism above is what it would use, and works today for any provisioned
-project whose `addons/` already has an `origin`, which is every project ADR-041 has touched.
+The `on_premise` type now takes a repository, which is what makes the above reachable for it.
+An on-premise project is a directory on this host, and the platform deploys *that directory's
+repository* into it — supplying the URL, the branch and the credential at creation, the way
+odoo.sh asks for them.
+
+The field stays **optional**, and the type deliberately stays out of
+`REPOSITORY_BACKED_PROJECT_TYPES`. ADR-026's case is real and different: the platform installed
+beside a customer's Odoo, reading a working copy that may be a checkout of nothing. Requiring a
+repository would delete that capability to add this one. With a repository recorded, branch
+probing reads the remote — the list Deploy can actually fetch — and without one it still reads
+the local checkout's own branches, as before.
+
+`ON_PREMISE_ROOT` and the projects root are the same directory here
+(`/opt/odoo/projects`), so the directory the picker offers is the directory
+`pull-project.sh` resolves from the project's technical name. That is a property of this
+deployment's configuration rather than a guarantee: a host where the two differ would pull
+into the projects root and the on-premise path would point elsewhere.
+
+Still not decided: letting the platform **create** the instance directory for an on-premise
+project, so a person can supply a repository and nothing else. Today they still pick a
+directory that exists, or take the Create-with-AI flow, which scaffolds and provisions.
 
 ## Alternatives considered
 
@@ -129,10 +143,20 @@ project whose `addons/` already has an `origin`, which is every project ADR-041 
 | --- | --- |
 | 13 new guard tests: valid https/scp pulls, branch separators, `--upload-pack` as a branch, `file://`, `git://`, shell metacharacters, invalid names, trailing arguments, missing branch, and the unconfigured-script refusal | PASS |
 | The whole `command-runner` suite, so the new branch is shown not to have widened the create, grant or HTTPS shapes | PASS — 67/67 |
+| 11 tests on the directory a pull is pointed at, including both recorded forms of the on-premise path and every path that escapes the projects root | PASS — 11/11 |
 | The script refuses to run as a non-root user, and validates its arguments before touching anything | PASS (live) |
 | `bash -n` on the script | PASS |
-| `tsc --noEmit` over the backend | PASS for every file this ADR touches |
+| `tsc --noEmit` over the backend | PASS — exit 0, no diagnostics |
+| `tsc --noEmit` over the frontend | PASS — exit 0 |
 | **The pull has not been run on this host** | NOT VERIFIED — it needs the sudoers entry installed (a root step) and a project whose repository the platform is permitted to read |
 
 That last row is the honest state of this: the mechanism is written, gated, and tested at the
 boundary, and the first real pull is an operator step away.
+
+**What the tests caught.** The first version of the directory resolution took the parent
+basename of the recorded on-premise path. That is correct for the provisioned form
+(`…/ggroma/addons`) and wrong for the scaffolded one (`…/ggroma`, which yields `projects`), and
+it read `/opt/odoo/projects/../etc/addons` as `etc`. The value it produces is the argument to a
+script that runs `git` as root in that directory, so a plausible-but-wrong answer there is not a
+local mistake. It is now anchored to the configured projects root, accepting exactly one path
+segment below it, and the cases above are tests rather than reasoning.

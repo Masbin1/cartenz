@@ -254,8 +254,11 @@ export class ProjectsService {
   /**
    * Branch probe for a project that already exists.
    *
-   * Repository-backed projects read the remote; an on-premise project reads the
-   * branches of its local working copy, because there is no remote URL to probe.
+   * Repository-backed projects read the remote. An on-premise project reads the
+   * remote too once one is recorded (ADR-049) — that is the list the Deploy
+   * action can actually fetch — and falls back to the branches of its local
+   * working copy only when no repository was given (ADR-026), because then there
+   * is no remote URL to probe.
    */
   async remoteBranches(
     user: AuthenticatedUser,
@@ -275,7 +278,7 @@ export class ProjectsService {
 
     if (!project) throw new NotFoundException('Project not found');
 
-    if (project.projectType === 'on_premise') {
+    if (project.projectType === 'on_premise' && !project.repositoryUrl) {
       const path = readOnPremisePath(project.environmentConfig);
       if (!path) {
         throw new BadRequestException(

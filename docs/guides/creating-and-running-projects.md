@@ -24,7 +24,7 @@ Workflow at a glance:
 | Type | Source of code | Scaffolded? |
 |---|---|---|
 | `ai_project` | Local (Create with AI) | Yes — always |
-| `on_premise` | Local | Yes — when the scaffold option is set |
+| `on_premise` | Local, and optionally a Git remote it is deployed from | Yes — when the scaffold option is set |
 | `repository` | Git remote | No — code comes from the remote |
 | `odoo_sh` | Odoo.sh (git remote) | No — code comes from the remote |
 | `odoo_online` | Odoo Online instance (JSON-RPC) | No — no filesystem |
@@ -120,11 +120,37 @@ On submit, Cartenz:
 Menu: **Projects → New**. Choose the **On-premise** type, then:
 
 - Set **Odoo version** and **Odoo edition** as above.
+- Choose the **Project folder** — the directory on this server the agent operates
+  on. A folder that is not a Git repository is offered and labelled as such.
+- **Repository URL** (optional) — the repository this project is deployed from.
+  Fill it in and the project is deployed like an odoo.sh project: the platform
+  runs that branch onto the directory. Leave it blank for ADR-026's case, a
+  working copy that is read where it sits and is a checkout of nothing.
+- With a repository set, **Default branch**, **Read branches**, the environment
+  list and the **Access token** all apply, exactly as for the Git repository type.
 - If you choose to scaffold a new directory, Cartenz builds the same structure as
   Option A.
 - Environments: if you declare none, the project gets Development + Staging
   automatically. If you declare your own environments, they are honoured and a
   branch is created for each.
+
+#### Deploying: running the repository onto the instance
+
+The project page's **Instance** panel carries **Deploy latest** (ADR-049). It runs
+`infrastructure/provisioning/pull-project.sh` as root, which resets the project's
+`addons/` to the tip of the project's branch as the `odoo` user and reports the
+commit. It is admin-only, it is recorded as `project.pulled` or
+`project.pull_failed`, and it **discards anything in that directory that is not in
+the repository** — the directory is a deployment target, not a working copy. Task
+workspaces live under `/tmp`, so nothing the agent is working on lives there.
+
+A failed deploy changes nothing: the script fetches before it resets, so an
+unreachable remote or a missing branch leaves the checkout where it was and the
+message names the cause.
+
+Two conditions: the project must have a repository, and the deployment must have
+`PROJECT_PULL_SCRIPT` set with that script in the sudoers `Cmnd_Alias` — unset
+disables the action end to end rather than offering a button that always fails.
 
 ### 2.3 Option C — Direct API
 

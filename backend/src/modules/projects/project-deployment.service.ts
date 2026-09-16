@@ -107,13 +107,13 @@ export class ProjectDeploymentService {
       );
     }
 
-    // Derived from the on-premise path rather than stored separately, because
-    // the two cannot be allowed to disagree: the script acts on
-    // /opt/odoo/projects/<technicalName>, and the on-premise path is
-    // <that directory>/addons (ADR-039). Taking the parent's basename means a
-    // project whose row was written by any code path still resolves to the
-    // directory that actually exists.
-    const technicalName = this.technicalNameFrom(project.environmentConfig);
+    // Resolved from the project's recorded on-premise path and anchored to the
+    // configured projects root — not by taking a parent's basename, which put the
+    // scaffolded (root) form of that path on the wrong directory. See the function.
+    const technicalName = technicalNameFromOnPremisePath(
+      project.environmentConfig,
+      this.config.provisioning?.projectsDir ?? '',
+    );
 
     if (!technicalName) {
       return this.refuse(
@@ -232,17 +232,6 @@ export class ProjectDeploymentService {
     }
   }
 
-  private technicalNameFrom(environmentConfig: Record<string, unknown>): string | null {
-    const onPremisePath = environmentConfig?.onPremisePath;
-    if (typeof onPremisePath !== 'string' || onPremisePath.length === 0) return null;
-
-    // <projectsDir>/<technicalName>/addons
-    const parts = onPremisePath.replace(/\/+$/, '').split('/');
-    const candidate = parts[parts.length - 2] ?? '';
-
-    return /^[a-z0-9][a-z0-9_-]{1,30}$/.test(candidate) ? candidate : null;
-  }
-
   private async refuse(
     projectId: string,
     userId: string,
@@ -258,6 +247,51 @@ export class ProjectDeploymentService {
 
     return { ok: false, commit: null, branch: null, message, durationMs: Date.now() - startedAt };
   }
+}
+
+/**
+ * The project directory name the pull script acts on, from a project's stored
+ * on-premise path.
+ *
+ * `pull-project.sh` acts on `<projectsDir>/<technicalName>`, while a project
+ * records an on-premise path that is *inside* that directory — `<name>/addons`
+ * for a provisioned project (ADR-039), and `<name>` itself for a scaffolded one
+ * (ADR-032). This resolves either form to the name, and it is the one value
+ * that decides which directory a root-run script is pointed at, so it is
+ * anchored rather than guessed at:
+ *
+ *  - the path must sit under the configured projects root, so a row pointing at
+ *    `/tmp/ggroma/addons` resolves to nothing and the pull is refused;
+ *  - exactly one path segment may follow the root, so `/…/projects/addons`
+ *    cannot resolve to a project called `addons`;
+ *  - that segment must be a plain directory name, so `..` and uppercase and
+ *    anything else the scripts' own validation would reject is refused too.
+ *
+ * An earlier version took the basename's parent — which put `/…/projects/ggroma`
+ * and `/…/projects/../etc/addons` on the wrong directory. The tests below are
+ * what caught that; it is not a shape to re-derive by eye.
+ */
+export function technicalNameFromOnPremisePath(
+  environmentConfig: Record<string, unknown> | null,
+  projectsDir: string,
+): string | null {
+  const onPremisePath = environmentConfig?.onPremisePath;
+  if (typeof onPremisePath !== 'string' || onPremisePath.length === 0) return null;
+
+  const root = projectsDir.replace(/\/+$/, '');
+  if (!root.startsWith('/')) return null;
+
+  let path = onPremisePath.replace(/\/+$/, '');
+  if (path.endsWith('/addons')) path = path.slice(0, -'/addons'.length);
+  path = path.replace(/\/+$/, '');
+
+  const prefix = `${root}/`;
+  if (!path.startsWith(prefix)) return null;
+
+  const name = path.slice(prefix.length);
+  if (name.includes('/')) return null;
+
+  return /^[a-z0-9][a-z0-9_-]{1,30}$/.test(name) ? name : null;
 }
 
 /**

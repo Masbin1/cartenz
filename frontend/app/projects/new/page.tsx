@@ -283,7 +283,19 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
       }
     };
 
-  const needsRepository = form.projectType === 'repository' || form.projectType === 'odoo_sh';
+  /**
+   * Whether the form asks for a repository.
+   *
+   * `on_premise` is included (ADR-049): an on-premise project is pointed at a
+   * directory on this host, and that directory's own repository is what the
+   * platform deploys from — the odoo.sh shape. Leaving the field empty is still
+   * allowed, because ADR-026's case is a directory that is read where it sits
+   * and may not be a checkout of anything.
+   */
+  const needsRepository =
+    form.projectType === 'repository' ||
+    form.projectType === 'odoo_sh' ||
+    form.projectType === 'on_premise';
   const isOdooOnline = form.projectType === 'odoo_online';
 
   const submit = async (event: React.FormEvent) => {
@@ -319,7 +331,14 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
         odooVersion: form.odooVersion,
         odooEdition: form.odooEdition,
         defaultBranch: form.defaultBranch,
-        repositoryUrl: needsRepository ? form.repositoryUrl : undefined,
+        // Blank means "no repository", not "an empty one": an on-premise
+        // project may be a directory that is not a checkout of anything
+        // (ADR-026), and an empty string stored where a URL belongs reads as a
+        // repository that failed to load rather than one that was never given.
+        repositoryUrl:
+          needsRepository && form.repositoryUrl.trim().length > 0
+            ? form.repositoryUrl.trim()
+            : undefined,
         // The selected on-premise directory, stored in the project's environment
         // configuration and enforced by the workspace layer at task time.
         environmentConfig:
@@ -442,7 +461,7 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
               <div className="flex gap-2">
                 <input
                   id="repositoryUrl"
-                  required
+                  required={form.projectType !== 'on_premise'}
                   value={form.repositoryUrl}
                   onChange={update('repositoryUrl')}
                   className="field-input flex-1 font-mono text-xs"
