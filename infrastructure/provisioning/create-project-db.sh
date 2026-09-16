@@ -83,7 +83,14 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
 fi
 
 VER_TAG="${VERSION/./_}"
-TEMPLATE="cartenz_tpl_${VER_TAG}_${EDITION}"
+
+# The builder seals its templates as cartenz_tpl_<ver>_com / _ent (ADR-045);
+# map the edition to that suffix rather than spelling the word out.
+TEMPLATE_SUFFIX="com"
+if [[ "$EDITION" == "enterprise" ]]; then
+    TEMPLATE_SUFFIX="ent"
+fi
+TEMPLATE="cartenz_tpl_${VER_TAG}_${TEMPLATE_SUFFIX}"
 
 if ! sudo -u postgres psql -tAc \
     "SELECT 1 FROM pg_database WHERE datname = '${TEMPLATE}' AND datistemplate" | grep -q 1; then

@@ -25,5 +25,5 @@ Host paths, taken from `/opt/cartenz/.env` (ODOO_RUNTIMES / ODOO_SOURCE_PATHS):
     /opt/cartenz/infrastructure/provisioning/build-odoo-templates.sh 19.0 \
         /opt/odoo/odoo-server /opt/odoo/venv/bin/python /opt/odoo/enterprise
 
-Then a new project of version 19.0 clones `cartenz_tpl_19_com` /
-`cartenz_tpl_19_ent` in seconds instead of installing every module again.
+Then a new project of version 19.0 clones `cartenz_tpl_19_0_com` /
+`cartenz_tpl_19_0_ent` in seconds instead of installing every module again.

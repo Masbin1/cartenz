@@ -155,6 +155,11 @@ build_template() {
         exit 1
     fi
 
+    # A refresh run replaces the previous template of this name; without this
+    # the rename below fails on an existing name and strands the scratch
+    # database.
+    sudo -u postgres dropdb --if-exists "$template"
+
     # Seal it: rename to its final name, then mark it a template that accepts
     # no connections. is_template is what lets CREATE DATABASE ... TEMPLATE use
     # it; datallowconn=false both satisfies PostgreSQL's own rule that a
