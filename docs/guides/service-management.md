@@ -106,7 +106,7 @@ needs:
 | Model provider row in the portal (Settings → Model providers) | **nothing** — read from the database per task |
 | `/opt/cartenz/.env` | restart `cartenz-api` **and** `cartenz-worker` (the units read the file once, at start) |
 | `backend/src` | rebuild `backend/dist`, then restart `cartenz-api` + `cartenz-worker` |
-| `frontend/src` | rebuild `frontend/.next`, then restart `cartenz-portal` |
+| `frontend/src` | rebuild `frontend/.next` (below), after which `cartenz-portal` restarts itself — expect a 1–3 minute 502 |
 | `infrastructure/systemd/*.service` | copy to `/etc/systemd/system/`, `sudo systemctl daemon-reload`, then restart the affected units |
 | Nothing at all, but the unit is in `activating (auto-restart)` | fix the cause; see "Crash-looping units" below |
 
@@ -163,6 +163,73 @@ The gate matters: with `Restart=always` and `StartLimitIntervalSec=0` on both un
 missing `dist/main.js` does not fail loudly — it turns into an endless silent restart
 loop, which is exactly how "the portal loads but login answers 502" happens. Never
 restart onto a `dist/` you have not looked at.
+
+### The portal's build (`frontend/.next`)
+
+The same gate applies to the frontend, for a different reason: that build is where the
+browser's API URL comes from, and one that ran without the two `NEXT_PUBLIC_*` values
+exported is not a failing build at all — it is a build that tells every visitor's browser
+to call `http://localhost:4000`.
+
+**"Could not reach the API. Check that the backend is running." is almost never a dead
+backend.** That string comes from the catch block in `frontend/app/login/page.tsx` and
+`register/page.tsx`, and it is printed for *any* failure that is not an `ApiError`, so it
+never names the real cause. Read the bundle before touching the services — all five units
+can be green while this is wrong:
+
+```bash
+grep -rho "localhost:4000\|https://<domain>" /opt/cartenz/frontend/.next/static/chunks/*.js \
+  | sort | uniq -c
+```
+
+`http://localhost:4000` there means the bundle is wrong. Only the domain, with zero
+occurrences of `localhost:4000`, is a good build. Confirm the API is innocent from the
+domain's own origin — an expected `401` proves the whole path works:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<domain>/api/v1/auth/login \
+  -H 'Content-Type: application/json' -H 'Origin: https://<domain>' \
+  -d '{"email":"cek@example.com","password":"salah-sekali-panjang"}'
+```
+
+Rebuild as `cartenz`, never as root:
+
+```bash
+cd /opt/cartenz/frontend
+mv .next .next.broken-root-$(date +%Y%m%d-%H%M%S)
+NODE_OPTIONS=--max-old-space-size=1024 env -u NODE_ENV \
+  NEXT_PUBLIC_API_URL=https://<domain> NEXT_PUBLIC_WS_URL=wss://<domain>/ws \
+  npm run build
+ls -ld .next                                   # must be cartenz-owned
+```
+
+Three parts of that are not obvious:
+
+- **The `mv` is not optional after a root-run build.** A root `next build` leaves ~200
+  root-owned files under `.next/static`, which `cartenz` cannot overwrite: the next build
+  dies with `EACCES: permission denied, unlink '.../.next/...'`. The rename need only
+  write on the parent (`frontend/` is `cartenz`-owned), whereas deleting the contents
+  needs write on `.next/static` itself, which `cartenz` does not have — the same shape as
+  the `dist/` recovery above.
+- **Renaming `.next` takes the running portal down with it.** `next start` reads the
+  directory while serving, so the rename kills it and `Restart=always` relaunches it into
+  a `.next` with no `BUILD_ID` yet: `/var/log/cartenz/portal.log` fills with `Could not
+  find a production build in the '.next' directory` and `NRestarts` climbs until the build
+  writes `BUILD_ID` (~50 s), at which point it recovers on its own. A frontend rebuild
+  therefore costs a 1–3 minute portal outage — expected, not a fault to chase, and not
+  something to "fix" with another manual restart. If you have the root shell anyway,
+  stopping the portal first is tidier than watching it crash-loop.
+- **The `NODE_OPTIONS` cap is deliberate.** It makes V8 collect instead of growing until
+  the kernel OOM killer picks a victim, which on a 2 GB host running five units can be
+  `cartenz-api`.
+
+Verify what is actually being served before declaring recovery — the chunk hash the
+portal hands out must be the file on disk:
+
+```bash
+curl -s http://127.0.0.1:3000/login | grep -o 'chunks/193-[a-f0-9]*\.js' | sort -u
+ls /opt/cartenz/frontend/.next/static/chunks/193-*
+```
 
 ## Crash-looping units
 
