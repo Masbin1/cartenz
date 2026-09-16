@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# A neutral working directory: the `sudo -u postgres` children cannot chdir into
+# a caller's home (root's /root is mode 700) and print a confusing warning.
+cd /
+
 # ============================================================
 # LinkedERP - build Odoo template databases (ADR-045)
 # ============================================================
@@ -86,6 +90,12 @@ fi
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
+# Odoo runs as the `odoo` user, authenticated by peer credentials over the
+# local socket (the same way every provisioned instance connects — the role has
+# no TCP password). The scratch directory must belong to that user.
+mkdir -p "$WORKDIR/data"
+chown -R odoo:odoo "$WORKDIR"
+
 # A throwaway conf pointing at exactly the addons of one edition.
 write_conf() {
     local conf="$1"
@@ -93,10 +103,9 @@ write_conf() {
     {
         echo "[options]"
         echo "addons_path = ${addons}"
-        echo "db_host = 127.0.0.1"
-        echo "db_port = 5432"
+        # No db_host/db_port/db_password: local socket + peer auth as role odoo.
         echo "db_user = odoo"
-        echo "db_password = odoo"
+        echo "data_dir = ${WORKDIR}/data"
         echo "without_demo = all"
     } > "$conf"
 }
@@ -125,7 +134,7 @@ build_template() {
     sudo -u postgres createdb -O odoo "$scratch"
 
     set +e
-    PGPASSWORD=odoo "$PYTHON" "${BASE_PATH}/odoo-bin" \
+    sudo -u odoo -H "$PYTHON" "${BASE_PATH}/odoo-bin" \
         -c "$conf" \
         -d "$scratch" \
         -i all \
@@ -138,7 +147,10 @@ build_template() {
 
     if [[ $exit_code -ne 0 ]]; then
         echo "ERROR: the full install for ${edition} failed (exit ${exit_code})." >&2
-        echo "See ${WORKDIR}/${edition}.log for the Odoo log." >&2
+        # The workdir is deleted on exit; keep the Odoo log where it can be read.
+        LOG_KEEP="/tmp/cartenz-tplbuild-${VER_TAG}-${edition}.log"
+        cp -f "${WORKDIR}/${edition}.log" "$LOG_KEEP" 2>/dev/null || true
+        echo "See ${LOG_KEEP} for the Odoo log." >&2
         sudo -u postgres dropdb --if-exists "$scratch"
         exit 1
     fi
