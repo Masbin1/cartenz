@@ -79,3 +79,6 @@ backend/test-provider*.js
 
 # The deployment's GitHub SSH key — never tracked
 /.ssh/
+
+# Root-built Next.js output moved aside; never tracked
+frontend/.next.broken-root-*/

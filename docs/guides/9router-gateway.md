@@ -94,8 +94,33 @@ Two conditions before publishing, both easy to get wrong:
 1. **The dashboard must already have a password.** With no stored password the
    gateway accepts only `INITIAL_PASSWORD` or `123456`, and *that* login is refused
    when the request's Host is not local (HTTP 403, "Default password must be changed
-   before remote access"). Set the password from a loopback session (tunnel) first —
-   `GET /api/auth/status` must report `"hasPassword":true`.
+   before remote access"). Set the password first — `GET /api/auth/status` must
+   report `"hasPassword":true` before the public URL is usable at all.
+
+   Opening a tunnel is not required for this: the management API is reachable from
+   the server itself with the CLI token derived from the data dir
+   (`sha256(machine-id + "9r-cli-auth" + auth/cli-secret)[0:16]`, header
+   `x-9r-cli-token` — the same derivation the skill's `9router-gateway-probe.js`
+   uses), so one `PATCH` from a `cartenz` shell is enough:
+
+   ```
+   PATCH http://127.0.0.1:20128/api/settings
+   x-9r-cli-token: <derived token>
+   {"newPassword":"<new>"}                    # first time: no currentPassword needed
+   {"newPassword":"<new>","currentPassword":"<old>"}   # once a password exists
+   ```
+
+   `POST`/`PUT` return 405 (the route serves GET and PATCH only), and the PATCH
+   merges into the settings row — verified by diffing `GET /api/settings` before and
+   after: only `hasPassword` flips. `currentPassword` becomes required as soon as a
+   password exists, so an unauthenticated-looking `400` on the second change means
+   the old password was omitted, not that the token is wrong. Login attempts count
+   against a lockout (5 attempts, then 429 with `Retry-After`); a successful login
+   resets it, so verify with one correct login rather than a guessing loop.
+
+   Verify from the outside, not just loopback: `POST /api/auth/login` to the public
+   URL with the new password must return `{"success":true,"mustChangePassword":false}`,
+   and the old password must return `401`.
 2. **This port has no TLS.** The dashboard password crosses the network in clear
    text. Prefer the tunnel on untrusted networks, or add `auth_basic` to the site
    block (a second, independent layer in front of the dashboard login).
