@@ -20,6 +20,7 @@ import { isActiveStatus, relativeTime } from '@/lib/format';
 import { EnvironmentKindBadge } from '@/components/projects/environment-editor';
 import type {
   AgentCapabilities,
+  AgentSession,
   ProjectDetail,
   ProjectDocument,
   ProjectEnvironment,
@@ -32,13 +33,17 @@ import type {
 /**
  * The AI agent workspace: the primary working surface of the platform.
  *
- * Three panes, as the product requires. Left is project context and task
- * history; centre is the prompt, the agent activity stream and the plan; right is
- * the task's status, its file changes and its test results.
+ * Three panes. Left is project context and the conversation list; centre is the
+ * conversation itself — the prompt, the thread of requests and answers, the
+ * agent activity stream and the plan; right is the selected request's status,
+ * its file changes and its test results.
  *
- * The centre pane is not a chat window. A prompt creates a task, and what follows
- * is a development run with states, tool calls and approval gates - so the
- * interface shows a run, not a conversation.
+ * History is per *conversation*, not per request (ADR-046). Submitting a second
+ * prompt continues the session you are in rather than opening a new entry in the
+ * sidebar, which is how a chat assistant behaves and what a person expects. Each
+ * request is still a task underneath — with its own states, tool calls and
+ * approval gates — and selecting a turn in the thread is what the right-hand
+ * inspector and the activity stream follow.
  */
 export default function AgentWorkspacePage() {
   const { loading, user } = useRequireAuth();
@@ -48,7 +53,10 @@ export default function AgentWorkspacePage() {
   const projectId = params.projectId;
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
-  const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [sessions, setSessions] = useState<AgentSession[]>([]);
+  /** The requests of the open conversation, oldest first — the thread. */
+  const [thread, setThread] = useState<TaskSummary[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(searchParams.get('session'));
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
     searchParams.get('task'),
   );
@@ -62,7 +70,6 @@ export default function AgentWorkspacePage() {
   const [environments, setEnvironments] = useState<ProjectEnvironment[]>([]);
   const [environmentId, setEnvironmentId] = useState<string>('');
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [documents, setDocuments] = useState<ProjectDocument[]>([]);
   const [attachedIds, setAttachedIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
@@ -70,31 +77,44 @@ export default function AgentWorkspacePage() {
 
   const { events, connected } = useTaskStream(selectedTaskId);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const threadEndRef = useRef<HTMLDivElement>(null);
 
   const canDecide = user?.isAdmin ?? false;
 
   const selectedEnvironment = environments.find((entry) => entry.id === environmentId) ?? null;
   const productionEnvironments = environments.filter((entry) => entry.kind === 'production');
+  const openSession = sessions.find((entry) => entry.id === sessionId) ?? null;
+
+  /**
+   * Puts a conversation and the request inside it into the address bar, so a
+   * reload or a shared link reopens what was being looked at.
+   */
+  const syncUrl = useCallback(
+    (nextSessionId: string | null, nextTaskId: string | null) => {
+      const query = new URLSearchParams();
+      if (nextSessionId) query.set('session', nextSessionId);
+      if (nextTaskId) query.set('task', nextTaskId);
+      const suffix = query.toString();
+      router.replace(`/projects/${projectId}/agent${suffix ? `?${suffix}` : ''}`);
+    },
+    [projectId, router],
+  );
 
   const loadProject = useCallback(async () => {
     try {
-      const [detail, taskList, environmentList, sessionList, documentList] = await Promise.all([
+      const [detail, sessionList, environmentList, documentList] = await Promise.all([
         api.projects.get(projectId),
-        api.tasks.listForProject(projectId),
-        api.projects.environments(projectId),
         api.tasks.sessions(projectId),
+        api.projects.environments(projectId),
         api.documents.list(projectId),
       ]);
       setProject(detail);
-      setTasks(taskList);
+      setSessions(sessionList);
       setDocuments(documentList);
-      setSelectedTaskId((current) => current ?? taskList[0]?.id ?? null);
 
-      // Continue in the most recent session by default: a prompt attaches to it
-      // instead of opening a brand-new session every time. A new session is only
-      // opened when the user explicitly chooses to start one from scratch.
-      const latestSession = sessionList.find((entry) => entry.status === 'active') ?? sessionList[0];
-      setSessionId((current) => current ?? latestSession?.id ?? null);
+      // Open the most recent conversation by default, so arriving at the
+      // workspace shows where the work was left rather than an empty pane.
+      setSessionId((current) => current ?? sessionList[0]?.id ?? null);
 
       // Production environments are listed but never selectable: the server
       // refuses them, and offering one would only produce a refusal.
@@ -111,6 +131,36 @@ export default function AgentWorkspacePage() {
       setError(caught instanceof ApiError ? caught.message : 'The project could not be loaded.');
     }
   }, [projectId]);
+
+  /**
+   * Loads the open conversation's requests. A null session is a conversation
+   * that does not exist yet — the next prompt opens it — so the thread is empty
+   * rather than showing someone else's.
+   */
+  const loadThread = useCallback(
+    async (targetSessionId: string | null) => {
+      if (!targetSessionId) {
+        setThread([]);
+        setSelectedTaskId(null);
+        return;
+      }
+      try {
+        const entries = await api.tasks.listForSession(projectId, targetSessionId);
+        setThread(entries);
+        setSelectedTaskId((current) => {
+          // Keep the selection when it is still in this thread; otherwise follow
+          // the newest turn, which is the one a person is waiting on.
+          if (current && entries.some((entry) => entry.id === current)) return current;
+          return entries[entries.length - 1]?.id ?? null;
+        });
+      } catch (caught) {
+        setError(
+          caught instanceof ApiError ? caught.message : 'The conversation could not be loaded.',
+        );
+      }
+    },
+    [projectId],
+  );
 
   useEffect(() => {
     void api.agent
@@ -132,6 +182,10 @@ export default function AgentWorkspacePage() {
   }, [loadProject]);
 
   useEffect(() => {
+    void loadThread(sessionId);
+  }, [sessionId, loadThread]);
+
+  useEffect(() => {
     if (selectedTaskId) void loadTask(selectedTaskId);
     else setTask(null);
     // The diff belongs to the previously selected task, so it is cleared rather
@@ -139,6 +193,11 @@ export default function AgentWorkspacePage() {
     setDiff(null);
     setDiffOpen(false);
   }, [selectedTaskId, loadTask]);
+
+  /** Follows the newest turn as it arrives, the way a chat window does. */
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [thread.length]);
 
   /**
    * The patch is fetched once, when the task reports one exists.
@@ -165,14 +224,17 @@ export default function AgentWorkspacePage() {
   /**
    * The event stream tells the workspace when to re-read the task. Rather than
    * polling on a timer, the arrival of an event is the trigger, so the panes
-   * update as the run progresses and go quiet when it settles.
+   * update as the run progresses and go quiet when it settles. The thread and
+   * the session list are refreshed alongside, because a finishing run changes a
+   * turn's status and the conversation's last-activity time.
    */
   const latestSequence = events.length > 0 ? events[events.length - 1].sequence : 0;
   useEffect(() => {
     if (!selectedTaskId || latestSequence === 0) return;
     void loadTask(selectedTaskId);
-    void api.tasks.listForProject(projectId).then(setTasks);
-  }, [latestSequence, selectedTaskId, projectId, loadTask]);
+    void loadThread(sessionId);
+    void api.tasks.sessions(projectId).then(setSessions).catch(() => undefined);
+  }, [latestSequence, selectedTaskId, sessionId, projectId, loadTask, loadThread]);
 
   const submitPrompt = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -186,6 +248,8 @@ export default function AgentWorkspacePage() {
     try {
       const created = await api.tasks.create(projectId, {
         prompt: prompt.trim(),
+        // Continues the open conversation. Null means none is open, and the
+        // server opens one — which is the only way a new session is created.
         sessionId: sessionId || undefined,
         environmentId: environmentId || undefined,
         kind,
@@ -195,14 +259,32 @@ export default function AgentWorkspacePage() {
       setPrompt('');
       setAttachedIds(new Set());
       setSelectedTaskId(created.id);
-      router.replace(`/projects/${projectId}/agent?task=${created.id}`);
-      setTasks(await api.tasks.listForProject(projectId));
+      syncUrl(created.sessionId, created.id);
+      await loadThread(created.sessionId);
+      setSessions(await api.tasks.sessions(projectId));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The task could not be created.');
     } finally {
       setSubmitting(false);
       promptRef.current?.focus();
     }
+  };
+
+  /**
+   * Opens a past conversation. The thread is reloaded and the newest turn
+   * selected, so the right-hand inspector and the activity stream follow what
+   * is being read.
+   */
+  const openConversation = (nextSessionId: string | null) => {
+    setSessionId(nextSessionId);
+    setSelectedTaskId(null);
+    setTask(null);
+    syncUrl(nextSessionId, null);
+  };
+
+  const selectTurn = (taskId: string) => {
+    setSelectedTaskId(taskId);
+    syncUrl(sessionId, taskId);
   };
 
   const decide = async (decision: 'approved' | 'rejected', note?: string) => {
@@ -220,7 +302,7 @@ export default function AgentWorkspacePage() {
     try {
       await api.tasks.cancel(selectedTaskId, 'Cancelled from the agent workspace');
       await loadTask(selectedTaskId);
-      setTasks(await api.tasks.listForProject(projectId));
+      await loadThread(sessionId);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The task could not be cancelled.');
     }
@@ -338,39 +420,49 @@ export default function AgentWorkspacePage() {
 
           <div className="panel">
             <div className="panel-header">
-              <h2 className="panel-title">Task history</h2>
-              <span className="text-2xs text-content-subtle">{tasks.length}</span>
+              <h2 className="panel-title">Conversations</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  openConversation(null);
+                  setPrompt('');
+                  promptRef.current?.focus();
+                }}
+                disabled={submitting}
+                className="btn-ghost px-2 py-1 text-2xs"
+                title="Start a new conversation. The next request opens it."
+              >
+                + New
+              </button>
             </div>
-            {tasks.length === 0 ? (
+            {sessions.length === 0 ? (
               <p className="px-4 py-5 text-2xs text-content-subtle">
-                No tasks yet. Submit a prompt to create the first.
+                No conversations yet. Submit a prompt to start the first.
               </p>
             ) : (
               <ul className="max-h-[52vh] divide-y divide-surface-border overflow-y-auto">
-                {tasks.map((entry) => {
-                  const selected = entry.id === selectedTaskId;
+                {sessions.map((entry) => {
+                  const selected = entry.id === sessionId;
                   return (
                     <li key={entry.id}>
                       <button
                         type="button"
-                        onClick={() => {
-                          setSelectedTaskId(entry.id);
-                          router.replace(`/projects/${projectId}/agent?task=${entry.id}`);
-                        }}
+                        onClick={() => openConversation(entry.id)}
                         className={`w-full px-3.5 py-2.5 text-left transition-colors ${
                           selected ? 'bg-surface-overlay' : 'hover:bg-surface-overlay/60'
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="line-clamp-2 text-2xs leading-relaxed">
-                            {entry.prompt}
-                          </span>
-                        </div>
+                        <span className="line-clamp-2 text-2xs leading-relaxed">
+                          {entry.title ?? entry.latestPrompt ?? 'Untitled conversation'}
+                        </span>
                         <div className="mt-1.5 flex items-center justify-between gap-2">
-                          <span className="font-mono text-2xs text-content-subtle">
-                            {entry.reference}
+                          <span className="text-2xs text-content-subtle">
+                            {entry.taskCount} request{entry.taskCount === 1 ? '' : 's'} ·{' '}
+                            {relativeTime(entry.lastActivityAt)}
                           </span>
-                          <StatusBadge status={entry.status} />
+                          {entry.latestStatus ? (
+                            <StatusBadge status={entry.latestStatus} />
+                          ) : null}
                         </div>
                       </button>
                     </li>
@@ -381,8 +473,66 @@ export default function AgentWorkspacePage() {
           </div>
         </aside>
 
-        {/* CENTRE: prompt, agent activity, plan */}
+        {/* CENTRE: the conversation — prompt, thread, activity, plan */}
         <section className="space-y-4">
+          {thread.length > 0 ? (
+            <div className="panel">
+              <div className="panel-header">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <h2 className="panel-title">Conversation</h2>
+                  <span className="truncate text-2xs text-content-subtle">
+                    {openSession?.title ?? 'Current'}
+                  </span>
+                </div>
+                <span className="shrink-0 text-2xs text-content-subtle">
+                  {thread.length} request{thread.length === 1 ? '' : 's'}
+                </span>
+              </div>
+
+              {/*
+                The thread. Each turn is the prompt as asked and, for a chat
+                task, the answer beneath it. Selecting a turn is what the
+                activity stream and the right-hand inspector follow, so a person
+                can scroll back to an earlier request and still see its run.
+              */}
+              <div className="max-h-[52vh] space-y-3 overflow-y-auto px-4 py-3">
+                {thread.map((turn) => {
+                  const selected = turn.id === selectedTaskId;
+                  return (
+                    <div key={turn.id} className="space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => selectTurn(turn.id)}
+                        className={`ml-auto block max-w-[85%] rounded-2xl rounded-tr-sm px-4 py-2.5 text-left transition-colors ${
+                          selected
+                            ? 'bg-accent/15 ring-1 ring-accent/40'
+                            : 'bg-surface-raised hover:bg-surface-overlay'
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap text-xs leading-relaxed">
+                          {turn.prompt}
+                        </p>
+                        <div className="mt-1.5 flex items-center justify-end gap-2">
+                          <span className="font-mono text-2xs text-content-subtle">
+                            {turn.reference}
+                          </span>
+                          <StatusBadge status={turn.status} />
+                        </div>
+                      </button>
+
+                      {turn.kind === 'chat' && turn.answer ? (
+                        <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-surface-overlay px-4 py-3">
+                          <ChatMarkdown content={turn.answer} />
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                <div ref={threadEndRef} />
+              </div>
+            </div>
+          ) : null}
+
           <form onSubmit={submitPrompt} className="panel p-4">
             <label htmlFor="prompt" className="panel-title mb-2 block">
               Development request
@@ -555,7 +705,7 @@ export default function AgentWorkspacePage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setSessionId(null);
+                    openConversation(null);
                     setPrompt('');
                     promptRef.current?.focus();
                   }}
@@ -563,11 +713,11 @@ export default function AgentWorkspacePage() {
                   className="btn-ghost shrink-0 px-2 py-1 text-2xs"
                   title={
                     sessionId
-                      ? 'Start a new session on the next request'
-                      : 'The next request will already start a new session'
+                      ? 'Start a new conversation. The next request opens it.'
+                      : 'The next request will already start a new conversation'
                   }
                 >
-                  {sessionId ? 'New session' : 'New session (next request)'}
+                  {sessionId ? 'New conversation' : 'New conversation (next request)'}
                 </button>
               </div>
               <button type="submit" disabled={submitting} className="btn-primary shrink-0">
@@ -585,19 +735,6 @@ export default function AgentWorkspacePage() {
               onDecide={decide}
               canDecide={canDecide}
             />
-          ) : null}
-
-          {task?.kind === 'chat' && task.answer ? (
-            <div className="panel">
-              <div className="panel-header">
-                <h2 className="panel-title">Answer</h2>
-              </div>
-              <div className="px-4 py-3">
-                <div className="max-w-[90%] rounded-2xl rounded-tl-sm bg-surface-overlay px-4 py-3">
-                  <ChatMarkdown content={task.answer} />
-                </div>
-              </div>
-            </div>
           ) : null}
 
           <div className="panel">

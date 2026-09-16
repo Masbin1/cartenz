@@ -46,8 +46,14 @@ export class TasksController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Query('limit') limit?: string,
+    @Query('sessionId') sessionId?: string,
   ) {
-    return this.tasks.listForProject(user, projectId, limit ? Number(limit) : undefined);
+    return this.tasks.listForProject(
+      user,
+      projectId,
+      limit ? Number(limit) : undefined,
+      sessionId || undefined,
+    );
   }
 
   @Get('projects/:projectId/sessions')

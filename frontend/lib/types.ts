@@ -189,9 +189,13 @@ export interface ProjectProvisioningInfo {
 export interface TaskSummary {
   id: string;
   reference: string;
+  /** The conversation this request belongs to (ADR-046). */
+  sessionId?: string | null;
   prompt: string;
   status: AgentTaskStatus;
   kind: TaskKind;
+  /** Present on a chat task that has answered; used to render the thread. */
+  answer?: string | null;
   branch: string | null;
   commitHash?: string | null;
   simulated?: boolean;
@@ -374,12 +378,26 @@ export interface ProjectMemory {
   updatedAt: string;
 }
 
+/**
+ * One conversation with the agent (ADR-046).
+ *
+ * This is what the workspace's history pane lists — not individual requests.
+ * The extra fields let a row be read without opening it.
+ */
 export interface AgentSession {
   id: string;
   title: string | null;
   status: 'active' | 'ended';
   startedAt: string;
   endedAt: string | null;
+  /** How many requests this conversation holds. */
+  taskCount: number;
+  /** When it was last worked on, for ordering and for the relative timestamp. */
+  lastActivityAt: string;
+  /** The state of its most recent request, or null when it holds none. */
+  latestStatus: AgentTaskStatus | null;
+  /** The most recent prompt, falling back to the title the session was opened with. */
+  latestPrompt: string | null;
 }
 
 export type TaskEventType =

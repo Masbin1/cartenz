@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import {
   agentActions,
@@ -33,6 +33,11 @@ import { isTerminalStatus, type AgentTaskStatus } from '../../agent/task-state';
 import { REPOSITORY_BACKED_PROJECT_TYPES, GIT_CONNECTION_TYPES, type AgentTaskKind, type ProjectType } from '../../core/enums';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import type { CreateTaskDto } from './dto/task.dto';
+
+/** `count(*)`, typed for the grouped session query below. */
+const sqlCount = () => sql<number>`count(*)`;
+/** `max(created_at)`, typed for the grouped session query below. */
+const sqlMaxCreatedAt = () => sql<Date>`max(${agentTasks.createdAt})`;
 
 /**
  * Agent sessions and tasks.
@@ -275,16 +280,28 @@ export class TasksService {
     };
   }
 
-  async listForProject(user: AuthenticatedUser, projectId: string, limit = 50) {
+  async listForProject(
+    user: AuthenticatedUser,
+    projectId: string,
+    limit = 50,
+    sessionId?: string,
+  ) {
     await this.authz.requireProjectAccess(user, projectId);
+
+    // A session id narrows the list to one conversation (ADR-046). The
+    // session's own project is checked rather than trusted, so a valid id from
+    // another project reads nothing rather than another project's tasks.
+    if (sessionId) await this.assertSessionBelongsToProject(sessionId, projectId);
 
     return this.database.db
       .select({
         id: agentTasks.id,
         reference: agentTasks.reference,
+        sessionId: agentTasks.sessionId,
         prompt: agentTasks.prompt,
         kind: agentTasks.kind,
         status: agentTasks.status,
+        answer: agentTasks.answer,
         branch: agentTasks.branch,
         commitHash: agentTasks.commitHash,
         simulated: agentTasks.simulated,
@@ -293,8 +310,15 @@ export class TasksService {
         completedAt: agentTasks.completedAt,
       })
       .from(agentTasks)
-      .where(eq(agentTasks.projectId, projectId))
-      .orderBy(desc(agentTasks.createdAt))
+      .where(
+        sessionId
+          ? and(eq(agentTasks.projectId, projectId), eq(agentTasks.sessionId, sessionId))
+          : eq(agentTasks.projectId, projectId),
+      )
+      // Oldest first when reading one session: it is a conversation, and a
+      // conversation is read downwards. The unfiltered list stays newest-first,
+      // which is what a "most recent work" listing should be.
+      .orderBy(sessionId ? agentTasks.createdAt : desc(agentTasks.createdAt))
       .limit(Math.min(limit, 200));
   }
 
@@ -503,10 +527,22 @@ export class TasksService {
     return { id: taskId, status: 'cancelled' as const };
   }
 
+  /**
+   * The project's conversations, newest first (ADR-046).
+   *
+   * This is what the workspace's history pane lists. Each row carries enough to
+   * be read without opening it — how many requests it holds, when it was last
+   * worked on, and the state of its most recent task — because the alternative
+   * is a list of titles that all look alike.
+   *
+   * The counts are computed in one grouped query rather than per row: a project
+   * with fifty sessions would otherwise be fifty round trips to render a
+   * sidebar.
+   */
   async listSessions(user: AuthenticatedUser, projectId: string) {
     await this.authz.requireProjectAccess(user, projectId);
 
-    return this.database.db
+    const sessions = await this.database.db
       .select({
         id: agentSessions.id,
         title: agentSessions.title,
@@ -518,6 +554,58 @@ export class TasksService {
       .where(eq(agentSessions.projectId, projectId))
       .orderBy(desc(agentSessions.startedAt))
       .limit(50);
+
+    if (sessions.length === 0) return [];
+
+    const sessionIds = sessions.map((session) => session.id);
+
+    const counts = await this.database.db
+      .select({
+        sessionId: agentTasks.sessionId,
+        taskCount: sqlCount(),
+        lastActivityAt: sqlMaxCreatedAt(),
+      })
+      .from(agentTasks)
+      .where(inArray(agentTasks.sessionId, sessionIds))
+      .groupBy(agentTasks.sessionId);
+
+    const countBySession = new Map(counts.map((row) => [row.sessionId, row]));
+
+    // The most recent task of each session, for the status dot. Fetched as one
+    // ordered read over the same ids and reduced here, because "first row per
+    // group" is awkward to express portably and this list is bounded at 50
+    // sessions.
+    const recent = await this.database.db
+      .select({
+        sessionId: agentTasks.sessionId,
+        status: agentTasks.status,
+        prompt: agentTasks.prompt,
+        createdAt: agentTasks.createdAt,
+      })
+      .from(agentTasks)
+      .where(inArray(agentTasks.sessionId, sessionIds))
+      .orderBy(desc(agentTasks.createdAt));
+
+    const latestBySession = new Map<string, (typeof recent)[number]>();
+    for (const row of recent) {
+      if (row.sessionId && !latestBySession.has(row.sessionId)) {
+        latestBySession.set(row.sessionId, row);
+      }
+    }
+
+    return sessions.map((session) => {
+      const aggregate = countBySession.get(session.id);
+      const latest = latestBySession.get(session.id);
+      return {
+        ...session,
+        taskCount: Number(aggregate?.taskCount ?? 0),
+        lastActivityAt: aggregate?.lastActivityAt ?? session.startedAt,
+        latestStatus: latest?.status ?? null,
+        // Falls back to the first prompt the session was named with, so a
+        // session always shows something a person can recognise.
+        latestPrompt: latest?.prompt ?? session.title,
+      };
+    });
   }
 
   // -------------------------------------------------------------------------

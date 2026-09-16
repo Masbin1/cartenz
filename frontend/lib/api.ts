@@ -530,6 +530,15 @@ export const api = {
     listForProject: (projectId: string) =>
       request<TaskSummary[]>(`/projects/${projectId}/tasks`),
 
+    /**
+     * The requests of one conversation, oldest first (ADR-046). This is what
+     * the workspace renders as a thread when a session is opened.
+     */
+    listForSession: (projectId: string, sessionId: string) =>
+      request<TaskSummary[]>(
+        `/projects/${projectId}/tasks?sessionId=${encodeURIComponent(sessionId)}`,
+      ),
+
     create: (
       projectId: string,
       body: {
