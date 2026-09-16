@@ -97,6 +97,11 @@ fi
 # Duplicate. This is the whole trick: files are copied, not replayed.
 sudo -u postgres createdb -O odoo -T "$TEMPLATE" "$PROJECT_NAME"
 
+# The clone — unlike the sealed template it was copied from — must accept
+# connections: templates are built with datallowconn = false.
+sudo -u postgres psql -v ON_ERROR_STOP=1 \
+    -c "UPDATE pg_database SET datallowconn = true WHERE datname = '${PROJECT_NAME}';"
+
 # Neutralise the clone's identity. gen_random_uuid() is built into PostgreSQL
 # 13+; the UPDATE is guarded by a WHERE so a future Odoo that stores the UUID
 # elsewhere cannot make this fail the whole provisioning.
