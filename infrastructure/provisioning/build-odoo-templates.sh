@@ -145,6 +145,20 @@ build_template() {
         addons="${ENTERPRISE_PATH},${addons}"
     fi
 
+    # Odoo 19 dropped the `-i all` expansion (the name `all` is now only
+    # discarded by the module-name check, so `-i all` installs nothing but
+    # base). Expand the list ourselves from the addons directories.
+    local -a addons_dirs
+    IFS=',' read -ra addons_dirs <<< "$addons"
+    local modules module_count
+    modules="$(list_modules "${addons_dirs[@]}")"
+    if [[ -z "$modules" ]]; then
+        echo "ERROR: no modules found under ${addons}" >&2
+        exit 1
+    fi
+    module_count="$(awk -F, '{print NF}' <<< "$modules")"
+    echo "Installing ${module_count} modules from: ${addons}"
+
     local conf="${WORKDIR}/${edition}.conf"
     write_conf "$conf" "$addons"
 
@@ -157,7 +171,7 @@ build_template() {
     sudo -u odoo -H "$PYTHON" "${BASE_PATH}/odoo-bin" \
         -c "$conf" \
         -d "$scratch" \
-        -i all \
+        -i "$modules" \
         --without-demo=all \
         --stop-after-init \
         --no-http \

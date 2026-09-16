@@ -71,7 +71,7 @@ The operator builds the templates once per version and edition, with the
 scripts in `infrastructure/provisioning/`:
 
 - `build-odoo-templates.sh <version> <base> [enterprise]` runs
-  `odoo-bin -i all --without-demo=all --stop-after-init` against a scratch
+  `odoo-bin -i <every module in the addons path> --without-demo=all --stop-after-init` (Odoo 19 no longer expands `-i all`) against a scratch
   database, once for each edition, and turns the result into a template named
   `cartenz_tpl_<ver>_ent` / `cartenz_tpl_<ver>_com`. This is the one-time cost:
   an enterprise full install can take tens of minutes; after it exists, nothing
