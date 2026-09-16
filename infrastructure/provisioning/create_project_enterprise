@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# ============================================================
+# LinkedERP - reference create_project_enterprise — ADR-039, ADR-045
+# ============================================================
+#
+# The Enterprise twin of the reference `create_project` beside it. The only
+# differences are the two that matter for Enterprise:
+#
+#   1. addons_path puts the enterprise tree ahead of the base addons, so
+#      enterprise modules override their community counterparts.
+#   2. The database is duplicated from the *enterprise* template
+#      (cartenz_tpl_<ver>_ent), which holds every Enterprise and Community
+#      module installed.
+#
+# The contract with the platform is identical: same argument shape, same
+# directory layout and ownership, same master-password output block. See the
+# header of `create_project` for the full account.
+#
+# Usage:
+#   create_project_enterprise <project-name> <http-port> [<odo version>]
+#
+# Example:
+#   create_project_enterprise dodolbintangmas 7001 19.0
+# ============================================================
+
+# --- Host configuration (adapt these) -------------------------------
+BASE_DIR="/opt/odoo"
+PROJECTS_DIR="${BASE_DIR}/projects"
+SCRIPTS_DIR="${BASE_DIR}/scripts"
+ODOO_BASE="/opt/odoo/versions/19.0/odoo"           # repo root holding odoo-bin
+ODOO_ENTERPRISE="/opt/odoo/versions/19.0/enterprise"
+ODOO_PYTHON="/opt/odoo/venv19/bin/python"
+BASE_DOMAIN="masbintang.space"
+ODOO_USER="odoo"
+DB_HOST="127.0.0.1"
+DB_PORT="5432"
+# --------------------------------------------------------------------
+
+usage() {
+    echo
+    echo "Usage:"
+    echo "  create_project_enterprise <project-name> <http-port> [<odo version>]"
+    echo
+    exit 1
+}
+
+if [[ "$EUID" -ne 0 ]]; then
+    echo "ERROR: This script must be run as root." >&2
+    exit 1
+fi
+
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+    usage
+fi
+
+PROJECT_NAME="$1"
+HTTP_PORT="$2"
+VERSION="${3:-}"
+
+if [[ ! "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]{1,30}$ ]]; then
+    echo "ERROR: Invalid project name." >&2
+    exit 1
+fi
+
+if [[ ! "$HTTP_PORT" =~ ^[0-9]+$ || "$HTTP_PORT" -lt 1024 || "$HTTP_PORT" -gt 65534 ]]; then
+    echo "ERROR: Invalid HTTP port." >&2
+    exit 1
+fi
+
+if [[ -n "$VERSION" && ! "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    echo "ERROR: Invalid Odoo version '${VERSION}'." >&2
+    exit 1
+fi
+
+if [[ ! -d "$ODOO_ENTERPRISE" ]]; then
+    echo "ERROR: the enterprise addons directory ${ODOO_ENTERPRISE} does not exist." >&2
+    exit 1
+fi
+
+GEVENT_PORT=$((HTTP_PORT + 1))
+PROJECT_DIR="${PROJECTS_DIR}/${PROJECT_NAME}"
+CONF_DIR="${PROJECT_DIR}/config"
+
+if [[ -d "$PROJECT_DIR" ]]; then
+    echo "ERROR: ${PROJECT_DIR} already exists." >&2
+    exit 1
+fi
+
+# --- 1. Directory skeleton -------------------------------------------
+mkdir -p "${PROJECT_DIR}"/{addons,config,data,logs}
+
+# --- 2. Database: enterprise template duplication (ADR-045) -----------
+if [[ -n "$VERSION" ]]; then
+    URL="https://${PROJECT_NAME}.${BASE_DOMAIN}"
+    "${SCRIPTS_DIR}/create-project-db.sh" "$PROJECT_NAME" enterprise "$VERSION" "$URL"
+else
+    sudo -u postgres createdb -O "$ODOO_USER" "$PROJECT_NAME"
+    PGPASSWORD=odoo "$ODOO_PYTHON" "${ODOO_BASE}/odoo-bin" \
+        -d "$PROJECT_NAME" \
+        --addons-path "${ODOO_ENTERPRISE},${ODOO_BASE}/addons" \
+        --db_host "$DB_HOST" --db_port "$DB_PORT" --db_user "$ODOO_USER" \
+        -i base --stop-after-init --no-http
+fi
+
+# --- 3. Master password + odoo.conf -----------------------------------
+MASTER_PASSWORD="$(openssl rand -hex 16)"
+DB_PASSWORD="$(openssl rand -hex 16)"
+
+# Enterprise first: an enterprise module must win over its community namesake.
+ADDONS_PATH="${ODOO_ENTERPRISE},${ODOO_BASE}/addons,${PROJECT_DIR}/addons"
+
+cat > "${CONF_DIR}/odoo.conf" <<EOF
+[options]
+addons_path = ${ADDONS_PATH}
+db_name = ${PROJECT_NAME}
+db_host = ${DB_HOST}
+db_port = ${DB_PORT}
+db_user = ${ODOO_USER}
+db_password = ${DB_PASSWORD}
+admin_passwd = ${MASTER_PASSWORD}
+http_interface = 127.0.0.1
+http_port = ${HTTP_PORT}
+gevent_port = ${GEVENT_PORT}
+data_dir = ${PROJECT_DIR}/data
+logfile = ${PROJECT_DIR}/logs/odoo.log
+EOF
+
+# --- 4. systemd unit ---------------------------------------------------
+cat > "/etc/systemd/system/odoo-${PROJECT_NAME}.service" <<EOF
+[Unit]
+Description=Odoo ${PROJECT_NAME} (Enterprise)
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=${ODOO_USER}
+Group=${ODOO_USER}
+ExecStart=${ODOO_PYTHON} ${ODOO_BASE}/odoo-bin -c ${CONF_DIR}/odoo.conf
+Restart=on-failure
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# --- 5. Nginx site ------------------------------------------------------
+cat > "/etc/nginx/sites-available/${PROJECT_NAME}" <<EOF
+server {
+    listen 80;
+    server_name ${PROJECT_NAME}.${BASE_DOMAIN};
+
+    location / {
+        proxy_pass http://127.0.0.1:${HTTP_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 300s;
+    }
+}
+EOF
+ln -sf "/etc/nginx/sites-available/${PROJECT_NAME}" "/etc/nginx/sites-enabled/${PROJECT_NAME}"
+
+# --- 6. Ownership -------------------------------------------------------
+chown -R "${ODOO_USER}:${ODOO_USER}" "$PROJECT_DIR"
+chmod 750 "$PROJECT_DIR" "$CONF_DIR" "${PROJECT_DIR}/data" "${PROJECT_DIR}/logs"
+chmod 640 "${CONF_DIR}/odoo.conf"
+
+# --- 7. Bring it up ------------------------------------------------------
+systemctl daemon-reload
+systemctl enable --now "odoo-${PROJECT_NAME}.service" >/dev/null
+nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null || true
+
+# --- 8. The contract output ---------------------------------------------
+cat <<EOF
+
+Odoo Master Password:
+
+  ${MASTER_PASSWORD}
+
+Project:   ${PROJECT_NAME}
+Database:  ${PROJECT_NAME}
+URL:       https://${PROJECT_NAME}.${BASE_DOMAIN}
+Port:      ${HTTP_PORT}
+EOF

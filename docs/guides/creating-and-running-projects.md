@@ -74,7 +74,8 @@ With provisioning enabled, the registered version also selects the
 **full-installation template database** (built once per version and edition by
 `build-odoo-templates.sh`): the new project's database is duplicated from it,
 so every app of the chosen edition is installed on first login — no install
-step, and nothing generated per request.
+step, and nothing generated per request. Setting that up is
+`docs/guides/odoo-version-templates.md`.
 
 ### 1.5 Environments and branches (ADR-038, ADR-021)
 
