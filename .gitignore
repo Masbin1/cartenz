@@ -76,3 +76,6 @@ backend/test-provider*.js
 .zshrc
 .gitconfig
 .agent-browser/
+
+# The deployment's GitHub SSH key — never tracked
+/.ssh/
