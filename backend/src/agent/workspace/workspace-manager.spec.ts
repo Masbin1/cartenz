@@ -1,7 +1,12 @@
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WorkspaceManager, buildAiBranchName, type AllocateWorkspaceInput } from './workspace-manager';
+import {
+  WorkspaceManager,
+  buildAiBranchName,
+  taskBranchFor,
+  type AllocateWorkspaceInput,
+} from './workspace-manager';
 import type { AppConfig } from '../../core/config/configuration';
 import type { DatabaseService } from '../../core/database/database.service';
 import type { GitService } from '../git/git.service';
@@ -68,6 +73,26 @@ describe('buildAiBranchName', () => {
   it('sanitises the reference as well as the prompt', () => {
     const branch = buildAiBranchName('task/../9281', 'Add a field');
     expect(branch).not.toContain('..');
+  });
+});
+
+/**
+ * ADR-046: the branch a task works on is the environment's branch, so the commit
+ * lands where the person pointed the task. `main` is the exception — the
+ * platform never works on `main` directly (ADR-028) — so a main-targeted task
+ * keeps a branch of its own.
+ */
+describe('taskBranchFor', () => {
+  it('works on the environment branch directly', () => {
+    expect(taskBranchFor('staging', 'task_1', 'Fix the VAT rounding error')).toBe('staging');
+    expect(taskBranchFor('development', 'task_1', 'Fix the VAT rounding error')).toBe('development');
+    expect(taskBranchFor('feat/thing', 'task_1', 'Fix the VAT rounding error')).toBe('feat/thing');
+  });
+
+  it('keeps an AI branch only for main', () => {
+    expect(taskBranchFor('main', 'task_9281', 'VAT rounding fix')).toBe(
+      'ai/task_9281-vat-rounding-fix',
+    );
   });
 });
 

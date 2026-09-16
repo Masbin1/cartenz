@@ -144,7 +144,8 @@ export class WorkspaceManager {
 
   /**
    * Provisions a workspace and, where the project has a repository, clones it and
-   * creates the AI branch.
+   * checks out the branch the task works on: the environment's branch, or — for
+   * `main` alone — a branch of the task's own (ADR-046).
    *
    * A project with no repository - an `ai_project` - still gets a workspace, so
    * that the analysis and planning states have somewhere to work and the tool
@@ -171,7 +172,7 @@ export class WorkspaceManager {
     const repositoryPath = join(root, 'repository');
     const metadataPath = join(root, 'metadata');
     const logsPath = join(root, 'logs');
-    const branch = buildAiBranchName(input.taskReference, input.prompt);
+    const branch = taskBranchFor(input.defaultBranch, input.taskReference, input.prompt);
 
     await mkdir(metadataPath, { recursive: true });
     await mkdir(logsPath, { recursive: true });
@@ -246,7 +247,12 @@ export class WorkspaceManager {
       const usage = await this.measure(repositoryPath);
       this.assertWithinQuota(usage);
 
-      await this.git.createBranch(repositoryPath, branch);
+      // A branch of the task's own is created only where the task may not work on
+      // the target branch itself — `main` (ADR-028). Everywhere else the clone's
+      // checkout is the branch the work lands on (ADR-046).
+      if (branch !== input.defaultBranch) {
+        await this.git.createBranch(repositoryPath, branch);
+      }
 
       await this.markStatus(workspaceId, 'ready', clone.headCommit, usage.bytes, usage.files);
 
@@ -736,4 +742,20 @@ export function buildAiBranchName(taskReference: string, prompt: string): string
 
   const reference = taskReference.replace(/[^A-Za-z0-9_-]/g, '');
   return slug.length > 0 ? `ai/${reference}-${slug}` : `ai/${reference}`;
+}
+
+/**
+ * The branch a task's work lands on (ADR-046).
+ *
+ * The environment's branch is where the work goes: a person picked it, and no
+ * separate AI branch stands between the commit and the branch it was asked for.
+ * `main` is the single exception — the platform never works on `main` directly
+ * (ADR-028) — so a main-targeted task keeps a branch of its own.
+ */
+export function taskBranchFor(
+  defaultBranch: string,
+  taskReference: string,
+  prompt: string,
+): string {
+  return defaultBranch === 'main' ? buildAiBranchName(taskReference, prompt) : defaultBranch;
 }

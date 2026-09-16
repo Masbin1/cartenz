@@ -262,7 +262,7 @@ export class AgentWorkflow {
   }
 
   /**
-   * ANALYZING. Clones the repository, creates the AI branch, and reports what the
+   * ANALYZING. Clones the repository, checks out the task's branch, and reports what the
    * project actually is.
    *
    * This is the step Phase 2 changed most. It previously narrated invented facts;

@@ -638,7 +638,7 @@ export const agentTasks = pgTable(
      * Null for a task created before environments existed.
      */
     environmentId: uuid('environment_id'),
-    /** The commit the AI branch was created from, for the diff base. */
+    /** The commit the task's branch was created from, for the diff base. */
     baseCommit: text('base_commit'),
     /** Aggregate diff statistics, so a list view need not fetch the patch. */
     diffStats: jsonb('diff_stats').$type<Record<string, unknown> | null>(),

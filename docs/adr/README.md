@@ -44,3 +44,4 @@ with the condition under which it is retired.
 | [ADR-042](ADR-042-image-attachments-vision.md) | Image attachments — paste a screenshot or mock-up and have the agent see it | Accepted |
 | [ADR-043](ADR-043-per-project-access-control.md) | Per-project access control | Accepted |
 | [ADR-045](ADR-045-centralized-odoo-versions-and-template-databases.md) | Centralized Odoo version repositories and template-database provisioning | Accepted |
+| [ADR-046](ADR-046-tasks-work-on-the-chosen-branch.md) | A task works on the branch a person chose | Accepted |
