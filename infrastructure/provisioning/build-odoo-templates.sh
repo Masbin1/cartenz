@@ -97,6 +97,26 @@ mkdir -p "$WORKDIR/data"
 chown -R odoo:odoo "$WORKDIR"
 
 # A throwaway conf pointing at exactly the addons of one edition.
+list_modules() {
+    # Prints every module directory found in the given addons paths as a
+    # comma-separated list, excluding test modules. stdlib only.
+    local -a dirs=("$@")
+    python3 - "${dirs[@]}" <<'PY'
+import os, sys
+names = set()
+for ad in sys.argv[1:]:
+    if not ad:
+        continue
+    for entry in sorted(os.listdir(ad)):
+        p = os.path.join(ad, entry)
+        if (os.path.isdir(p)
+                and not entry.startswith(('.', 'test_'))
+                and os.path.isfile(os.path.join(p, '__manifest__.py'))):
+            names.add(entry)
+print(','.join(sorted(names)))
+PY
+}
+
 write_conf() {
     local conf="$1"
     local addons="$2"
