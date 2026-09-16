@@ -4,6 +4,14 @@
 **Date:** 2026-08-28
 **Amends:** ADR-03 (provider abstraction), ADR-020 (AI data boundary)
 
+> **Amended by ADR-044.** Decision 1 below describes the setting as
+> organisation-scoped, in `organization_model_settings`. The organisation no
+> longer exists: the table was renamed to `model_settings` and lost its
+> scoping column, so the provider chain configured here is now one setting for
+> the whole deployment, edited by an admin, rather than one per organisation.
+> Everything else in this record — the write-only key, the connection test,
+> the failure-mode reasoning — is unchanged.
+
 ## Context
 
 The model provider was bound once at boot from `AI_PROVIDER`, `AI_API_KEY`,

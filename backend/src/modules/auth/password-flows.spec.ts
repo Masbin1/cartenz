@@ -22,7 +22,6 @@ describe('password flows', () => {
   const passwords = new PasswordService();
 
   const noAudit = { record: async () => undefined } as unknown as AuditService;
-  const noTokens = { revokeAllForUser: async () => undefined } as unknown as TokenService;
   const config = {
     auth: { accessTtl: '15m', refreshTtl: '30d', jwtSecret: 'test-secret' },
   } as unknown as AppConfig;

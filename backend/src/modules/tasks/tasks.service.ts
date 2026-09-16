@@ -288,7 +288,7 @@ export class TasksService {
   ) {
     await this.authz.requireProjectAccess(user, projectId);
 
-    // A session id narrows the list to one conversation (ADR-046). The
+    // A session id narrows the list to one conversation (ADR-047). The
     // session's own project is checked rather than trusted, so a valid id from
     // another project reads nothing rather than another project's tasks.
     if (sessionId) await this.assertSessionBelongsToProject(sessionId, projectId);
@@ -528,7 +528,7 @@ export class TasksService {
   }
 
   /**
-   * The project's conversations, newest first (ADR-046).
+   * The project's conversations, newest first (ADR-047).
    *
    * This is what the workspace's history pane lists. Each row carries enough to
    * be read without opening it — how many requests it holds, when it was last

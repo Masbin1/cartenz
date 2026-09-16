@@ -48,17 +48,23 @@ clone, not the total.
 
 ## 2. Prerequisites
 
-> **Shortcut:** `infrastructure/scripts/install-server.sh` performs sections 2
-> through 6, 9 and part of 5 in one run. Sections 7 (reverse proxy and TLS), 8
-> (Odoo validation) and 9 (first run) still need a person. Preview it first:
+> **Shortcut:** `infrastructure/install/install.sh` performs sections 2
+> through 6, 9 and part of 5 in one run, and the `odoo` stage installs (or
+> adopts) the Odoo estate, the `provisioning` stage installs the operator
+> scripts and sudoers rule, and `--with hermes` / `--with templates` add the
+> heavy optional pieces. Sections 7 (reverse proxy and TLS), 8 (Odoo
+> validation) and 9 (first run) still need a person. Preview it first:
 >
 > ```bash
-> sudo DRY_RUN=1 ./infrastructure/scripts/install-server.sh   # changes nothing
-> sudo ./infrastructure/scripts/install-server.sh
+> sudo ./infrastructure/install/install.sh --dry-run          # changes nothing
+> sudo ./infrastructure/install/install.sh                    # the whole estate
+> sudo ./infrastructure/install/install.sh --with hermes,templates
 > ```
 >
-> The script is idempotent and never overwrites an existing `.env` or database.
-> The manual steps below remain the reference for what it does and why.
+> The installer is idempotent and never overwrites an existing `.env` or
+> database. See `install.sh --help` for stage selection
+> (`--only`/`--skip`/`--with`). The manual steps below remain the reference
+> for what it does and why.
 
 ### 2.1 System packages
 

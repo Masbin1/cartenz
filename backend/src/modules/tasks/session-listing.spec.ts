@@ -9,7 +9,7 @@ import type { ProjectEnvironmentsService } from '../projects/project-environment
 import type { AgentOrchestrator } from '../../agent/orchestration/agent-orchestrator.interface';
 
 /**
- * ADR-046: the conversation list, and the per-conversation thread behind it.
+ * ADR-047: the conversation list, and the per-conversation thread behind it.
  *
  * The workspace's history pane lists sessions, not tasks. These tests pin the
  * two backend behaviours that make that work: `listSessions` reporting each
@@ -27,9 +27,19 @@ const session = (id: string, overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const makeService = (database: Partial<DatabaseService>) =>
+/**
+ * A loose stand-in for DatabaseService. Partial<DatabaseService> would still
+ * require db to be a full Database, so this takes whatever shape a test needs
+ * and casts once, at the one place that matters.
+ */
+/** The one private method these tests reach into, typed loosely on purpose. */
+type WithSessionCheck = {
+  assertSessionBelongsToProject: (...args: unknown[]) => Promise<unknown>;
+};
+
+const makeService = (database: Record<string, unknown>) =>
   new TasksService(
-    database as DatabaseService,
+    database as unknown as DatabaseService,
     { requireProjectAccess: jest.fn() } as unknown as AuthorizationService,
     { record: jest.fn() } as unknown as AuditService,
     {} as unknown as TaskRepository,
@@ -149,7 +159,7 @@ describe('TasksService — sessions and the conversation thread', () => {
       });
       const service = makeService({ db: { select } });
       const check = jest
-        .spyOn(service as never, 'assertSessionBelongsToProject')
+        .spyOn(service as unknown as WithSessionCheck, 'assertSessionBelongsToProject')
         .mockResolvedValue('s');
 
       await service.listForProject({} as never, 'project-1', 50, 's');
@@ -162,7 +172,7 @@ describe('TasksService — sessions and the conversation thread', () => {
     it('refuses a session id that does not belong to the project', async () => {
       const service = makeService({});
       jest
-        .spyOn(service as never, 'assertSessionBelongsToProject')
+        .spyOn(service as unknown as WithSessionCheck, 'assertSessionBelongsToProject')
         .mockRejectedValue(new Error('does not belong'));
 
       await expect(

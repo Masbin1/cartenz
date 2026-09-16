@@ -1,4 +1,4 @@
-# ADR-046: The workspace history lists conversations, not requests
+# ADR-047: The workspace history lists conversations, not requests
 
 - Status: Accepted
 - Date: 16 September 2026

@@ -43,6 +43,8 @@ with the condition under which it is retired.
 | [ADR-041](ADR-041-created-project-github-repository.md) | A created project gets a GitHub repository, and its pushes land in it | Accepted |
 | [ADR-042](ADR-042-image-attachments-vision.md) | Image attachments — paste a screenshot or mock-up and have the agent see it | Accepted |
 | [ADR-043](ADR-043-per-project-access-control.md) | Per-project access control | Accepted |
+| [ADR-044](ADR-044-region-scoped-deployment.md) | One deployment, region-scoped — the organisation is gone | Accepted |
 | [ADR-045](ADR-045-centralized-odoo-versions-and-template-databases.md) | Centralized Odoo version repositories and template-database provisioning | Accepted |
-| [ADR-046](ADR-046-workspace-history-lists-conversations.md) | The workspace history lists conversations, not requests | Accepted |
-| [ADR-046](ADR-046-tasks-work-on-the-chosen-branch.md) | A task works on the branch a person chose | Accepted |
+| [ADR-046](ADR-046-tasks-work-on-the-chosen-branch.md) | A task works on the branch a person chose, not a branch of its own | Accepted |
+| [ADR-047](ADR-047-workspace-history-lists-conversations.md) | The workspace history lists conversations, not requests | Accepted |
+| [ADR-048](ADR-048-single-staged-installer.md) | One staged installer for the whole estate, replacing three overlapping scripts | Accepted |

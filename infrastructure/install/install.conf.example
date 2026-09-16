@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#
+# LinkedERP Cartenz installer configuration.
+#
+# Copy this file next to install.sh and name it `install.conf`:
+#
+#   cp install.conf.example install.conf
+#   sudo ./install.sh
+#
+# Every knob below has the same name as the environment variable it sets, and
+# the environment wins over this file, so a one-off run can override a value
+# without editing the record:
+#
+#   ODOO_SERIES=18.0 sudo ./install.sh --skip odoo
+#
+# The file is deliberately not shipped as install.conf: install.sh works from
+# defaults, and each host's actual values are a record that belongs to that
+# host, not to the repository.
+
+# ── platform ──────────────────────────────────────────────────────────────────
+# Where the Cartenz code lives and which account runs it.
+INSTALL_ROOT=/opt/cartenz
+SERVICE_USER=cartenz
+LOG_DIR=/var/log/cartenz
+
+# Platform database. DB_PASSWORD empty means "generate one and write it to .env".
+DB_NAME=linkederp_ai
+DB_USER=linkederp
+DB_PASSWORD=
+# When INSTALL_ROOT is empty, clone from here instead of copying the checkout.
+REPO_URL=
+NODE_MAJOR=22
+
+# ── odoo estate ───────────────────────────────────────────────────────────────
+# Each version lives under ODOO_ROOT/versions/<ver>/{odoo,enterprise,venv}.
+# A version whose odoo/ already holds odoo-bin is ADOPTED (read-only to the
+# platform), never reinstalled.
+ODOO_ROOT=/opt/odoo
+ODOO_SERIES=19.0
+ODOO_GROUP=odoo
+# Interpreter that can import the chosen Odoo. Empty means "use the per-version
+# venv the installer creates".
+ODOO_PYTHON=
+
+# ── model gateway and agent ───────────────────────────────────────────────────
+GATEWAY_LINK=/opt/9router
+HERMES_HOME_DIR=/opt/cartenz/.hermes
+HERMES_REPO=https://github.com/NousResearch/hermes-agent.git
+HERMES_REF=main
+HERMES_PORT=8642
+# A file of KEY=VALUE lines holding Hermes' own model-provider credentials
+# (e.g. ANTHROPIC_API_KEY). Never committed to the repository.
+HERMES_MODEL_KEYS_FILE=
+# =0 to leave Cartenz's default engine to the portal rather than pointing it
+# at the local Hermes API.
+WIRE_CARTENZ_TO_HERMES=1
+
+# ── provisioning and templates ────────────────────────────────────────────────
+# Where the operator's provisioning scripts and the per-project directories go.
+PROVISIONING_SCRIPTS_DIR=/opt/odoo/scripts
+PROJECTS_DIR=/opt/odoo/projects

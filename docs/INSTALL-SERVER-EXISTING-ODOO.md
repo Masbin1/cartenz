@@ -92,7 +92,7 @@ project, everything else read-only** (ADR-031, ADR-033).
 | Enterprise (`/opt/enterprise`) | **read** | Same rule — and a community project must not even read it (ADR-037) |
 | `projects_root/<project>/addons/` | **write** | The only writable Odoo path; modules are created here |
 | Odoo customer databases | **nothing** | Validation uses a dedicated role with `CREATEDB` and nothing else (see §7) |
-| Platform database `linkederp_ai` | Cartenz owns it | Created by install-server.sh |
+| Platform database `linkederp_ai` | Cartenz owns it | Created by the `cartenz` install stage |
 
 Permissions to make on the server:
 

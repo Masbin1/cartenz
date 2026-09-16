@@ -96,24 +96,37 @@ approval. Every auto-approved push is recorded as `task.push_auto_approved`, so
 
 ## 2. Install the Platform (fastest path)
 
-The repository ships an idempotent installer that performs sections 2–6 and 9 of
-`INSTALL-SERVER.md`. Preview it first — it changes nothing in dry-run:
+The repository ships one installer that performs sections 2–6 and 9 of
+`INSTALL-SERVER.md`, plus the Odoo estate and the provisioning scripts. Preview
+it first — it changes nothing in dry-run:
 
 ```bash
 sudo -u cartenz git clone <your-repository-url> /opt/cartenz   # or place the code there
 cd /opt/cartenz
 
-sudo DRY_RUN=1 ./infrastructure/scripts/install-server.sh   # prints the plan
-sudo ./infrastructure/scripts/install-server.sh             # performs it
+sudo ./infrastructure/install/install.sh --dry-run     # prints the plan
+sudo ./infrastructure/install/install.sh               # the whole estate
 ```
 
-What it does: preflight → system packages + Node 22 → the non-root `cartenz`
-service account → dependencies → generate `.env` with fresh secrets → create the
-`linkederp`/`linkederp_ai` database role → build + migrate → install 9router →
-install systemd units → logrotate → health check.
+What the default run does, as stages: `base` (preflight → system packages +
+Node 22 → the non-root `cartenz` service account) → `odoo` (install the Odoo
+source per version, or adopt an existing checkout read-only) → `gateway`
+(9router) → `cartenz` (dependencies → generate `.env` with fresh secrets →
+create the `linkederp`/`linkederp_ai` database role → build + migrate → systemd
+units → logrotate → health check) → `provisioning` (sudoers rule, operator
+scripts, projects directory, Odoo paths in `.env`).
+
+Heavy pieces are opt-in:
+
+```bash
+sudo ./infrastructure/install/install.sh --with hermes         # Hermes agent
+sudo ./infrastructure/install/install.sh --with templates      # template DBs (20-60 min)
+```
 
 What it deliberately leaves to you: TLS / reverse proxy (§7), Odoo validation
 (§8), and the model provider chain (§9). Those are decisions, not defaults.
+Knobs live in one file — copy `infrastructure/install/install.conf.example` to
+`install.conf` and edit it; the file is the host's record.
 
 If you prefer to do it by hand, `INSTALL-SERVER.md` sections 2–6 are the exact
 manual equivalent.
@@ -426,8 +439,8 @@ sudo install -o cartenz -g cartenz -m 600 /secure-backup/cartenz.env /opt/carten
 
 # 3. Install. It skips an existing .env, so SECRETS_ROOT_KEY survives.
 cd /opt/cartenz
-sudo DRY_RUN=1 ./infrastructure/scripts/install-vps-full.sh    # prints the plan
-sudo ./infrastructure/scripts/install-vps-full.sh
+sudo ./infrastructure/install/install.sh --dry-run    # prints the plan
+sudo ./infrastructure/install/install.sh              # performs it
 
 # 4. Restore the databases, then re-run migrations (forward-only, additive).
 sudo systemctl stop cartenz-worker cartenz-api cartenz-portal

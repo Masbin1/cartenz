@@ -6,6 +6,13 @@
 
 Amends ADR-031 (configuration surface) and ADR-032 (what is scaffolded).
 
+> **Amended by ADR-044.** `organization_odoo_settings` below was renamed to
+> `odoo_settings` and lost its scoping column: the organisation it was scoped
+> to no longer exists, so these paths are now one setting for the whole
+> deployment, edited by an admin. The per-project addons directory this record
+> also introduces is unaffected — that boundary was always per project, not per
+> organisation.
+
 ## Context
 
 Two things came out of using ADR-031 and ADR-032.

@@ -7,7 +7,7 @@ validates it, commits and pushes.
 
 The governing architecture is held in `docs/reference/`:
 
-1. `LinkedERP_AIDevAgent_TechArchitecture_v1.5_2026-09-16_1.docx`
+1. `LinkedERP_AIDevAgent_TechArchitecture_v1.7_2026-09-16_1.docx`
 2. `LinkedERP_AIDevAgent_FrameworkSelection_v1.0_2026-08-27_1.docx`
 
 Those documents are authoritative. Implementation decisions that deviate from
@@ -58,7 +58,7 @@ why path containment, not workspace disposal, is what bounds it there.
 | Database | PostgreSQL, Drizzle ORM, Drizzle Kit migrations |
 | Queue and realtime | Redis, BullMQ, WebSocket |
 | Model | Vercel AI SDK 6 behind `ModelProvider`; hosted, self-hosted or scripted (ADR-020) |
-| Model configuration | Per organisation, set in the portal; token sealed, never returned (ADR-023) |
+| Model configuration | Deployment-wide, set in the portal by an admin; token sealed, never returned (ADR-023, ADR-044) |
 | AI egress | One chokepoint, three filters, applied in both directions (ADR-020) |
 | Orchestration | Explicit tool loop behind `AgentOrchestrator` (Temporal is the target, ADR-011) |
 | Execution modes | Three adapters, one mapping from project type (ADR-028) |
@@ -73,6 +73,8 @@ why path containment, not workspace disposal, is what bounds it there.
 | Secrets | Envelope encryption behind `SecretsProvider` (Vault is the target, ADR-014) |
 | Identity | First-party JWT behind `JwtAuthGuard` (Keycloak or Ory is the target, ADR-015) |
 | On-premise posture | Reports which databases its own credentials can reach (ADR-026) |
+| Tenancy and access | One deployment, region-scoped; a flat admin flag plus per-project grants (ADR-043, ADR-044) |
+| Image attachments | Paste a screenshot or mock-up into a prompt and the agent sees it (ADR-042) |
 
 Two guiding principles run through the code:
 
@@ -150,7 +152,7 @@ none exists.
 │       │   ├── validation/     Odoo runtime registry, scratch databases, test runner (ADR-027)
 │       │   └── workspace/      Workspace manager and path containment
 │       ├── core/       Config, database, redis, process, secrets, authz, audit, ai-boundary, events
-│       └── modules/    auth, organizations, projects, tasks, approvals, realtime, health
+│       └── modules/    auth, project-access, projects, tasks, approvals, documents, settings, realtime, health
 ├── frontend/           Next.js portal
 ├── connector/          Python on-premise connector (Phase 6, not started)
 ├── infrastructure/
@@ -160,7 +162,7 @@ none exists.
 │   ├── proxy/          Nginx configuration
 │   └── scripts/        Local runtime, installers and verification scripts
 └── docs/
-    ├── adr/            Architecture decision records (ADR-011 … ADR-041)
+    ├── adr/            Architecture decision records (ADR-011 … ADR-047)
     ├── guides/         Creating and running projects; server setup
     ├── reference/      The approved architecture documents
     ├── implementation-status.md
@@ -269,9 +271,12 @@ same email adds another project rather than failing.
 What each suite is for:
 
 - **`smoke-test.sh`** exercises the documented workflow through the HTTP API only,
-  and asserts the security properties: organisation isolation, that a credential
-  never appears in a response or the audit trail, and that database export cannot
-  be granted.
+  and asserts the security properties: that a credential never appears in a
+  response or the audit trail, and that database export cannot be granted. **It
+  is currently broken** — written against the organisation model ADR-044 removed,
+  it registers with `organizationName` and posts `organizationId`, neither of
+  which the API accepts any longer. It has not been rewritten; see
+  `docs/verification-log.md`.
 - **`smoke-test-repository.sh`** covers Phase 2: that the clone, the analysis, the
   diff and the commit are real, that generated XML is well formed, that workspaces
   are destroyed, and that five hostile repository URLs are refused. Its **§10b** is
@@ -332,18 +337,23 @@ Connect or create project
   → IMPLEMENTING             a tool loop the model drives, every call mediated
   → TESTING                  a real Odoo run where a runtime is configured; simulated
                              and stated as such where one is not
-  → COMMITTING               real commit on the AI branch
+  → COMMITTING               real commit on the environment's own branch
   → WAITING_APPROVAL         the push is put to a person (auto-approved for
                              development/staging when enabled)
   → PUSHING                  real push to the connected remote
   → COMPLETED                workspace released
 ```
 
-Branches follow `ai/task-{task_id}-{short-description}`. The agent never commits to
-the default branch, and never works `main`.
+A task works on the branch its environment already targets — the branch a person
+chose when submitting the prompt — rather than a branch cut for the task and
+merged in afterward. `main` keeps a branch of its own (`ai/task_<reference>...`)
+because the platform never commits or pushes to `main` directly (ADR-021,
+ADR-028, ADR-046).
 
 A task may also be **conversational** (ADR-029): a question about the project that
-changes nothing and therefore needs no approval.
+changes nothing and therefore needs no approval. The portal's workspace groups
+tasks by conversation rather than listing one row per request, so a six-message
+exchange is one entry with a request count, not six (ADR-047).
 
 ---
 

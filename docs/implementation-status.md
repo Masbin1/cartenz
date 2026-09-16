@@ -5,7 +5,7 @@
 | Document owner | Lead Software Architect |
 | Last updated | 14 September 2026 |
 | Milestone delivered | Phase 5 — Odoo-aware development (Phases 1–4 complete) |
-| Governing documents | `docs/reference/` (Technical Architecture v1.5, Framework and Technology Selection v1.0) |
+| Governing documents | `docs/reference/` (Technical Architecture v1.7, Framework and Technology Selection v1.0) |
 
 This document records the state of the implementation against the approved architecture. It is
 updated at the end of every milestone. It is a working engineering record, not a client deliverable.
@@ -16,7 +16,7 @@ updated at the end of every milestone. It is a working engineering record, not a
 
 The primary source of truth is the pair of approved documents held in `docs/reference/`:
 
-1. `LinkedERP_AIDevAgent_TechArchitecture_v1.5_2026-09-16_1.docx`
+1. `LinkedERP_AIDevAgent_TechArchitecture_v1.7_2026-09-16_1.docx`
 2. `LinkedERP_AIDevAgent_FrameworkSelection_v1.0_2026-08-27_1.docx`
 
 The Framework and Technology Selection record (ADR-01 to ADR-10) supersedes any earlier indicative
@@ -186,7 +186,7 @@ has been reviewed.
 | Worker entry point (BullMQ) | Complete |
 | Push safety: process-layer refusal, environments, SSH remotes | Complete (ADR-021) |
 | Targeted edits (`edit_file`) and the destructive-rewrite guard | Complete (ADR-022) |
-| Portal-managed model provider, per organisation | Complete (ADR-023) |
+| Portal-managed model provider (deployment-wide since ADR-044) | Complete (ADR-023) |
 | Project archive, restore and permanent delete | Complete (ADR-024) |
 | Odoo model index: files ranked by what they declare | Complete (ADR-025) |
 | Database isolation posture (`GET /health/posture`) | Complete (ADR-026) |
@@ -194,11 +194,17 @@ has been reviewed.
 | Three execution modes behind adapters | Complete (ADR-028) |
 | Conversational task kind with inline write approval | Complete (ADR-029) |
 | Document ingestion (Markdown, plain text, PDF, DOCX) | Complete (ADR-030) |
-| Odoo source as a read-only reference; organisation Odoo settings | Complete (ADR-031, ADR-033) |
+| Odoo source as a read-only reference; portal-configured Odoo settings | Complete (ADR-031, ADR-033) |
 | Project scaffolding, runnable dev server, edition, branches | Complete (ADR-032, ADR-034–038) |
 | Instance provisioning via the operator's scripts, behind `sudo` | Complete (ADR-039) |
 | HTTPS issuance and the sealed instance master password | Complete (ADR-040) |
 | GitHub repository creation for a created project | Complete (ADR-041) |
+| Image attachments the agent can see | Complete (ADR-042) |
+| Per-project access control: grants, revocation, requests | Complete (ADR-043) |
+| Region-scoped deployment; organisation removed | Complete (ADR-044) |
+| Centralised Odoo version catalog and template databases | Complete (ADR-045) |
+| A task works on the branch it was given | Complete (ADR-046) |
+| Session listing and threaded task history | Complete (ADR-047) |
 
 ### 3.3 Frontend (Next.js)
 
@@ -219,10 +225,14 @@ has been reviewed.
 | Archive, restore and permanent-delete surfaces | Complete (ADR-024) |
 | Conversational task view | Complete (ADR-029) |
 | Project document upload and list | Complete (ADR-030) |
-| Organisation Odoo settings (base, enterprise, projects root) | Complete (ADR-033) |
+| Odoo settings (base, enterprise, projects root, version catalog) | Complete (ADR-033, ADR-045) |
 | Create-with-AI flow, with edition selection | Complete (ADR-036, ADR-037) |
 | Instance panel: URL, database, HTTPS status, master-password reveal | Complete (ADR-040) |
 | On-premise location picker | Complete (ADR-028) |
+| Image paste and attachment in the prompt | Complete (ADR-042) |
+| Locked project cards, request-access button, owner grant panel | Complete (ADR-043) |
+| User administration: region, admin flag, reset password | Complete (ADR-044) |
+| Conversation-grouped workspace history | Complete (ADR-047) |
 
 ---
 
@@ -270,7 +280,7 @@ implementation decisions taken by the engineering team.
 | ADR-020 | Model provider binding, the AI data boundary, and the prompt-injection posture |
 | ADR-021 | Push safety, target environments, and SSH remotes |
 | ADR-022 | Tool output fidelity and targeted edits |
-| ADR-023 | The model provider is configured in the portal, per organisation |
+| ADR-023 | The model provider is configured in the portal (deployment-wide since ADR-044) |
 | ADR-024 | Project removal: archive, restore, and a permanent delete that destroys sealed secrets |
 | ADR-025 | Candidate files are ranked by what they declare, not by text match |
 | ADR-026 | On-premise deployment, and reporting which databases the platform's own role can reach |
@@ -280,7 +290,7 @@ implementation decisions taken by the engineering team.
 | ADR-030 | Document ingestion: a project's PRD is read, and a task may be executed from it |
 | ADR-031 | The Odoo source is a read-only reference on every Odoo project |
 | ADR-032 | Scaffolding a custom addon when an Odoo project is created |
-| ADR-033 | Odoo paths are organisation settings, and each project gets its own addons directory |
+| ADR-033 | Odoo paths are configured in the portal (deployment-wide since ADR-044), and each project gets its own addons directory |
 | ADR-034 | A new project is ready to run: environments, addons path and module detection |
 | ADR-035 | A scaffolded project runs as a local dev server, without Docker |
 | ADR-036 | A Create-with-AI project is scaffolded locally and runs on-premise |
@@ -289,6 +299,12 @@ implementation decisions taken by the engineering team.
 | ADR-039 | A created project is a running Odoo instance, provisioned by the operator's own scripts |
 | ADR-040 | A provisioned instance gets HTTPS, and its master password is sealed rather than shown |
 | ADR-041 | A created project gets a GitHub repository, and its pushes land in it |
+| ADR-042 | Image attachments: paste a screenshot or mock-up and have the agent see it |
+| ADR-043 | Per-project access control: grants, revocation and a request-and-approve flow |
+| ADR-044 | One deployment, region-scoped: the organisation is gone, replaced by region plus an admin flag |
+| ADR-045 | Centralised Odoo version repositories and full-installation template databases |
+| ADR-046 | A task works on the branch a person chose, not a branch of its own |
+| ADR-047 | The workspace history lists conversations, not requests |
 
 ---
 
@@ -390,17 +406,17 @@ safe; which file to write is judgement the scripted provider does not have.
 
 ---
 
-## AI provider configuration (complete, ADR-023)
+## AI provider configuration (complete, ADR-023; scope amended by ADR-044)
 
 `AI_PROVIDER` and `AI_API_KEY` still work and are still the fallback. What is new is that an
-organisation can set its own provider in the portal, at `/settings`:
+admin can set the deployment's provider chain in the portal, at `/settings`:
 
 | | |
 | --- | --- |
 | Providers | Anthropic; any OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, self-hosted); or no model at all |
 | The token | Entered in the portal, sealed by the secrets provider, never returned by any endpoint |
 | Verification | A connection test that makes one structured call carrying no repository content |
-| Scope | Per organisation, which is the tenancy boundary everywhere else and the billing relationship |
+| Scope | Deployment-wide (ADR-044). Written as per-organisation when this milestone shipped; the organisation no longer exists, so it is now one setting for everyone. |
 
 The AI data boundary is unchanged. Provider construction moved into a resolver, and the unguarded
 providers are still not exported from `ModelModule`, so there is still no path to a model that
@@ -569,10 +585,11 @@ prompt names the reference and carries the Odoo conventions that were previously
 with `_inherit` rather than redefining, models under `models/`, views under `views/`, declare every
 new model in `ir.model.access.csv`.
 
-**Odoo paths became organisation settings** (`organization_odoo_settings`: base, enterprise, projects
-root), edited in the portal beside the AI providers, with the environment as fallback rather than
-authority. The endpoint reports which paths actually exist on the host, because a path that is
-merely stored is a task-time failure waiting to happen.
+**Odoo paths became a portal setting** (base, enterprise, projects root — originally
+`organization_odoo_settings`, renamed and de-scoped to `odoo_settings` by ADR-044), edited beside the
+AI providers, with the environment as fallback rather than authority. The endpoint reports which
+paths actually exist on the host, because a path that is merely stored is a task-time failure
+waiting to happen.
 
 **Each project gets `<projects_root>/<name>/addons/`**, and that directory is the only writable Odoo
 path. This is the point of the layout: a task can read all of Odoo and write only into its own
@@ -671,36 +688,127 @@ found it.
 
 ## Per-project access control (ADR-043)
 
-Implemented 15 September 2026. Membership of the organisation no longer implies access to every
-project in it: a member sees the whole list, and the projects they were not granted are locked
-rather than hidden.
+Implemented 15 September 2026, against the organisation model that still existed that day.
+Membership of the organisation no longer implied access to every project in it: a member saw the
+whole list, and the projects they were not granted were locked rather than hidden.
+
+> **Superseded the next day by ADR-044.** "Organisation", "member" and "owners and admins, by rank"
+> below describe the layer this milestone found and worked alongside. The organisation is gone;
+> read every such phrase as the region-plus-admin-flag model that replaced it. The mechanism this
+> milestone actually built — the grant, the request-and-approve flow, the 403 — is unaffected and is
+> what ADR-044 now sits underneath.
 
 | Concern | Before | Now |
 | --- | --- | --- |
-| Who reaches a project | Any member of the organisation reached every project in it. | Owners and admins still do, by rank, and so does whoever created the project. A developer or viewer needs an explicit grant in `project_members`. |
+| Who reaches a project | Any member of the organisation reached every project in it. | Admins still do, by the flag, and so does whoever created the project. Anyone else needs an explicit grant in `project_members`. |
 | What a locked project looks like | n/a | Listed, with `description`, `repositoryUrl`, `taskCount` and `openTaskCount` withheld, `hasAccess: false`, and a way to ask. |
-| Opening one | n/a | **403**, not 404. The organisation publishes that the project exists; what is withheld is access to it. Hiding it would contradict the list. |
-| Asking for access | n/a | `project_access_requests` queues one pending row per person per project (a partial unique index enforces it); an owner or admin approves or rejects. |
-| Existing members | n/a | The migration backfills a grant for every non-admin member of every project's organisation, so nobody lost access on the day this shipped. |
+| Opening one | n/a | **403**, not 404. The list publishes that the project exists; what is withheld is access to it. Hiding it would contradict the list. |
+| Asking for access | n/a | `project_access_requests` queues one pending row per person per project (a partial unique index enforces it); an admin approves or rejects. |
+| Existing members | n/a | The migration backfills a grant for every non-admin member of every project's organisation, so nobody lost access on the day this shipped — and that backfilled grant is what carried access forward again the next day, when ADR-044 removed the organisation itself. |
 
 **One decision point.** The rule lives in `decideProjectAccess` — a pure function, unit-tested — and
-is applied at `AuthorizationService.requireProjectAccess`, which all 28 project-scoped call sites
+is applied at `AuthorizationService.requireProjectAccess`, which every project-scoped call site
 already reached (ADR-015). Nothing else had to be taught the rule.
 
 **What the grant carries:** access, and nothing else. A grant is a boolean "may open this project";
-what a person may then *do* stays governed by their organisation role. A per-project role would be
-a second permission model to keep in step with the first.
+what a person may then *do* stays governed by their rank (admin or not, ADR-044) and the project's
+own `agentPermissions`. A per-project role would be a second permission model to keep in step with
+the first.
 
 **Verified end to end** by `infrastructure/scripts/smoke-test-access.sh` — 24 checks, all passing on
-the development host: the project is listed and redacted for an ungranted developer, opening it is
-403, a request is created and cannot be duplicated, the owner sees it queued, approving it makes the
+the development host: the project is listed and redacted for an ungranted user, opening it is
+403, a request is created and cannot be duplicated, the admin sees it queued, approving it makes the
 same request 200, the panel reports the access as revocable because it came from a grant, and a
 revoke returns the 403. The decision and the grant are written in one transaction, so no request can
 read `approved` with no grant behind it.
 
-**Not built, deliberately:** notifications. One organisation, few people, and a request that waits
-an hour costs nothing. The count on the owner's settings page is the whole mechanism until a
-request is seen getting stuck.
+**Not built, deliberately:** notifications. A request that waits does not fail silently — it sits in
+the admin's queue with a count — but nothing pushes a notice to anyone. This is the same gap task
+6 of the operator's list names for the platform generally: no dashboard, no notification route, for
+this queue or for anything else.
+
+---
+
+## One deployment, region-scoped (ADR-044)
+
+Built one day after ADR-043, and removes the layer that ADR-043 had just finished working
+alongside. `organizations` and `organization_members` are dropped entirely; every table that
+carried an `organization_id` loses the column. What replaces the organisation is two things, not
+one: `region` (a closed three-value enumeration — Indonesia, South Africa, India — deciding which
+projects a person sees by default) and `users.is_admin` (a flat boolean deciding who may manage
+anything beyond their own access).
+
+| Concern | Before | Now |
+| --- | --- | --- |
+| Who sees a project by default | Membership of its organisation. | Region match, or an ADR-043 grant, or having created it. An admin sees every region. |
+| Who may manage settings, users or provisioning | An organisation role (owner/admin). | `users.is_admin`. There is no rank between "admin" and "everyone else" any more. |
+| Project name uniqueness | Per organisation. | Deployment-wide: one flat name space. |
+| The model provider chain | One row per organisation (`organization_model_settings`). | One row per priority, deployment-wide (`model_settings`, renamed and de-scoped). Amends ADR-023. |
+| The Odoo version and path settings | One row per organisation (`organization_odoo_settings`). | One row, deployment-wide (`odoo_settings`, renamed and de-scoped). Amends ADR-033. |
+
+**Why:** the organisation was not doing any work ADR-043's grant did not already do better, and this
+deployment serves one client relationship rather than many tenants — a model key or an Odoo checkout
+path was never actually a per-organisation choice here, just a column recording a distinction nobody
+made.
+
+**The migration (`0015_regions.sql`) is one file, ordered so nothing is half-dropped:** add `region`
+and `is_admin`; backfill every existing project to `indonesia` and every prior organisation
+owner/admin to `is_admin = true`; rename and de-scope the two settings tables; strip
+`organization_id` from every other table; drop `organization_members` and `organizations` last, once
+nothing references them.
+
+**What this breaks, on paper rather than in the running platform:** `infrastructure/scripts/smoke-test.sh`
+is written against the organisation model — `organizationName` at registration,
+`organizations.0.role` read back, `organizationId` posted on project creation. None of those exist
+any more, so the script fails outright. It has not been rewritten.
+
+---
+
+## Centralised Odoo versions and template databases (ADR-045)
+
+A version catalog (`odoo_version_repositories`) holds one row per Odoo series — the base checkout,
+the enterprise addons path, active or not — edited in the portal. A project's declared version
+resolves its source paths through this catalog rather than through one organisation-wide path, so a
+deployment hosting several Odoo series can say precisely which checkout serves which.
+
+**The centralisation this milestone was actually asked for:** *"saya mau semua apps nya terinstall
+semua ... jadi waktu kita bikin project baru, dbnya bisa duplicate dari sana."* A new project's
+database is now cloned from a prepared template — one per version and edition, built once with every
+application installed via `build-odoo-templates.sh`, and cloned in seconds with
+`CREATE DATABASE ... TEMPLATE ...` rather than reinstalled per request. This is also what task 1 of
+the operator's list asked for directly: one centralised Odoo checkout per version, and no AI tokens
+spent producing what is already on disk.
+
+---
+
+## A task works on the branch it was given (ADR-046)
+
+Every clone-backed task used to clone the environment's branch and then cut a branch of its own —
+`ai/task_<reference>-<description>` — so the branch a person chose when submitting the prompt was
+never the branch that actually changed; it changed only after someone merged the AI branch by hand.
+On-premise already worked the other way.
+
+The operator asked for the clone-backed behaviour to match: *"kita kan udah milih branch ya pada
+saat mau promting ... langsung eksekusi di branch yang udah di pilih aja."* The workspace now clones
+the environment's branch and stops — the checked-out branch is the branch the work lands on, and the
+push follows it. `main` keeps a branch of its own, because the platform never works or pushes to
+`main` directly (ADR-021, ADR-028). No merge, no delete-the-AI-branch chore, no branch litter.
+
+---
+
+## The workspace history lists conversations (ADR-047)
+
+The history pane listed one row per task, so a single six-message conversation produced six
+near-identical rows, each opening on its own page — while the conversation itself existed in the
+data (`agent_sessions`) and nowhere in the interface. The left pane now lists sessions (title,
+request count, last activity, latest status); the centre pane renders the open conversation as a
+thread, and selecting an earlier turn shows that turn's own run, diff and approvals underneath it.
+Nothing about how a task executes changed — every request is still an independent run with its own
+states — only how the history of them is presented.
+
+This is the fix for task 4.2 of the operator's list: it does not change how a code change is made in
+chat (that path — read freely, write through the `chat_edit` approval — was already correct, ADR-029)
+but it does change whether the chat *reads* like one, which was the actual complaint.
 
 ---
 
@@ -724,3 +832,15 @@ particular host.
 The honest gap in the record is that the smoke suites have not all been re-run against a real model
 provider. Two were failing the last time they were tried that way, and the failures were not
 diagnosed. Until they are, "all suites pass" is a claim about the scripted provider.
+
+**`smoke-test.sh` is currently broken**, not merely unverified: it was written against the
+organisation model ADR-044 removed, and fails at registration because `organizationName` and
+`organizationId` are no longer accepted anywhere in the API. It needs rewriting against the region
+model, not re-running.
+
+**Still not built, from the operator's own list:** an independent backup and restore process, a
+backup triggered ahead of a push to staging or main, security-update and monitoring tooling for a
+linked hosted server, and an administration dashboard with notifications. None of these four is
+blocked by a decision recorded here — each is an operational build the architecture does not yet
+have an ADR for. `docs/reference/` chapter 18 (Client Estate Architecture) states this explicitly,
+capability by capability.

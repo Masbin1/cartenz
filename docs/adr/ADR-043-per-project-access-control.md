@@ -3,6 +3,14 @@
 **Status:** Accepted
 **Date:** 2026-09-15
 
+> **Amended by ADR-044**, one day later. Every "organisation" and "organisation
+> role" below describes the layer this record found and worked alongside; that
+> layer is now gone. `requireOrganizationMember` is replaced by a flat
+> `users.is_admin` flag, and "role in the organisation" is now just "admin or
+> not". The mechanism this record actually introduces — the `project_members`
+> grant, the request-and-approve flow, the 403-not-404 refusal — is unchanged
+> and is what ADR-044 now sits underneath.
+
 ## Context
 
 Authorisation had one layer: organisation membership (ADR-015). `requireProjectAccess` resolved the

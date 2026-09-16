@@ -943,3 +943,69 @@ against a real model provider, and those failures have not been diagnosed. Until
 suites pass" is a claim about the scripted provider.
 
 The Docker Compose path remains unverified on this host, which has no container runtime (ADR-012).
+
+---
+
+## Documentation reconciled against two days of undocumented tenancy and workflow changes (2026-09-16)
+
+Re-checking the operator's task list against the tree found the tree had moved substantially since
+the previous pass: ADR-042 through ADR-047 had shipped, with the same pattern of drift documentation
+review keeps finding — decisions committed without their record, and a genuine numbering collision.
+
+### What the audit found
+
+| Finding | Evidence |
+| --- | --- |
+| **ADR-044 had no file.** 28 source files cited it — `projects.service.ts`, the auth module, the settings module, `frontend/lib/auth.tsx` and more — for a decision `docs/adr/` did not contain | `grep -rln "ADR-044"` returned 28 files against 0 matching `docs/adr/ADR-044*.md` |
+| **Two unrelated decisions collided on ADR-046.** `workspace-manager.ts` (branch selection, committed 12:48) and `tasks.service.ts` / the frontend (conversation history, committed 17:54) both claimed ADR-046, and the ADR index listed both under one number | `git log --follow` on each file; `docs/adr/README.md` had two `[ADR-046]` rows |
+| **The organisation is gone, and the documentation did not say so.** Migration `0015_regions.sql` dropped `organizations` and `organization_members` entirely and de-scoped `organization_model_settings` / `organization_odoo_settings` to deployment-wide tables — yet `README.md`, `docs/implementation-status.md`, ADR-023 and ADR-033 still described model and Odoo configuration as "per organisation," and ADR-043's own milestone section, written one day before the removal, still spoke of organisation roles as the live mechanism | `grep -c "organi[sz]ation"` in `schema.ts`: 0. In `docs/implementation-status.md` before this pass: 13 |
+| **`smoke-test.sh` is broken, not merely unverified.** It registers with `organizationName`, reads `organizations.0.role` from the response, and posts `organizationId` on project creation — none of which the API accepts since the migration | Read against the current `AuthController` and `CreateProjectDto`, neither of which has an organisation-shaped field |
+| **The README's workflow diagram and branch description were stale.** ADR-046 stopped cutting a task branch of its own; the README still said "real commit on the AI branch" and "Branches follow `ai/task-{task_id}-{short-description}`" as the general rule | `backend/src/agent/workspace/workspace-manager.ts:748` |
+| **Backend typecheck was failing**, unrelated to any of the above: two spec files from yesterday's commits did not compile | `tsc --noEmit`: `password-flows.spec.ts` (unused `noTokens`), `session-listing.spec.ts` (four mock-typing errors against `Partial<DatabaseService>`, two `spyOn(x as never, ...)` casts that erased the mocked method's signature) |
+
+### Fixed
+
+- **`docs/adr/ADR-044-region-scoped-deployment.md`** written from `0015_regions.sql`,
+  `authorization.service.ts` and `projects.service.ts`; added to the ADR index.
+- **The ADR-046 collision resolved**: the branch-selection decision (committed first) keeps
+  ADR-046; the conversation-history decision is renamed to ADR-047, with its file, its 7 code
+  comments (`page.tsx`, `api.ts`, `types.ts` ×2, `tasks.service.ts` ×2, `session-listing.spec.ts`)
+  and the index all repointed.
+- **A superseding note added to ADR-023, ADR-033 and ADR-043**, each pointing at ADR-044 rather
+  than being silently reworded — the decisions they record are unchanged; only the scope
+  ("per organisation" → "deployment-wide") is amended.
+- **`README.md`**: the architecture table, repository layout, workflow diagram and branch
+  description brought current; the `smoke-test.sh` description now states plainly that it is
+  broken rather than describing what it once verified.
+- **`docs/implementation-status.md`**: all 13 stale organisation mentions corrected or left as
+  intentional history inside "Before → Now" tables; five new milestone sections added
+  (ADR-042, ADR-044, ADR-045, ADR-046, ADR-047); the ADR-043 section annotated as superseded the
+  next day; the closing section names the four capabilities the operator's list still asks for
+  that have no ADR yet — independent backup and restore, a pre-push backup trigger, on-premise
+  security-update and monitoring tooling, and an administration dashboard with notifications.
+- **`backend/src/modules/auth/password-flows.spec.ts`**: the dead `noTokens` fixture removed —
+  every test that needs a `TokenService` stand-in already builds its own inside `build()`.
+- **`backend/src/modules/tasks/session-listing.spec.ts`**: `makeService` retyped to accept
+  `Record<string, unknown>` and cast once through `unknown`, rather than claiming a shape
+  (`Partial<DatabaseService>`) its callers never actually matched; the two `spyOn(service as
+  never, ...)` calls replaced with a named `WithSessionCheck` type so the mocked method keeps a
+  checkable signature instead of being erased to `never`.
+
+### Verified
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Backend typecheck | `npm run typecheck` | exit 0 — was 6 errors across 2 files before the fix |
+| Frontend typecheck | `npm run typecheck` | exit 0 |
+| Unit tests | `npm test` | 684 passed, 61 suites, 0 failed |
+| Backend lint | `npx eslint src --ext .ts` | exit 0 |
+| Frontend lint | `npx next lint` | "No ESLint warnings or errors" |
+| ADR-046/047 reference consistency | `grep -rn "ADR-046"` limited to `workspace-manager.*`; `grep -rn "ADR-047"` limited to session/conversation files | Confirmed, no cross-contamination |
+| `organizations` / `organization_members` absent from schema | `grep -n "organization" backend/src/core/database/schema.ts` | 0 matches |
+
+### Not verified
+
+`smoke-test.sh` was not rewritten — the finding is recorded, not fixed, because rewriting it
+against the region model is a larger task than the documentation pass that found it broken. The
+smoke suites generally remain un-re-run against a real model provider, as recorded in the previous
+entry; that gap is unchanged by this pass.
