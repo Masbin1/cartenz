@@ -42,12 +42,10 @@ export type LoopToolRunner = (
 
 export interface ImplementationLoopInput {
   /**
-   * Whose model provider to use (ADR-023). The configuration is per
-   * organisation, so the caller must say which one rather than the loop assuming
-   * a single provider bound at boot.
+   * Scopes an agent-backed endpoint's memory to this project, when known
+   * (ADR-023). The provider chain itself is global (ADR-044), so this is the
+   * only thing the caller passes.
    */
-  readonly organizationId: string;
-  /** Scopes an agent-backed endpoint's memory to this project, when known. */
   readonly projectId?: string;
   readonly prompt: string;
   readonly projectName: string;
@@ -109,7 +107,7 @@ export class ModelImplementationLoop {
   ) {}
 
   async run(input: ImplementationLoopInput): Promise<ImplementationLoopOutcome> {
-    const provider = await this.providers.forOrganization(input.organizationId, input.projectId);
+    const provider = await this.providers.forProject(input.projectId);
     const tools = this.offeredTools(input.agentPermissions, input.executionMode ?? null);
 
     // An empty tool list means the model is asked to change a repository with no

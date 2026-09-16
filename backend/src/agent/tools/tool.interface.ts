@@ -87,7 +87,6 @@ export interface ToolExecutionContext {
   readonly taskId: string;
   readonly taskReference: string;
   readonly projectId: string;
-  readonly organizationId: string;
   /**
    * The execution mode this task runs in, derived from the project type at
    * dispatch (ADR-028). Null for a project type with no execution surface, such

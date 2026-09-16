@@ -1,28 +1,36 @@
 import {
+  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { scryptSync } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { count, eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
-import { organizationMembers, organizations, users } from '../../core/database/schema';
+import { users } from '../../core/database/schema';
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
+import type { UserRegion } from '../../core/enums';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
-import type { AuthTokensResponse, LoginDto, RegisterDto } from './dto/auth.dto';
-import { allocateOrganizationSlug } from '../organizations/slug';
+import type {
+  AuthTokensResponse,
+  ChangePasswordDto,
+  LoginDto,
+  RegisterDto,
+  ResetPasswordDto,
+} from './dto/auth.dto';
 
 /**
  * Registration, sign-in, refresh and sign-out.
  *
- * Registration creates the user and, where an organisation name is supplied, the
- * organisation with the user as its owner - in one transaction, so a failure
- * cannot leave a user with no organisation and therefore nowhere to work.
+ * Registration creates the user in the region they chose. The first account
+ * registered becomes admin — with no organisation owner to inherit the role,
+ * somebody has to be able to manage the deployment (ADR-044).
  */
 @Injectable()
 export class AuthService {
@@ -37,16 +45,6 @@ export class AuthService {
   async register(dto: RegisterDto, ipAddress: string | null): Promise<AuthTokensResponse> {
     const passwordHash = await this.passwords.hash(dto.password);
 
-    /**
-     * The slug is allocated before the transaction opens: it needs its own
-     * read-then-write loop, and the unique index is what actually guarantees
-     * uniqueness if two registrations race.
-     */
-    const organizationSlug =
-      dto.organizationName && dto.organizationName.length > 0
-        ? await allocateOrganizationSlug(this.database, dto.organizationName)
-        : null;
-
     const created = await this.database.transaction(async (tx) => {
       const [existing] = await tx
         .select({ id: users.id })
@@ -58,51 +56,38 @@ export class AuthService {
         throw new ConflictException('An account already exists for this email address.');
       }
 
-      const [user] = await tx
+      // First account is admin, so a fresh deployment is never unmanageable.
+      const [{ total }] = await tx.select({ total: count() }).from(users);
+      const isAdmin = total === 0;
+
+      const [created] = await tx
         .insert(users)
-        .values({ email: dto.email, name: dto.name, passwordHash })
-        .returning({ id: users.id, email: users.email, name: users.name });
-
-      let organizationId: string | null = null;
-      if (organizationSlug && dto.organizationName) {
-        const [organization] = await tx
-          .insert(organizations)
-          .values({
-            name: dto.organizationName,
-            slug: organizationSlug,
-          })
-          .returning({ id: organizations.id });
-
-        await tx.insert(organizationMembers).values({
-          organizationId: organization.id,
-          userId: user.id,
-          role: 'owner',
+        .values({
+          email: dto.email,
+          name: dto.name,
+          passwordHash,
+          region: dto.region,
+          isAdmin,
+        })
+        .returning({
+          id: users.id,
+          email: users.email,
+          name: users.name,
+          region: users.region,
+          isAdmin: users.isAdmin,
         });
-        organizationId = organization.id;
-      }
 
-      return { user, organizationId };
+      return created;
     });
 
     await this.audit.record({
       event: AUDIT_EVENTS.USER_REGISTERED,
-      userId: created.user.id,
-      organizationId: created.organizationId,
+      userId: created.id,
       ipAddress,
-      metadata: { email: created.user.email, createdOrganization: created.organizationId !== null },
+      metadata: { email: created.email, region: created.region },
     });
 
-    if (created.organizationId) {
-      await this.audit.record({
-        event: AUDIT_EVENTS.ORGANIZATION_CREATED,
-        userId: created.user.id,
-        organizationId: created.organizationId,
-        ipAddress,
-        metadata: { name: dto.organizationName, viaRegistration: true },
-      });
-    }
-
-    return this.buildResponse(created.user);
+    return this.buildResponse({ ...created, region: created.region as UserRegion });
   }
 
   async login(dto: LoginDto, ipAddress: string | null): Promise<AuthTokensResponse> {
@@ -111,6 +96,8 @@ export class AuthService {
         id: users.id,
         email: users.email,
         name: users.name,
+        region: users.region,
+        isAdmin: users.isAdmin,
         passwordHash: users.passwordHash,
         isActive: users.isActive,
       })
@@ -151,14 +138,27 @@ export class AuthService {
       metadata: { email: user.email },
     });
 
-    return this.buildResponse({ id: user.id, email: user.email, name: user.name });
+    return this.buildResponse({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      region: user.region as UserRegion,
+      isAdmin: user.isAdmin,
+    });
   }
 
   async refresh(refreshToken: string, ipAddress: string | null): Promise<AuthTokensResponse> {
     const rotated = await this.tokens.rotate(refreshToken);
 
     const [user] = await this.database.db
-      .select({ id: users.id, email: users.email, name: users.name, isActive: users.isActive })
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        region: users.region,
+        isAdmin: users.isAdmin,
+        isActive: users.isActive,
+      })
       .from(users)
       .where(eq(users.id, rotated.userId))
       .limit(1);
@@ -174,11 +174,115 @@ export class AuthService {
     });
 
     return {
-      accessToken: await this.tokens.signAccessToken(user),
+      accessToken: await this.tokens.signAccessToken({ ...user, region: user.region as UserRegion }),
       refreshToken: rotated.refreshToken,
       expiresIn: this.config.auth.accessTtl,
-      user: { id: user.id, email: user.email, name: user.name },
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        region: user.region as UserRegion,
+        isAdmin: user.isAdmin,
+      },
     };
+  }
+
+  /**
+   * Changes the caller's own password.
+   *
+   * Every other session is revoked on success. That is the point of the
+   * operation as often as not: a password is changed because it may be known to
+   * somebody else, and leaving their session alive would defeat the change.
+   * The caller keeps their own tokens, so the screen they are on does not
+   * suddenly sign them out.
+   */
+  async changePassword(
+    userId: string,
+    dto: ChangePasswordDto,
+    ipAddress: string | null,
+  ): Promise<{ changed: true }> {
+    const [user] = await this.database.db
+      .select({ id: users.id, passwordHash: users.passwordHash, isActive: users.isActive })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('This account is no longer active.');
+    }
+
+    const matches = await this.passwords.verify(dto.currentPassword, user.passwordHash);
+    if (!matches) {
+      await this.audit.record({
+        event: AUDIT_EVENTS.USER_LOGIN_FAILED,
+        userId,
+        ipAddress,
+        metadata: { reason: 'current password mismatch on change' },
+      });
+      throw new UnauthorizedException('Your current password is incorrect.');
+    }
+
+    // Refused here rather than accepted silently: a "change" that changes
+    // nothing reads as done, and the person walks away believing it was.
+    if (dto.currentPassword === dto.newPassword) {
+      throw new BadRequestException('The new password must differ from the current one.');
+    }
+
+    await this.database.db
+      .update(users)
+      .set({ passwordHash: await this.passwords.hash(dto.newPassword), updatedAt: new Date() })
+      .where(eq(users.id, userId));
+
+    await this.tokens.revokeAllForUser(userId);
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.USER_PASSWORD_CHANGED,
+      userId,
+      ipAddress,
+      metadata: { self: true },
+    });
+
+    return { changed: true };
+  }
+
+  /**
+   * Sets another account's password, without knowing the old one (ADR-044).
+   *
+   * The manual stand-in for an email reset flow: an admin sets a password and
+   * hands it over out of band. Every session belonging to the target is revoked,
+   * because the person who had the old credential must not keep a live session.
+   */
+  async resetPassword(
+    actor: { userId: string; isAdmin: boolean },
+    targetUserId: string,
+    dto: ResetPasswordDto,
+    ipAddress: string | null,
+  ): Promise<{ reset: true }> {
+    const [target] = await this.database.db
+      .select({ id: users.id, email: users.email })
+      .from(users)
+      .where(eq(users.id, targetUserId))
+      .limit(1);
+
+    if (!target) {
+      throw new NotFoundException('Account not found');
+    }
+
+    await this.database.db
+      .update(users)
+      .set({ passwordHash: await this.passwords.hash(dto.newPassword), updatedAt: new Date() })
+      .where(eq(users.id, targetUserId));
+
+    await this.tokens.revokeAllForUser(targetUserId);
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.USER_PASSWORD_RESET,
+      userId: actor.userId,
+      ipAddress,
+      metadata: { targetUserId, targetEmail: target.email },
+    });
+
+    return { reset: true };
   }
 
   async logout(userId: string, refreshToken: string | undefined): Promise<void> {
@@ -194,13 +298,21 @@ export class AuthService {
     id: string;
     email: string;
     name: string;
+    region: UserRegion;
+    isAdmin: boolean;
   }): Promise<AuthTokensResponse> {
     const pair = await this.tokens.issuePair(user);
     return {
       accessToken: pair.accessToken,
       refreshToken: pair.refreshToken,
       expiresIn: this.config.auth.accessTtl,
-      user: { id: user.id, email: user.email, name: user.name },
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        region: user.region,
+        isAdmin: user.isAdmin,
+      },
     };
   }
 }

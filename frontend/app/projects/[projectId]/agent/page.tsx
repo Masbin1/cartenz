@@ -29,8 +29,6 @@ import type {
   TaskSummary,
 } from '@/lib/types';
 
-const DECIDER_ROLES = ['owner', 'admin', 'developer'];
-
 /**
  * The AI agent workspace: the primary working surface of the platform.
  *
@@ -43,7 +41,7 @@ const DECIDER_ROLES = ['owner', 'admin', 'developer'];
  * interface shows a run, not a conversation.
  */
 export default function AgentWorkspacePage() {
-  const { loading, user, organization } = useRequireAuth();
+  const { loading, user } = useRequireAuth();
   const params = useParams<{ projectId: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -73,7 +71,7 @@ export default function AgentWorkspacePage() {
   const { events, connected } = useTaskStream(selectedTaskId);
   const promptRef = useRef<HTMLTextAreaElement>(null);
 
-  const canDecide = DECIDER_ROLES.includes(organization?.role ?? '');
+  const canDecide = user?.isAdmin ?? false;
 
   const selectedEnvironment = environments.find((entry) => entry.id === environmentId) ?? null;
   const productionEnvironments = environments.filter((entry) => entry.kind === 'production');

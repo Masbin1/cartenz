@@ -44,7 +44,6 @@ import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secre
  */
 
 export interface GitHubConnectionInput {
-  readonly organizationId: string;
   readonly projectId: string;
   readonly projectName: string;
   /**
@@ -141,7 +140,6 @@ export class GitHubRepositoryService {
 
     const secretRef = (
       await this.secrets.write({
-        organizationId: input.organizationId,
         projectId: input.projectId,
         purpose: 'github-token',
         value: token,

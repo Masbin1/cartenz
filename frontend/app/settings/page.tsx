@@ -4,8 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRequireAuth } from '@/lib/auth';
 import { ApiError, api } from '@/lib/api';
 import { AppShell } from '@/components/ui/app-shell';
-import { MembersPanel } from '@/components/organizations/members-panel';
-import { AccessRequestsPanel } from '@/components/organizations/access-requests-panel';
+import { AccessRequestsPanel } from '@/components/projects/access-requests-panel';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
 import type {
@@ -15,6 +14,7 @@ import type {
   ModelProviderRow,
   ModelProviderTestResult,
   OdooSettings,
+  OdooVersionRepository,
 } from '@/lib/types';
 
 /**
@@ -137,14 +137,13 @@ function formFromRow(row: ModelProviderRow): FormState {
  * question. A key is entered here and never comes back: the server has no
  * endpoint that returns it, so this page can only report whether one is stored.
  */
-export default function OrganizationSettingsPage() {
-  const { loading, user, organization } = useRequireAuth();
-  const organizationId = organization?.organizationId ?? null;
+export default function SettingsPage() {
+  const { loading, user } = useRequireAuth();
 
   const [list, setList] = useState<ModelProviderList | null>(null);
-  // The organisation's Odoo estate (ADR-033): the server's view, and the form
-  // being edited. Kept apart so the reported existence of each path belongs to
-  // what was saved rather than to what is currently typed.
+  // The deployment's Odoo estate (ADR-033, ADR-044): the server's view, and the
+  // form being edited. Kept apart so the reported existence of each path belongs
+  // to what was saved rather than to what is currently typed.
   const [odoo, setOdoo] = useState<OdooSettings | null>(null);
   const [odooForm, setOdooForm] = useState({
     basePath: '',
@@ -152,6 +151,19 @@ export default function OrganizationSettingsPage() {
     projectsRoot: '',
   });
   const [savingOdoo, setSavingOdoo] = useState(false);
+
+  // The per-version source catalog (ADR-045): which Odoo checkout serves which
+  // series, and the add form for registering one.
+  const [versions, setVersions] = useState<OdooVersionRepository[] | null>(null);
+  const [addingVersion, setAddingVersion] = useState(false);
+  const [versionForm, setVersionForm] = useState({
+    version: '19.0',
+    basePath: '',
+    enterprisePath: '',
+    description: '',
+  });
+  const [versionBusy, setVersionBusy] = useState(false);
+
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
@@ -169,17 +181,18 @@ export default function OrganizationSettingsPage() {
   const [testResults, setTestResults] = useState<Record<string, ModelProviderTestResult>>({});
   const [detachedResults, setDetachedResults] = useState<ModelProviderTestResult[] | null>(null);
 
-  const canEdit = organization?.role === 'owner' || organization?.role === 'admin';
+  const canEdit = user?.isAdmin ?? false;
 
   const load = useCallback(async () => {
-    if (!organizationId) return;
     try {
-      const [providers, odoo] = await Promise.all([
-        api.organizations.modelProviders(organizationId),
-        api.organizations.odooSettings(organizationId),
+      const [providers, odoo, versions] = await Promise.all([
+        api.settings.modelProviders(),
+        api.settings.odooSettings(),
+        api.settings.odooVersions(),
       ]);
       setList(providers);
       setOdoo(odoo);
+      setVersions(versions);
       setOdooForm({
         basePath: odoo.basePath.path ?? '',
         enterprisePath: odoo.enterprisePath.path ?? '',
@@ -190,25 +203,80 @@ export default function OrganizationSettingsPage() {
         caught instanceof ApiError ? caught.message : 'The configuration could not be loaded.',
       );
     }
-  }, [organizationId]);
+  }, []);
 
   /**
    * Saves the Odoo paths (ADR-033). The server refuses a path that is not there,
    * so a typo is reported here rather than at the first task that needs it.
    */
   const saveOdoo = async () => {
-    if (!organizationId) return;
     setSavingOdoo(true);
     setError(null);
     setNotice(null);
     try {
-      const saved = await api.organizations.updateOdooSettings(organizationId, odooForm);
+      const saved = await api.settings.updateOdooSettings(odooForm);
       setOdoo(saved);
       setNotice('The Odoo paths were saved.');
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The paths could not be saved.');
     } finally {
       setSavingOdoo(false);
+    }
+  };
+
+  /**
+   * Registers a version in the source catalog (ADR-045). The server refuses a
+   * path that is not there, and a duplicate version, so both mistakes are
+   * reported here rather than at the first project that uses the version.
+   */
+  const addVersion = async () => {
+    setVersionBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.settings.addOdooVersion({
+        version: versionForm.version,
+        basePath: versionForm.basePath.trim(),
+        enterprisePath: versionForm.enterprisePath.trim() || undefined,
+        description: versionForm.description.trim() || undefined,
+      });
+      await load();
+      setAddingVersion(false);
+      setVersionForm({ version: '19.0', basePath: '', enterprisePath: '', description: '' });
+      setNotice(`Odoo ${versionForm.version} was registered.`);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The version could not be saved.');
+    } finally {
+      setVersionBusy(false);
+    }
+  };
+
+  const removeVersion = async (row: OdooVersionRepository) => {
+    setVersionBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.settings.removeOdooVersion(row.id);
+      await load();
+      setNotice(`Odoo ${row.version} was removed from the catalog.`);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The version could not be removed.');
+    } finally {
+      setVersionBusy(false);
+    }
+  };
+
+  const toggleVersion = async (row: OdooVersionRepository) => {
+    setVersionBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.settings.updateOdooVersion(row.id, { isActive: !row.isActive });
+      await load();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The version could not be updated.');
+    } finally {
+      setVersionBusy(false);
     }
   };
 
@@ -250,11 +318,11 @@ export default function OrganizationSettingsPage() {
   };
 
   const loadModels = async () => {
-    if (!organizationId || !form.baseUrl.trim()) return;
+    if (!form.baseUrl.trim()) return;
     setLoadingModels(true);
     setError(null);
     try {
-      const { models } = await api.organizations.discoverModels(organizationId, {
+      const { models } = await api.settings.discoverModels({
         baseUrl: form.baseUrl.trim(),
         apiKey: form.apiKey.length > 0 ? form.apiKey : undefined,
       });
@@ -278,7 +346,6 @@ export default function OrganizationSettingsPage() {
   };
 
   const saveForm = async () => {
-    if (!organizationId) return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -293,12 +360,12 @@ export default function OrganizationSettingsPage() {
 
     try {
       if (formId === null) {
-        await api.organizations.addModelProvider(organizationId, {
+        await api.settings.addModelProvider({
           ...base,
           structuredOutputs: form.structuredOutputs ?? undefined,
         });
       } else {
-        await api.organizations.updateModelProvider(organizationId, formId, {
+        await api.settings.updateModelProvider(formId, {
           ...base,
           enabled: form.enabled,
           structuredOutputs: form.structuredOutputs,
@@ -317,12 +384,11 @@ export default function OrganizationSettingsPage() {
   };
 
   const removeRow = async (row: ModelProviderRow) => {
-    if (!organizationId) return;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await api.organizations.removeModelProvider(organizationId, row.id);
+      await api.settings.removeModelProvider(row.id);
       await load();
       setNotice('The provider was removed.');
     } catch (caught) {
@@ -335,12 +401,11 @@ export default function OrganizationSettingsPage() {
   };
 
   const toggleEnabled = async (row: ModelProviderRow) => {
-    if (!organizationId) return;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await api.organizations.updateModelProvider(organizationId, row.id, {
+      await api.settings.updateModelProvider(row.id, {
         enabled: !row.enabled,
       });
       await load();
@@ -354,7 +419,7 @@ export default function OrganizationSettingsPage() {
   };
 
   const moveRow = async (row: ModelProviderRow, direction: -1 | 1) => {
-    if (!organizationId || !list) return;
+    if (!list) return;
     const rows = [...list.rows];
     const index = rows.findIndex((entry) => entry.id === row.id);
     const target = index + direction;
@@ -366,12 +431,7 @@ export default function OrganizationSettingsPage() {
     setError(null);
     setNotice(null);
     try {
-      setList(
-        await api.organizations.reorderModelProviders(
-          organizationId,
-          rows.map((entry) => entry.id),
-        ),
-      );
+      setList(await api.settings.reorderModelProviders(rows.map((entry) => entry.id)));
       setNotice('The order was saved.');
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The order could not be saved.');
@@ -381,12 +441,11 @@ export default function OrganizationSettingsPage() {
   };
 
   const testRow = async (row: ModelProviderRow) => {
-    if (!organizationId) return;
     setTestingRowId(row.id);
     setError(null);
     setNotice(null);
     try {
-      const result = await api.organizations.testModelProviderRow(organizationId, row.id);
+      const result = await api.settings.testModelProviderRow(row.id);
       setTestResults((current) => ({ ...current, [row.id]: result }));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The test could not be run.');
@@ -396,12 +455,11 @@ export default function OrganizationSettingsPage() {
   };
 
   const testChain = async () => {
-    if (!organizationId) return;
     setTestingChain(true);
     setError(null);
     setNotice(null);
     try {
-      const results = await api.organizations.testModelProviderChain(organizationId);
+      const results = await api.settings.testModelProviderChain();
       const byRow: Record<string, ModelProviderTestResult> = {};
       const detached: ModelProviderTestResult[] = [];
       for (const result of results) {
@@ -657,25 +715,16 @@ export default function OrganizationSettingsPage() {
   return (
     <AppShell>
       <header className="mb-6">
-        <h1 className="text-lg font-semibold">Organisation settings</h1>
-        <p className="mt-1 text-xs text-content-muted">{organization?.organizationName}</p>
+        <h1 className="text-lg font-semibold">Settings</h1>
+        <p className="mt-1 text-xs text-content-muted">
+          Model providers and the Odoo estate apply to the whole deployment (ADR-044).
+        </p>
       </header>
 
       {error ? <Alert tone="error">{error}</Alert> : null}
       {notice ? <Alert tone="success">{notice}</Alert> : null}
 
-      {organizationId && organization && user ? (
-        <MembersPanel
-          organizationId={organizationId}
-          currentUserId={user.id}
-          viewerRole={organization.role}
-        />
-      ) : null}
-
-      {/* Only an owner or admin may decide a request; the server refuses anyone else. */}
-      {organizationId && (organization?.role === 'owner' || organization?.role === 'admin') ? (
-        <AccessRequestsPanel organizationId={organizationId} />
-      ) : null}
+      {user?.isAdmin ? <AccessRequestsPanel /> : null}
 
       <section className="panel">
         <div className="panel-header">
@@ -684,7 +733,7 @@ export default function OrganizationSettingsPage() {
 
         <div className="space-y-4 px-4 py-4">
           <p className="text-xs text-content-muted">
-            Where this organisation&apos;s Odoo lives. The base and enterprise checkouts are read by
+            Where this deployment&apos;s Odoo lives. The base and enterprise checkouts are read by
             the agent as a reference and are never written to; new projects are created under the
             projects root, each with its own <code>addons/</code> directory, which is the only
             place the agent writes.
@@ -763,7 +812,189 @@ export default function OrganizationSettingsPage() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel mt-5">
+        <div className="panel-header">
+          <h2 className="panel-title">Odoo versions</h2>
+        </div>
+
+        <div className="space-y-3 px-4 py-4">
+          <p className="text-xs text-content-muted">
+            One full Odoo checkout per version. A project created with a version listed here is
+            generated against that version&apos;s own source, and its database is duplicated from
+            the full-installation template for that version — every app installed, nothing
+            regenerated per request.
+          </p>
+
+          {(versions ?? []).length === 0 ? (
+            <p className="text-2xs text-content-subtle">
+              No versions registered. Projects fall back to the single Odoo base above.
+            </p>
+          ) : null}
+
+          {(versions ?? []).map((row) => (
+            <div
+              key={row.id}
+              className="flex items-start gap-3 rounded border border-surface-border bg-surface-raised px-3 py-2.5"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium">Odoo {row.version}</span>
+                  {!row.isActive ? (
+                    <span className="rounded border border-surface-border px-1.5 py-0.5 text-2xs uppercase tracking-wide text-content-subtle">
+                      inactive
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-0.5 truncate font-mono text-2xs text-content-subtle">
+                  {row.basePath}
+                  {row.basePathExists ? '' : ' — not found on the server'}
+                </p>
+                {row.enterprisePath ? (
+                  <p className="truncate font-mono text-2xs text-content-subtle">
+                    {row.enterprisePath}
+                    {row.enterprisePathExists === false ? ' — not found on the server' : ''}
+                  </p>
+                ) : null}
+                {row.description ? (
+                  <p className="mt-0.5 text-2xs text-content-subtle">{row.description}</p>
+                ) : null}
+              </div>
+
+              {canEdit ? (
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <label className="flex items-center gap-1 text-2xs text-content-muted">
+                    <input
+                      type="checkbox"
+                      checked={row.isActive}
+                      onChange={() => void toggleVersion(row)}
+                      disabled={versionBusy}
+                      className="mt-px"
+                    />
+                    active
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void removeVersion(row)}
+                    disabled={versionBusy}
+                    className="text-2xs text-content-subtle hover:text-state-failure disabled:opacity-40"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ))}
+
+          {canEdit && !addingVersion ? (
+            <div className="border-t border-surface-border pt-4">
+              <button
+                type="button"
+                onClick={() => setAddingVersion(true)}
+                disabled={versionBusy}
+                className="btn-secondary"
+              >
+                + Register a version
+              </button>
+            </div>
+          ) : null}
+
+          {canEdit && addingVersion ? (
+            <div className="space-y-4 rounded border border-surface-border bg-surface-raised px-3 py-3">
+              <div>
+                <label htmlFor="version-version" className="field-label">
+                  Version
+                </label>
+                <select
+                  id="version-version"
+                  value={versionForm.version}
+                  onChange={(event) => setVersionForm({ ...versionForm, version: event.target.value })}
+                  disabled={versionBusy}
+                  className="field-input"
+                >
+                  {['15.0', '16.0', '17.0', '18.0', '19.0'].map((version) => (
+                    <option key={version} value={version}>
+                      Odoo {version}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="version-base" className="field-label">
+                  Base checkout
+                </label>
+                <input
+                  id="version-base"
+                  value={versionForm.basePath}
+                  onChange={(event) =>
+                    setVersionForm({ ...versionForm, basePath: event.target.value })
+                  }
+                  disabled={versionBusy}
+                  placeholder="/opt/odoo/versions/19.0/odoo"
+                  className="field-input font-mono text-xs"
+                />
+                <p className="mt-1.5 text-2xs text-content-subtle">
+                  The repo root holding odoo-bin. Read-only to the agent.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="version-enterprise" className="field-label">
+                  Enterprise addons
+                </label>
+                <input
+                  id="version-enterprise"
+                  value={versionForm.enterprisePath}
+                  onChange={(event) =>
+                    setVersionForm({ ...versionForm, enterprisePath: event.target.value })
+                  }
+                  disabled={versionBusy}
+                  placeholder="/opt/odoo/versions/19.0/enterprise"
+                  className="field-input font-mono text-xs"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="version-description" className="field-label">
+                  Note
+                </label>
+                <input
+                  id="version-description"
+                  value={versionForm.description}
+                  onChange={(event) =>
+                    setVersionForm({ ...versionForm, description: event.target.value })
+                  }
+                  disabled={versionBusy}
+                  placeholder="Optional — e.g. which licence this enterprise tree carries"
+                  className="field-input"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 border-t border-surface-border pt-3">
+                <button
+                  type="button"
+                  onClick={() => void addVersion()}
+                  disabled={versionBusy || !versionForm.basePath.trim()}
+                  className="btn-primary"
+                >
+                  {versionBusy ? <Spinner /> : null}
+                  {versionBusy ? 'Saving' : 'Register'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAddingVersion(false)}
+                  disabled={versionBusy}
+                  className="btn-ghost"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="panel mt-5">
         <div className="panel-header">
           <h2 className="panel-title">AI providers</h2>
         </div>

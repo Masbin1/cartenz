@@ -9,8 +9,7 @@ import type {
   ModelProviderList,
   ModelProviderRow,
   ModelProviderTestResult,
-  OrganizationMember,
-  OrganizationRole,
+  OdooVersionRepository,
   PendingAccessRequest,
   PendingApprovalSummary,
   ProjectAccessMember,
@@ -25,6 +24,8 @@ import type {
   TaskEvent,
   TaskKind,
   TaskSummary,
+  UserRegion,
+  UserRow,
 } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
@@ -223,7 +224,7 @@ export const api = {
       email: string;
       password: string;
       name: string;
-      organizationName?: string;
+      region: string;
     }) => request<AuthTokens>('/auth/register', { method: 'POST', body, skipRefresh: true }),
 
     login: (body: { email: string; password: string }) =>
@@ -234,89 +235,94 @@ export const api = {
         method: 'POST',
         body: refreshToken ? { refreshToken } : {},
       }),
+
+    /** Change your own password. Every other session is revoked on success. */
+    changePassword: (body: { currentPassword: string; newPassword: string }) =>
+      request<{ changed: true }>('/auth/change-password', { method: 'POST', body }),
   },
 
   users: {
     me: () => request<CurrentUser>('/users/me'),
+    list: () => request<UserRow[]>('/users'),
+    create: (body: {
+      email: string;
+      password: string;
+      name: string;
+      region: UserRegion;
+      isAdmin?: boolean;
+    }) => request<UserRow>('/users', { method: 'POST', body }),
+    update: (
+      userId: string,
+      body: { region?: UserRegion; isAdmin?: boolean; isActive?: boolean; name?: string },
+    ) => request<UserRow>(`/users/${userId}`, { method: 'PATCH', body }),
+    remove: (userId: string) => request<{ deleted: true }>(`/users/${userId}`, { method: 'DELETE' }),
+
+    /** Admin sets another account's password; handed over out of band. */
+    resetPassword: (userId: string, newPassword: string) =>
+      request<{ reset: true }>(`/users/${userId}/reset-password`, {
+        method: 'POST',
+        body: { newPassword },
+      }),
   },
 
-  organizations: {
-    list: () => request<{ id: string; name: string; slug: string; role: string }[]>(
-      '/organizations',
-    ),
-    create: (body: { name: string }) =>
-      request<{ id: string; name: string; slug: string }>('/organizations', {
-        method: 'POST',
-        body,
-      }),
-    members: (organizationId: string) =>
-      request<OrganizationMember[]>(`/organizations/${organizationId}/members`),
+  settings: {
+    modelProviders: () => request<ModelProviderList>('/settings/model-providers'),
+
+    /** Where this deployment's Odoo estate lives (ADR-033, ADR-044). */
+    odooSettings: () => request<OdooSettings>('/settings/odoo-settings'),
+    updateOdooSettings: (body: {
+      basePath: string;
+      enterprisePath: string;
+      projectsRoot: string;
+    }) => request<OdooSettings>('/settings/odoo-settings', { method: 'PUT', body }),
 
     /**
-     * Adds an existing account to the organisation. The person must already have
-     * registered — the server refuses an email with no account rather than
-     * issuing credentials on their behalf (ADR-015).
+     * The per-version Odoo source catalog (ADR-045). A project created with a
+     * cataloged version is generated against that version's own checkout, and
+     * its provisioned database is duplicated from the full-installation
+     * template built for that version.
      */
-    addMember: (organizationId: string, body: { email: string; role: OrganizationRole }) =>
-      request<OrganizationMember>(`/organizations/${organizationId}/members`, {
-        method: 'POST',
-        body,
-      }),
+    odooVersions: () => request<OdooVersionRepository[]>('/settings/odoo-versions'),
 
-    updateMemberRole: (organizationId: string, memberUserId: string, role: OrganizationRole) =>
-      request<{ userId: string; role: OrganizationRole }>(
-        `/organizations/${organizationId}/members/${memberUserId}`,
-        { method: 'PATCH', body: { role } },
-      ),
+    addOdooVersion: (body: {
+      version: string;
+      basePath: string;
+      enterprisePath?: string;
+      description?: string;
+    }) => request<OdooVersionRepository>('/settings/odoo-versions', { method: 'POST', body }),
 
-    removeMember: (organizationId: string, memberUserId: string) =>
-      request<void>(`/organizations/${organizationId}/members/${memberUserId}`, {
-        method: 'DELETE',
-      }),
-    auditLogs: (organizationId: string, limit = 50) =>
-      request<AuditLogEntry[]>(
-        `/organizations/${organizationId}/audit-logs?limit=${limit}`,
-      ),
+    updateOdooVersion: (
+      rowId: string,
+      body: {
+        basePath?: string;
+        enterprisePath?: string;
+        description?: string;
+        isActive?: boolean;
+      },
+    ) => request<OdooVersionRepository>(`/settings/odoo-versions/${rowId}`, {
+      method: 'PATCH',
+      body,
+    }),
 
-    modelProviders: (organizationId: string) =>
-      request<ModelProviderList>(`/organizations/${organizationId}/model-providers`),
-
-    /** Where this organisation's Odoo estate lives (ADR-033). */
-    odooSettings: (organizationId: string) =>
-      request<OdooSettings>(`/organizations/${organizationId}/odoo-settings`),
-    updateOdooSettings: (
-      organizationId: string,
-      body: { basePath: string; enterprisePath: string; projectsRoot: string },
-    ) =>
-      request<OdooSettings>(`/organizations/${organizationId}/odoo-settings`, {
-        method: 'PUT',
-        body,
-      }),
+    removeOdooVersion: (rowId: string) =>
+      request<void>(`/settings/odoo-versions/${rowId}`, { method: 'DELETE' }),
 
     /**
      * Adds a provider. `apiKey` is write-only: no endpoint returns it, and there
      * is no response field it could arrive in.
      */
-    addModelProvider: (
-      organizationId: string,
-      body: {
-        label?: string;
-        providerId: ModelProviderId;
-        model?: string;
-        baseUrl?: string;
-        apiKey?: string;
-        structuredOutputs?: boolean;
-        enabled?: boolean;
-      },
-    ) =>
-      request<ModelProviderRow>(`/organizations/${organizationId}/model-providers`, {
-        method: 'POST',
-        body,
-      }),
+    addModelProvider: (body: {
+      label?: string;
+      providerId: ModelProviderId;
+      model?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      structuredOutputs?: boolean;
+      enabled?: boolean;
+    }) => request<ModelProviderRow>('/settings/model-providers', { method: 'POST', body }),
 
     /** Omit `apiKey` to keep the stored key; send an empty string to remove it. */
     updateModelProvider: (
-      organizationId: string,
       rowId: string,
       body: {
         label?: string;
@@ -327,56 +333,52 @@ export const api = {
         apiKey?: string;
         structuredOutputs?: boolean | null;
       },
-    ) =>
-      request<ModelProviderRow>(
-        `/organizations/${organizationId}/model-providers/${rowId}`,
-        { method: 'PATCH', body },
-      ),
+    ) => request<ModelProviderRow>(`/settings/model-providers/${rowId}`, {
+      method: 'PATCH',
+      body,
+    }),
 
-    removeModelProvider: (organizationId: string, rowId: string) =>
-      request<void>(`/organizations/${organizationId}/model-providers/${rowId}`, {
-        method: 'DELETE',
-      }),
+    removeModelProvider: (rowId: string) =>
+      request<void>(`/settings/model-providers/${rowId}`, { method: 'DELETE' }),
 
     /**
      * PATCH rather than PUT: the API's CORS configuration never allowed PUT, and
      * this call is cross-origin with an Authorization header, so the preflight
      * would block it before it was sent - which presents as reorder doing nothing.
      */
-    reorderModelProviders: (organizationId: string, order: string[]) =>
-      request<ModelProviderList>(`/organizations/${organizationId}/model-providers/order`, {
+    reorderModelProviders: (order: string[]) =>
+      request<ModelProviderList>('/settings/model-providers/order', {
         method: 'PATCH',
         body: { order },
       }),
 
-    testModelProviderRow: (organizationId: string, rowId: string) =>
-      request<ModelProviderTestResult>(
-        `/organizations/${organizationId}/model-providers/${rowId}/test`,
-        { method: 'POST' },
-      ),
+    testModelProviderRow: (rowId: string) =>
+      request<ModelProviderTestResult>(`/settings/model-providers/${rowId}/test`, {
+        method: 'POST',
+      }),
 
-    testModelProviderChain: (organizationId: string) =>
-      request<ModelProviderTestResult[]>(
-        `/organizations/${organizationId}/model-providers/test`,
-        { method: 'POST' },
-      ),
+    testModelProviderChain: () =>
+      request<ModelProviderTestResult[]>('/settings/model-providers/test', {
+        method: 'POST',
+      }),
 
     /**
      * What models an endpoint serves. Goes through the server because the browser
      * has no key and must not be given one.
      */
-    discoverModels: (organizationId: string, body: { baseUrl: string; apiKey?: string }) =>
-      request<{ models: string[] }>(
-        `/organizations/${organizationId}/model-providers/discover-models`,
-        { method: 'POST', body },
-      ),
+    discoverModels: (body: { baseUrl: string; apiKey?: string }) =>
+      request<{ models: string[] }>('/settings/model-providers/discover-models', {
+        method: 'POST',
+        body,
+      }),
+
+    auditLogs: (limit = 50) => request<AuditLogEntry[]>(`/settings/audit-logs?limit=${limit}`),
   },
 
   projects: {
-    list: (organizationId: string, includeArchived = false) =>
+    list: (includeArchived = false) =>
       request<ProjectSummary[]>(
-        `/projects?organizationId=${organizationId}` +
-          (includeArchived ? '&includeArchived=true' : ''),
+        `/projects${includeArchived ? '?includeArchived=true' : ''}`,
       ),
 
     get: (projectId: string) => request<ProjectDetail>(`/projects/${projectId}`),
@@ -390,7 +392,7 @@ export const api = {
       request<{ masterPassword: string }>(`/projects/${projectId}/provisioning-secret`),
 
     create: (body: {
-      organizationId: string;
+      region: string;
       name: string;
       description?: string;
       projectType: string;
@@ -403,7 +405,7 @@ export const api = {
     }) => request<ProjectDetail>('/projects', { method: 'POST', body }),
 
     createWithAi: (body: {
-      organizationId: string;
+      region: string;
       name: string;
       odooVersion: string;
       odooEdition?: string;
@@ -413,15 +415,15 @@ export const api = {
     }) => request<ProjectDetail>('/projects/ai', { method: 'POST', body }),
 
     /** The branches a repository advertises, before the project exists. */
-    remoteBranchesFor: (body: { organizationId: string; repositoryUrl: string }) =>
+    remoteBranchesFor: (body: { repositoryUrl: string }) =>
       request<{ branches: string[] }>('/projects/remote-branches', { method: 'POST', body }),
 
     /** The folders an on-premise project may be pointed at. */
-    onPremiseLocations: (organizationId: string) =>
+    onPremiseLocations: () =>
       request<{
         root: string | null;
         folders: { name: string; path: string; isGitRepository: boolean }[];
-      }>(`/projects/on-premise-locations?organizationId=${organizationId}`),
+      }>('/projects/on-premise-locations'),
 
     remoteBranches: (projectId: string) =>
       request<{ branches: string[] }>(`/projects/${projectId}/remote-branches`),
@@ -510,8 +512,7 @@ export const api = {
         body: { reason },
       }),
 
-    pendingRequests: (organizationId: string) =>
-      request<PendingAccessRequest[]>(`/organizations/${organizationId}/access-requests`),
+    pendingRequests: () => request<PendingAccessRequest[]>('/access-requests'),
 
     decide: (
       projectId: string,
@@ -593,8 +594,7 @@ export const api = {
   },
 
   approvals: {
-    pending: (organizationId: string) =>
-      request<PendingApprovalSummary[]>(`/approvals?organizationId=${organizationId}`),
+    pending: () => request<PendingApprovalSummary[]>('/approvals'),
 
     decide: (taskId: string, decision: 'approved' | 'rejected', note?: string) =>
       request<{ id: string; action: string; status: string }>(`/tasks/${taskId}/approve`, {

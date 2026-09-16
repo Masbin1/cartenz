@@ -88,7 +88,13 @@ export class TaskEventsGateway implements OnModuleInit, OnModuleDestroy {
     let user: AuthenticatedUser;
     try {
       const claims = await this.tokens.verifyAccessToken(token);
-      user = { userId: claims.sub, email: claims.email, name: claims.name };
+      user = {
+        userId: claims.sub,
+        email: claims.email,
+        name: claims.name,
+        region: claims.region,
+        isAdmin: claims.isAdmin,
+      };
     } catch {
       socket.close(4401, 'The access token is invalid or has expired');
       return;

@@ -1,7 +1,7 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
-import { organizationModelSettings } from '../../core/database/schema';
+import { modelSettings } from '../../core/database/schema';
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
@@ -14,7 +14,7 @@ import {
   type ModelProviderId,
 } from '../../core/enums';
 
-/** What an organisation has configured, as the resolver needs it. */
+/** What the deployment has configured, as the resolver needs it. */
 export interface ResolvedModelSettings {
   /** Null for the environment fallback, which is not a stored row. */
   readonly id: string | null;
@@ -67,7 +67,7 @@ export interface PublicModelProviderRow {
   readonly updatedAt: string | null;
 }
 
-/** An organisation's configured providers, or the environment it falls back to. */
+/** The deployment's configured providers, or the environment it falls back to. */
 export interface ModelProviderList {
   readonly rows: readonly PublicModelProviderRow[];
   readonly fromEnvironment: boolean;
@@ -109,15 +109,16 @@ interface ValidatableProviderInput {
   readonly label?: string | null;
 }
 
-type StoredRow = typeof organizationModelSettings.$inferSelect;
+type StoredRow = typeof modelSettings.$inferSelect;
 
 /**
- * The organisation's model provider configuration (ADR-023, extended to a list).
+ * The deployment's model provider configuration (ADR-023, ADR-044).
  *
  * Exists so that "which AIs are tried, in what order, and with whose key" is one
  * screen a person can change, instead of environment variables and a restart.
  * The environment remains the fallback, which keeps single-tenant deployments
- * working exactly as before.
+ * working exactly as before. One global chain: region is an access boundary,
+ * not a configuration one.
  */
 @Injectable()
 export class ModelSettingsService {
@@ -131,12 +132,11 @@ export class ModelSettingsService {
   ) {}
 
   /** Every configured row, in the shape the portal may see. */
-  async list(organizationId: string): Promise<ModelProviderList> {
+  async list(): Promise<ModelProviderList> {
     const rows = await this.database.db
       .select()
-      .from(organizationModelSettings)
-      .where(eq(organizationModelSettings.organizationId, organizationId))
-      .orderBy(organizationModelSettings.priority);
+      .from(modelSettings)
+      .orderBy(modelSettings.priority);
 
     if (rows.length === 0) {
       return {
@@ -158,15 +158,14 @@ export class ModelSettingsService {
    * The ordered chain the resolver builds providers from.
    *
    * Disabled rows are left out here rather than filtered later, so "what will be
-   * called" has one answer. An organisation with no enabled rows falls back to
-   * the environment, which is what it did before this table held more than one.
+   * called" has one answer. A deployment with no enabled rows falls back to the
+   * environment, which is what it did before this table held more than one.
    */
-  async resolveChain(organizationId: string): Promise<ResolvedModelChain> {
+  async resolveChain(): Promise<ResolvedModelChain> {
     const rows = await this.database.db
       .select()
-      .from(organizationModelSettings)
-      .where(eq(organizationModelSettings.organizationId, organizationId))
-      .orderBy(organizationModelSettings.priority);
+      .from(modelSettings)
+      .orderBy(modelSettings.priority);
 
     const enabled = rows.filter((row) => row.enabled);
 
@@ -220,11 +219,7 @@ export class ModelSettingsService {
    * never returned. The audit row records that a key was set and by whom, which
    * is the part anyone reviewing the trail actually needs.
    */
-  async addRow(
-    organizationId: string,
-    userId: string,
-    input: AddModelProviderInput,
-  ): Promise<PublicModelProviderRow> {
+  async addRow(userId: string, input: AddModelProviderInput): Promise<PublicModelProviderRow> {
     this.assertValid(input);
 
     const keySupplied = typeof input.apiKey === 'string' && input.apiKey.length > 0;
@@ -250,7 +245,6 @@ export class ModelSettingsService {
     let secretRef: string | null = null;
     if (keySupplied) {
       const written = await this.secrets.write({
-        organizationId,
         projectId: null,
         purpose: `model-api-key-${input.providerId}`,
         value: input.apiKey as string,
@@ -258,12 +252,11 @@ export class ModelSettingsService {
       secretRef = written.ref;
     }
 
-    const nextPriority = await this.nextPriority(organizationId);
+    const nextPriority = await this.nextPriority();
 
     const [row] = await this.database.db
-      .insert(organizationModelSettings)
+      .insert(modelSettings)
       .values({
-        organizationId,
         priority: nextPriority,
         label: normalise(input.label),
         enabled: input.enabled ?? true,
@@ -279,7 +272,6 @@ export class ModelSettingsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.MODEL_PROVIDER_CONFIGURED,
-      organizationId,
       userId,
       metadata: {
         rowId: row.id,
@@ -296,8 +288,7 @@ export class ModelSettingsService {
     });
 
     this.logger.log(
-      `Organisation ${organizationId}: added model provider row ${row.id} ` +
-        `(priority ${row.priority}, ${input.providerId})` +
+      `Added model provider row ${row.id} (priority ${row.priority}, ${input.providerId})` +
         (keySupplied ? ', with a key' : ''),
     );
 
@@ -309,14 +300,13 @@ export class ModelSettingsService {
    * one exception, where an explicit empty string clears the stored key.
    */
   async updateRow(
-    organizationId: string,
     rowId: string,
     userId: string,
     input: UpdateModelProviderInput,
   ): Promise<PublicModelProviderRow> {
-    const existing = await this.storedRow(organizationId, rowId);
+    const existing = await this.storedRow(rowId);
     if (!existing) {
-      throw new NotFoundException('That model provider row does not belong to this organisation.');
+      throw new NotFoundException('That model provider row does not exist.');
     }
 
     const mergedProviderId = input.providerId ?? (existing.providerId as ModelProviderId);
@@ -350,7 +340,6 @@ export class ModelSettingsService {
 
     if (keySupplied) {
       const written = await this.secrets.write({
-        organizationId,
         projectId: null,
         purpose: `model-api-key-${mergedProviderId}`,
         value: input.apiKey as string,
@@ -372,7 +361,7 @@ export class ModelSettingsService {
     }
 
     const [row] = await this.database.db
-      .update(organizationModelSettings)
+      .update(modelSettings)
       .set({
         providerId: mergedProviderId,
         model: normalise(mergedModel),
@@ -384,16 +373,15 @@ export class ModelSettingsService {
         secretRef,
         // Bumped in SQL rather than read-then-written, so two concurrent saves
         // cannot land on the same revision and share a cached provider.
-        revision: sql`${organizationModelSettings.revision} + 1`,
+        revision: sql`${modelSettings.revision} + 1`,
         updatedByUserId: userId,
         updatedAt: new Date(),
       })
-      .where(eq(organizationModelSettings.id, rowId))
+      .where(eq(modelSettings.id, rowId))
       .returning();
 
     await this.audit.record({
       event: AUDIT_EVENTS.MODEL_PROVIDER_CONFIGURED,
-      organizationId,
       userId,
       metadata: {
         rowId: row.id,
@@ -407,8 +395,7 @@ export class ModelSettingsService {
     });
 
     this.logger.log(
-      `Organisation ${organizationId}: updated model provider row ${row.id}` +
-        (keySupplied ? ', with a new key' : ''),
+      `Updated model provider row ${row.id}` + (keySupplied ? ', with a new key' : ''),
     );
 
     return this.toPublicRow(row);
@@ -420,10 +407,10 @@ export class ModelSettingsService {
    * Removing the last row is not a special case here: `resolveChain` already
    * falls back to the environment once there are no enabled rows left.
    */
-  async removeRow(organizationId: string, rowId: string, userId: string): Promise<void> {
-    const existing = await this.storedRow(organizationId, rowId);
+  async removeRow(rowId: string, userId: string): Promise<void> {
+    const existing = await this.storedRow(rowId);
     if (!existing) {
-      throw new NotFoundException('That model provider row does not belong to this organisation.');
+      throw new NotFoundException('That model provider row does not exist.');
     }
 
     if (existing.secretRef) {
@@ -432,18 +419,10 @@ export class ModelSettingsService {
       });
     }
 
-    await this.database.db
-      .delete(organizationModelSettings)
-      .where(
-        and(
-          eq(organizationModelSettings.id, rowId),
-          eq(organizationModelSettings.organizationId, organizationId),
-        ),
-      );
+    await this.database.db.delete(modelSettings).where(eq(modelSettings.id, rowId));
 
     await this.audit.record({
       event: AUDIT_EVENTS.MODEL_PROVIDER_CLEARED,
-      organizationId,
       userId,
       metadata: { rowId, providerId: existing.providerId, priority: existing.priority },
     });
@@ -456,15 +435,8 @@ export class ModelSettingsService {
    * priority first, then to its final one. A single pass trips the unique index
    * the moment two rows swap places.
    */
-  async reorder(
-    organizationId: string,
-    userId: string,
-    orderedIds: readonly string[],
-  ): Promise<ModelProviderList> {
-    const rows = await this.database.db
-      .select({ id: organizationModelSettings.id })
-      .from(organizationModelSettings)
-      .where(eq(organizationModelSettings.organizationId, organizationId));
+  async reorder(userId: string, orderedIds: readonly string[]): Promise<ModelProviderList> {
+    const rows = await this.database.db.select({ id: modelSettings.id }).from(modelSettings);
 
     const known = new Set(rows.map((row) => row.id));
     if (orderedIds.length !== known.size || orderedIds.some((id) => !known.has(id))) {
@@ -476,42 +448,31 @@ export class ModelSettingsService {
     await this.database.db.transaction(async (tx) => {
       for (const [index, id] of orderedIds.entries()) {
         await tx
-          .update(organizationModelSettings)
+          .update(modelSettings)
           .set({ priority: 1000 + index })
-          .where(
-            and(
-              eq(organizationModelSettings.id, id),
-              eq(organizationModelSettings.organizationId, organizationId),
-            ),
-          );
+          .where(eq(modelSettings.id, id));
       }
 
       for (const [index, id] of orderedIds.entries()) {
         await tx
-          .update(organizationModelSettings)
+          .update(modelSettings)
           .set({
             priority: index + 1,
-            revision: sql`${organizationModelSettings.revision} + 1`,
+            revision: sql`${modelSettings.revision} + 1`,
             updatedByUserId: userId,
             updatedAt: new Date(),
           })
-          .where(
-            and(
-              eq(organizationModelSettings.id, id),
-              eq(organizationModelSettings.organizationId, organizationId),
-            ),
-          );
+          .where(eq(modelSettings.id, id));
       }
     });
 
     await this.audit.record({
       event: AUDIT_EVENTS.MODEL_PROVIDER_REORDERED,
-      organizationId,
       userId,
       metadata: { order: orderedIds },
     });
 
-    return this.list(organizationId);
+    return this.list();
   }
 
   /**
@@ -527,31 +488,22 @@ export class ModelSettingsService {
     return this.secrets.read(settings.secretRef);
   }
 
-  private async nextPriority(organizationId: string): Promise<number> {
+  private async nextPriority(): Promise<number> {
     const rows = await this.database.db
-      .select({ priority: organizationModelSettings.priority })
-      .from(organizationModelSettings)
-      .where(eq(organizationModelSettings.organizationId, organizationId));
+      .select({ priority: modelSettings.priority })
+      .from(modelSettings);
 
     return rows.reduce((max, row) => Math.max(max, row.priority), 0) + 1;
   }
 
-  // Both the query and the JS check exist on purpose: the query is the backstop
-  // for a call site added later, the JS check is what turns a foreign row into
-  // `undefined` for the callers that exist now.
-  private async storedRow(organizationId: string, rowId: string): Promise<StoredRow | undefined> {
+  private async storedRow(rowId: string): Promise<StoredRow | undefined> {
     const [row] = await this.database.db
       .select()
-      .from(organizationModelSettings)
-      .where(
-        and(
-          eq(organizationModelSettings.id, rowId),
-          eq(organizationModelSettings.organizationId, organizationId),
-        ),
-      )
+      .from(modelSettings)
+      .where(eq(modelSettings.id, rowId))
       .limit(1);
 
-    return row && row.organizationId === organizationId ? row : undefined;
+    return row;
   }
 
   private toPublicRow(row: StoredRow): PublicModelProviderRow {

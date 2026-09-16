@@ -13,11 +13,11 @@ import type { PendingAccessRequest } from '@/lib/types';
  * One list across every project, because the person deciding opens this page to
  * ask "is anyone waiting", not to audit a particular project.
  *
- * There is no notification behind this panel deliberately: one organisation, few
- * people, and a request that waits an hour costs nothing. The count here is the
- * whole mechanism until a request is seen getting stuck.
+ * There is no notification behind this panel deliberately: few people, and a
+ * request that waits an hour costs nothing. The count here is the whole
+ * mechanism until a request is seen getting stuck.
  */
-export function AccessRequestsPanel({ organizationId }: { organizationId: string }) {
+export function AccessRequestsPanel() {
   const [requests, setRequests] = useState<PendingAccessRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -25,11 +25,11 @@ export function AccessRequestsPanel({ organizationId }: { organizationId: string
   const load = useCallback(async () => {
     setError(null);
     try {
-      setRequests(await api.access.pendingRequests(organizationId));
+      setRequests(await api.access.pendingRequests());
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Requests could not be loaded.');
     }
-  }, [organizationId]);
+  }, []);
 
   useEffect(() => {
     void load();

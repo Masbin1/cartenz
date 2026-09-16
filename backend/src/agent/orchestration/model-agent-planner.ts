@@ -13,12 +13,10 @@ import { rankModulesForModel } from '../analysis/odoo-model-ownership';
 
 export interface ModelPlanningInput {
   /**
-   * Whose model provider to use (ADR-023). The configuration is per
-   * organisation, so the caller says which one rather than the planner assuming a
-   * single provider bound at boot.
+   * Scopes an agent-backed endpoint's memory to this project, when known
+   * (ADR-023). The provider chain itself is global (ADR-044), so this is the
+   * only thing the caller passes.
    */
-  readonly organizationId: string;
-  /** Scopes an agent-backed endpoint's memory to this project, when known. */
   readonly projectId?: string;
   readonly prompt: string;
   readonly projectName: string;
@@ -65,7 +63,6 @@ export interface OdooFieldSummary {
 
 /** What planning an Odoo Online change needs. No repository, so no analysis. */
 export interface OdooOnlinePlanningInput {
-  readonly organizationId: string;
   /** Scopes an agent-backed endpoint's memory to this project, when known. */
   readonly projectId?: string;
   readonly prompt: string;
@@ -113,7 +110,7 @@ export class ModelAgentPlanner {
   constructor(private readonly providers: ModelProviderResolver) {}
 
   async createPlan(input: ModelPlanningInput): Promise<PlanningOutcome> {
-    const provider = await this.providers.forOrganization(input.organizationId, input.projectId);
+    const provider = await this.providers.forProject(input.projectId);
 
     const system = buildSystemPrompt({
       projectName: input.projectName,
@@ -168,7 +165,7 @@ export class ModelAgentPlanner {
    * whatever produced it and the portal needs no special case.
    */
   async createOdooOnlinePlan(input: OdooOnlinePlanningInput): Promise<PlanningOutcome> {
-    const provider = await this.providers.forOrganization(input.organizationId, input.projectId);
+    const provider = await this.providers.forProject(input.projectId);
 
     const system = buildSystemPrompt({
       projectName: input.projectName,

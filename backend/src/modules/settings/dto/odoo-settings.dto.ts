@@ -1,7 +1,7 @@
 import { IsOptional, IsString, MaxLength } from 'class-validator';
 
 /**
- * The organisation's Odoo paths (ADR-033).
+ * The deployment's Odoo paths (ADR-033, ADR-044).
  *
  * Every field is optional and a blank string clears it, so the form can be
  * submitted with one field filled without wiping the others being an accident —

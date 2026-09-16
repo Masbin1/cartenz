@@ -24,19 +24,11 @@ import {
 export interface RequestApprovalInput {
   readonly taskId: string;
   readonly taskReference: string;
-  readonly organizationId: string;
   readonly action: string;
   readonly requiredReason: string;
   readonly context: Record<string, unknown>;
   readonly taskStatus: AgentTaskStatus;
 }
-
-/** Approval actions that concern a production system. */
-const PRODUCTION_ACTIONS: readonly string[] = [
-  'deployment',
-  'database_migration',
-  'service_restart',
-];
 
 /**
  * The approval system (chapter 11).
@@ -85,7 +77,6 @@ export class ApprovalService {
     }
 
     await this.database.db.insert(approvals).values({
-      organizationId: input.organizationId,
       taskId: input.taskId,
       action: input.action as never,
       status: 'pending',
@@ -105,7 +96,6 @@ export class ApprovalService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.APPROVAL_REQUESTED,
-      organizationId: input.organizationId,
       metadata: {
         taskReference: input.taskReference,
         action: input.action,
@@ -114,9 +104,15 @@ export class ApprovalService {
     });
   }
 
-  /** Pending approvals across an organisation, for the dashboard. */
-  async listPending(user: AuthenticatedUser, organizationId: string) {
-    await this.authz.requireOrganizationMember(user, organizationId);
+  /**
+   * Pending approvals across every project, for the dashboard.
+   *
+   * Was scoped to one organisation. With one flat space there is nothing to
+   * scope it to, so it returns everything — which is also the right answer for
+   * an approvals queue: a pending decision nobody can see is a task stalled.
+   */
+  async listPending(user: AuthenticatedUser) {
+    await this.authz.requireApprovalAuthority(user);
 
     return this.database.db
       .select({
@@ -133,7 +129,7 @@ export class ApprovalService {
       .from(approvals)
       .innerJoin(agentTasks, eq(agentTasks.id, approvals.taskId))
       .innerJoin(projects, eq(projects.id, agentTasks.projectId))
-      .where(and(eq(approvals.organizationId, organizationId), eq(approvals.status, 'pending')))
+      .where(eq(approvals.status, 'pending'))
       .orderBy(desc(approvals.requestedAt));
   }
 
@@ -163,7 +159,7 @@ export class ApprovalService {
     note: string | undefined,
   ) {
     const task = await this.loadTask(taskId);
-    const context = await this.authz.requireProjectAccess(user, task.projectId, 'developer');
+    await this.authz.requireProjectAccess(user, task.projectId);
 
     const [pending] = await this.database.db
       .select()
@@ -176,10 +172,7 @@ export class ApprovalService {
       throw new BadRequestException('This task has no approval awaiting a decision.');
     }
 
-    this.authz.requireApprovalAuthority(
-      context.membership,
-      PRODUCTION_ACTIONS.includes(pending.action),
-    );
+    this.authz.requireApprovalAuthority(user);
 
     const decided = await this.database.db
       .update(approvals)
@@ -199,7 +192,6 @@ export class ApprovalService {
 
     await this.audit.record({
       event: decision === 'approved' ? AUDIT_EVENTS.APPROVAL_GRANTED : AUDIT_EVENTS.APPROVAL_REJECTED,
-      organizationId: context.organizationId,
       projectId: task.projectId,
       userId: user.userId,
       metadata: { taskReference: task.reference, action: pending.action, note },

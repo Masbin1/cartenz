@@ -80,7 +80,6 @@ describe('on-premise workspace allocation', () => {
   const input = (overrides: Partial<AllocateWorkspaceInput> = {}): AllocateWorkspaceInput => ({
     taskId: 'task-1',
     taskReference: 'task_1',
-    organizationId: 'org-1',
     projectId: 'project-1',
     repositoryUrl: null,
     defaultBranch: 'main',

@@ -17,7 +17,11 @@
 #     (backend/src/core/process/command-runner.service.ts,
 #     assertProvisioningInvocation) independently re-validates that only these
 #     two exact paths are ever passed to `sudo`, and that the arguments after
-#     them are a valid project name and a valid port. This sudoers rule and
+#     them are a valid project name, a valid port and — optionally, since
+#     ADR-045 — a valid Odoo version the scripts use to select the
+#     full-installation template database (built by
+#     infrastructure/provisioning/build-odoo-templates.sh and duplicated by
+#     infrastructure/provisioning/create-project-db.sh). This sudoers rule and
 #     that code-level check are two independent gates; neither is trusted
 #     alone.
 #   - The third is the addons/ ownership fix-up

@@ -34,7 +34,6 @@ import type { OdooEdition } from '../../core/enums';
  * conflict and why the operator's script is the one that wins it.
  */
 export interface ProvisionProjectInput {
-  readonly organizationId: string;
   readonly projectId: string;
   /**
    * The exact directory/database name the scripts will use. Must already
@@ -44,6 +43,12 @@ export interface ProvisionProjectInput {
    */
   readonly technicalName: string;
   readonly odooEdition: OdooEdition;
+  /**
+   * The project's declared Odoo series, passed to the scripts so they can
+   * select the right template database (ADR-045). Null means "no version" and
+   * the scripts install base only, as before.
+   */
+  readonly odooVersion: string | null;
 }
 
 export interface ProvisionProjectResult {
@@ -136,11 +141,14 @@ export class ProjectProvisioningService {
     );
 
     try {
-      const result = await this.commands.run('sudo', ['-n', script, input.technicalName, String(port)], {
+      const args = ['-n', script, input.technicalName, String(port)];
+      if (input.odooVersion) args.push(input.odooVersion);
+      const result = await this.commands.run('sudo', args, {
         cwd: '/',
-        // The scripts install a database (`-i base`) and start a systemd unit;
-        // slower than a git command by a wide margin, and the default process
-        // timeout would kill it mid-run.
+        // The scripts install a database (`-i base`, or duplicate a template for
+        // a versioned project — ADR-045) and start a systemd unit; slower than a
+        // git command by a wide margin, and the default process timeout would
+        // kill it mid-run.
         timeoutMs: this.config.process.maxTimeoutMs,
       });
 

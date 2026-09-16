@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { Spinner } from '@/components/ui/spinner';
+import { USER_REGIONS, USER_REGION_LABELS } from '@/lib/types';
 
 const MINIMUM_PASSWORD_LENGTH = 12;
 
@@ -13,7 +14,7 @@ export default function RegisterPage() {
   const [form, setForm] = useState({
     name: '',
     email: '',
-    organizationName: '',
+    region: USER_REGIONS[0] as string,
     password: '',
   });
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +64,7 @@ export default function RegisterPage() {
         <div className="panel p-6">
           <h1 className="text-base font-semibold">Create an account</h1>
           <p className="mt-1 text-xs text-content-muted">
-            You will own the organisation you name here. Colleagues can be added afterwards.
+            Choose the region you work in. An administrator can change it later.
           </p>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
@@ -93,22 +94,30 @@ export default function RegisterPage() {
                 value={form.email}
                 onChange={update('email')}
                 className="field-input"
-                placeholder="you@organisation.com"
+                placeholder="you@example.com"
               />
             </div>
 
             <div>
-              <label htmlFor="organizationName" className="field-label">
-                Organisation name
+              <label htmlFor="region" className="field-label">
+                Region
               </label>
-              <input
-                id="organizationName"
+              <select
+                id="region"
                 required
-                value={form.organizationName}
-                onChange={update('organizationName')}
+                value={form.region}
+                onChange={(event) => setForm((p) => ({ ...p, region: event.target.value }))}
                 className="field-input"
-                placeholder="Acme Manufacturing"
-              />
+              >
+                {USER_REGIONS.map((region) => (
+                  <option key={region} value={region}>
+                    {USER_REGION_LABELS[region]}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1.5 text-2xs text-content-subtle">
+                You will see the projects in this region.
+              </p>
             </div>
 
             <div>

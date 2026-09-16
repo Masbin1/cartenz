@@ -9,6 +9,7 @@ import { eq } from 'drizzle-orm';
 import { TokenService } from './token.service';
 import { DatabaseService } from '../../core/database/database.service';
 import { users } from '../../core/database/schema';
+import type { UserRegion } from '../../core/enums';
 import { IS_PUBLIC_KEY } from '../../core/http/public.decorator';
 import { AUTH_USER_KEY, AuthenticatedRequest } from '../../core/http/current-user.decorator';
 
@@ -21,8 +22,10 @@ import { AUTH_USER_KEY, AuthenticatedRequest } from '../../core/http/current-use
  * third-party identity provider.
  *
  * The user row is read on every request rather than trusted from the token, so
- * that deactivating an account takes effect immediately instead of at the next
- * token expiry.
+ * that deactivating an account — or changing its region or admin flag — takes
+ * effect immediately instead of at the next token expiry. The token carries the
+ * same two attributes, but only as a fallback for code that holds a claims
+ * object rather than a request; this read is what authorises.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -52,6 +55,8 @@ export class JwtAuthGuard implements CanActivate {
         id: users.id,
         email: users.email,
         name: users.name,
+        region: users.region,
+        isAdmin: users.isAdmin,
         isActive: users.isActive,
       })
       .from(users)
@@ -62,7 +67,13 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('This account is no longer active.');
     }
 
-    request[AUTH_USER_KEY] = { userId: user.id, email: user.email, name: user.name };
+    request[AUTH_USER_KEY] = {
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      region: user.region as UserRegion,
+      isAdmin: user.isAdmin,
+    };
     return true;
   }
 }

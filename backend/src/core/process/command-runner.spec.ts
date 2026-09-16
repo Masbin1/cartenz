@@ -458,6 +458,38 @@ describe('assertProvisioningInvocation', () => {
     ).toThrow(CommandArgumentError);
   });
 
+  it('permits a versioned provisioning call selecting a template database', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', createScripts[1], 'dodolbintangmas', '7001', '19.0'],
+        createScripts,
+        grantScript,
+      ),
+    ).not.toThrow();
+  });
+
+  it('refuses a malformed version as the optional fourth argument', () => {
+    for (const bad of ['19', 'v19.0', '19.0.1', '../19.0', '']) {
+      expect(() =>
+        assertProvisioningInvocation(
+          ['-n', createScripts[0], 'name', '7001', bad],
+          createScripts,
+          grantScript,
+        ),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a sixth argument even when the fifth is a valid version', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', createScripts[0], 'name', '7001', '19.0', 'extra'],
+        createScripts,
+        grantScript,
+      ),
+    ).toThrow(CommandArgumentError);
+  });
+
   it('refuses extra arguments smuggled after the grant script name', () => {
     expect(() =>
       assertProvisioningInvocation(['-n', grantScript, 'name', 'extra'], createScripts, grantScript),

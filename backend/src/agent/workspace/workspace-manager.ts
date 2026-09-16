@@ -63,7 +63,6 @@ export interface Workspace {
 export interface AllocateWorkspaceInput {
   readonly taskId: string;
   readonly taskReference: string;
-  readonly organizationId: string;
   readonly projectId: string;
   readonly repositoryUrl: string | null;
   readonly defaultBranch: string;
@@ -86,7 +85,7 @@ export interface AllocateWorkspaceInput {
    */
   readonly onPremiseProjectPath: string | null;
   /**
-   * The read-only Odoo source paths in force for this organisation (ADR-033).
+   * The read-only Odoo source paths in force for this deployment (ADR-033).
    *
    * Undefined means the caller has no opinion and the deployment's environment
    * configuration applies (ADR-031), which is what keeps existing callers and
@@ -182,7 +181,6 @@ export class WorkspaceManager {
       id: undefined,
       workspaceRef: workspaceId,
       taskId: input.taskId,
-      organizationId: input.organizationId,
       projectId: input.projectId,
       rootPath: root,
       branch,
@@ -334,7 +332,6 @@ export class WorkspaceManager {
     await this.database.db.insert(agentWorkspaces).values({
       workspaceRef: workspaceId,
       taskId: input.taskId,
-      organizationId: input.organizationId,
       projectId: input.projectId,
       rootPath: root,
       branch: 'odoo-online',
@@ -450,7 +447,6 @@ export class WorkspaceManager {
       id: undefined,
       workspaceRef: workspaceId,
       taskId: input.taskId,
-      organizationId: input.organizationId,
       projectId: input.projectId,
       rootPath: metadataRoot,
       branch,

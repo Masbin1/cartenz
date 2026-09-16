@@ -19,7 +19,6 @@ import {
   DeleteProjectDto,
   EnvironmentDto,
   ListProjectsQueryDto,
-  OnPremiseLocationsQueryDto,
   RemoteBranchesDto,
   UpdateAgentPermissionsDto,
   UpdateProjectDto,
@@ -68,7 +67,7 @@ export class ProjectsController {
   @Post('remote-branches')
   @HttpCode(HttpStatus.OK)
   remoteBranchesFor(@CurrentUser() user: AuthenticatedUser, @Body() dto: RemoteBranchesDto) {
-    return this.projects.remoteBranchesFor(user, dto.organizationId, dto.repositoryUrl);
+    return this.projects.remoteBranchesFor(user, dto.repositoryUrl);
   }
 
   /**
@@ -77,11 +76,8 @@ export class ProjectsController {
    * wins over the UUID parameter.
    */
   @Get('on-premise-locations')
-  onPremiseLocations(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query() query: OnPremiseLocationsQueryDto,
-  ) {
-    return this.projects.onPremiseLocations(user, query.organizationId);
+  onPremiseLocations(@CurrentUser() user: AuthenticatedUser) {
+    return this.projects.onPremiseLocations(user);
   }
 
   @Get(':projectId')
@@ -192,8 +188,8 @@ export class ProjectsController {
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Body() dto: EnvironmentDto,
   ) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin');
-    return this.environments.add(projectId, context.organizationId, dto);
+    await this.authz.requireProjectAccess(user, projectId, { requireAdmin: true });
+    return this.environments.add(projectId, dto);
   }
 
   /** Moves the default target. Refuses to point it at a production environment. */
@@ -203,7 +199,7 @@ export class ProjectsController {
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Param('environmentId', ParseUUIDPipe) environmentId: string,
   ) {
-    await this.authz.requireProjectAccess(user, projectId, 'admin');
+    await this.authz.requireProjectAccess(user, projectId, { requireAdmin: true });
     await this.environments.setDefaultTarget(projectId, environmentId);
     return this.environments.listForProject(projectId);
   }

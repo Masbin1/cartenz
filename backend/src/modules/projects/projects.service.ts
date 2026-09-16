@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { and, count, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import {
   agentTasks,
@@ -36,6 +36,8 @@ import {
   type OdooEdition,
   type ProjectProvisioningStatus,
   type ProjectType,
+  type UserRegion,
+  USER_REGIONS,
 } from '../../core/enums';
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
 import { redactMetadata } from '../../core/audit/redact';
@@ -53,7 +55,8 @@ import {
   DEFAULT_SCAFFOLD_ENVIRONMENTS,
   ProjectEnvironmentsService,
 } from './project-environments.service';
-import { OdooSettingsService } from '../organizations/odoo-settings.service';
+import { OdooSettingsService } from '../settings/odoo-settings.service';
+import { OdooVersionsService } from '../settings/odoo-versions.service';
 import { ProjectProvisioningService } from './project-provisioning.service';
 import {
   GitHubRepositoryService,
@@ -97,9 +100,8 @@ interface ScaffoldProvisioningInfo {
 /**
  * Projects, connections and specifications.
  *
- * Every method resolves authorisation first and then filters on the organisation
- * the authorisation service returned, so a project can only be reached through an
- * organisation the caller belongs to.
+ * Every method resolves authorisation first (ADR-044). What a caller may open is
+ * decided in one place; what they may see is decided here, by region.
  */
 /**
  * A project row as the list returns it, with the fields a locked row withholds.
@@ -145,6 +147,7 @@ export class ProjectsService {
     private readonly workspaces: WorkspaceManager,
     private readonly git: GitService,
     private readonly odooSettings: OdooSettingsService,
+    private readonly odooVersions: OdooVersionsService,
     private readonly odooOnline: OdooOnlineClient,
     private readonly provisioning: ProjectProvisioningService,
     private readonly githubRepositories: GitHubRepositoryService,
@@ -197,10 +200,11 @@ export class ProjectsService {
   /** Branch probe for the project-creation form, before a project exists. */
   async remoteBranchesFor(
     user: AuthenticatedUser,
-    organizationId: string,
     repositoryUrl: string,
   ): Promise<{ branches: readonly string[] }> {
-    await this.authz.requireOrganizationMember(user, organizationId, 'developer');
+    // No project exists yet, so there is no grant to check. Any signed-in caller
+    // may probe a repository URL they are about to connect.
+    void user;
     return { branches: await this.readRemoteBranches(repositoryUrl) };
   }
 
@@ -214,9 +218,11 @@ export class ProjectsService {
    */
   async onPremiseLocations(
     user: AuthenticatedUser,
-    organizationId: string,
   ): Promise<{ root: string | null; folders: OnPremiseFolder[] }> {
-    await this.authz.requireOrganizationMember(user, organizationId, 'developer');
+    // The on-premise root is a host path, not a per-project value: reading the
+    // directory listing tells the caller what is installed on this server, so it
+    // is admin-only.
+    await this.authz.requireAdmin(user);
     const root = this.config.onPremise.root;
     if (!root) return { root: null, folders: [] };
     return { root, folders: await listOnPremiseFolders(root) };
@@ -232,7 +238,7 @@ export class ProjectsService {
     user: AuthenticatedUser,
     projectId: string,
   ): Promise<{ branches: readonly string[] }> {
-    await this.authz.requireProjectAccess(user, projectId, 'developer');
+    await this.authz.requireProjectAccess(user, projectId);
 
     const [project] = await this.database.db
       .select({
@@ -263,12 +269,48 @@ export class ProjectsService {
     return { branches: await this.readRemoteBranches(project.repositoryUrl) };
   }
 
+  /**
+   * The project list (ADR-043, ADR-044).
+   *
+   * An admin sees every region. Everyone else sees their own region's projects,
+   * plus any project they were granted or created in another region - a grant is
+   * the one thing that crosses the boundary, which is what makes it worth asking
+   * for. Locked rows are still listed: access is withheld, not existence.
+   */
   async list(user: AuthenticatedUser, query: ListProjectsQueryDto) {
-    const membership = await this.authz.requireOrganizationMember(user, query.organizationId);
+    const archived = query.includeArchived ? undefined : isNull(projects.archivedAt);
 
-    const where = query.includeArchived
-      ? eq(projects.organizationId, query.organizationId)
-      : and(eq(projects.organizationId, query.organizationId), isNull(projects.archivedAt));
+    /**
+     * The cross-region half of the rule: a grant is the one thing that crosses
+     * the boundary, and a project's creator holds an implicit grant (ADR-043).
+     * Read once for the whole page rather than once per row, and skipped for an
+     * admin, who sees every region anyway.
+     */
+    const reachableIds = user.isAdmin
+      ? []
+      : [
+          ...(
+            await this.database.db
+              .select({ projectId: projectMembers.projectId })
+              .from(projectMembers)
+              .where(eq(projectMembers.userId, user.userId))
+          ).map((row) => row.projectId),
+          ...(
+            await this.database.db
+              .select({ id: projects.id })
+              .from(projects)
+              .where(eq(projects.createdByUserId, user.userId))
+          ).map((row) => row.id),
+        ];
+
+    const scope = user.isAdmin
+      ? undefined
+      : or(
+          eq(projects.region, user.region),
+          reachableIds.length > 0 ? inArray(projects.id, reachableIds) : undefined,
+        );
+
+    const where = and(archived, scope);
 
     const rows = await this.database.db
       .select({
@@ -297,10 +339,9 @@ export class ProjectsService {
       .orderBy(desc(projects.updatedAt));
 
     /**
-     * Every project in the organisation is listed, including the ones this
-     * caller cannot open (ADR-043). What is withheld is access, not existence -
-     * so the two lookups below are read once for the whole page rather than once
-     * per row.
+     * Every project the caller may see is listed, including the ones they
+     * cannot open (ADR-043). What is withheld is access, not existence - so the
+     * lookups below are read once for the whole page rather than once per row.
      */
     const projectIds = rows.map((row) => row.id);
 
@@ -350,7 +391,7 @@ export class ProjectsService {
 
     return rows.map(({ createdByUserId, ...row }) => {
       const decision = decideProjectAccess({
-        role: membership.role,
+        isAdmin: user.isAdmin,
         userId: user.userId,
         createdByUserId,
         hasGrant: grantedIds.has(row.id),
@@ -363,9 +404,9 @@ export class ProjectsService {
     });
   }
 
-  /** Connect an existing project. Requires the developer role or above. */
+  /** Connect an existing project. */
   async create(user: AuthenticatedUser, dto: CreateProjectDto) {
-    await this.authz.requireOrganizationMember(user, dto.organizationId, 'developer');
+    this.assertRegionAllowed(user, dto.region);
 
     if (
       REPOSITORY_BACKED_PROJECT_TYPES.includes(dto.projectType) &&
@@ -391,7 +432,7 @@ export class ProjectsService {
     // Validated before the transaction opens, so a bad environment list is a 400
     // rather than a rolled-back insert.
     const defaultBranch = dto.defaultBranch ?? 'main';
-    this.environments.buildForCreation('', dto.organizationId, defaultBranch, dto.environments);
+    this.environments.buildForCreation('', defaultBranch, dto.environments);
 
     /**
      * The project directory, created before the project row (ADR-032, ADR-033).
@@ -424,7 +465,6 @@ export class ProjectsService {
 
     const scaffolded = dto.scaffold
       ? await this.scaffoldCustomAddon({
-          organizationId: dto.organizationId,
           projectName: dto.name,
           technicalName: dto.technicalName,
           projectType: dto.projectType,
@@ -437,7 +477,7 @@ export class ProjectsService {
       : null;
 
     const project = await this.insertProject({
-      organizationId: dto.organizationId,
+      region: dto.region,
       name: dto.name,
       description: dto.description ?? null,
       projectType: dto.projectType,
@@ -452,17 +492,11 @@ export class ProjectsService {
     });
 
     await this.database.db.insert(projectEnvironments).values(
-      this.environments.buildForCreation(
-        project.id,
-        dto.organizationId,
-        defaultBranch,
-        resolvedEnvironments,
-      ),
+      this.environments.buildForCreation(project.id, defaultBranch, resolvedEnvironments),
     );
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_CREATED,
-      organizationId: dto.organizationId,
       projectId: project.id,
       userId: user.userId,
       metadata: { name: project.name, projectType: project.projectType, flow: 'connect_existing' },
@@ -476,7 +510,6 @@ export class ProjectsService {
      */
     const github = scaffolded
       ? await this.connectGitHubRepository({
-          organizationId: dto.organizationId,
           projectId: project.id,
           userId: user.userId,
           projectName: project.name,
@@ -496,7 +529,7 @@ export class ProjectsService {
    * written together, so a project created through this flow always has one.
    */
   async createAiProject(user: AuthenticatedUser, dto: CreateAiProjectDto) {
-    await this.authz.requireOrganizationMember(user, dto.organizationId, 'developer');
+    this.assertRegionAllowed(user, dto.region);
 
     const specification = buildProjectSpecification({
       projectName: dto.name,
@@ -536,14 +569,13 @@ export class ProjectsService {
      */
     const scaffolded = this.provisioning.available
       ? await this.provisionAiProject({
-          organizationId: dto.organizationId,
           projectName: dto.name,
+          odooVersion: dto.odooVersion,
           odooEdition,
           defaultBranch: 'main',
           environmentBranches: scaffoldEnvironments.map((environment) => environment.branch),
         })
       : await this.scaffoldCustomAddon({
-          organizationId: dto.organizationId,
           projectName: dto.name,
           projectType: 'ai_project',
           odooVersion: dto.odooVersion ?? null,
@@ -558,7 +590,7 @@ export class ProjectsService {
         const [project] = await tx
           .insert(projects)
           .values({
-            organizationId: dto.organizationId,
+            region: dto.region,
             name: dto.name,
             description: dto.description,
             projectType: 'ai_project',
@@ -599,7 +631,6 @@ export class ProjectsService {
           .values(
             this.environments.buildForCreation(
               project.id,
-              dto.organizationId,
               'main',
               scaffoldEnvironments,
             ),
@@ -642,7 +673,6 @@ export class ProjectsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_CREATED,
-      organizationId: dto.organizationId,
       projectId: result.project.id,
       userId: user.userId,
       metadata: {
@@ -657,7 +687,6 @@ export class ProjectsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_SPECIFICATION_CREATED,
-      organizationId: dto.organizationId,
       projectId: result.project.id,
       userId: user.userId,
       metadata: { version: 1 },
@@ -670,7 +699,6 @@ export class ProjectsService {
      * unreachable leaves a working local project rather than a failed request.
      */
     const github = await this.connectGitHubRepository({
-      organizationId: dto.organizationId,
       projectId: result.project.id,
       userId: user.userId,
       projectName: result.project.name,
@@ -701,7 +729,6 @@ export class ProjectsService {
    * The result says which of the three things happened, and the response carries it.
    */
   private async connectGitHubRepository(input: {
-    organizationId: string;
     projectId: string;
     userId: string;
     projectName: string;
@@ -713,7 +740,6 @@ export class ProjectsService {
   }): Promise<GitHubConnectionResult> {
     try {
       const result = await this.githubRepositories.connect({
-        organizationId: input.organizationId,
         projectId: input.projectId,
         projectName: input.projectName,
         repositoryName: input.technicalName,
@@ -728,7 +754,6 @@ export class ProjectsService {
           result.status === 'connected'
             ? AUDIT_EVENTS.PROJECT_GITHUB_REPOSITORY_CONNECTED
             : AUDIT_EVENTS.PROJECT_GITHUB_REPOSITORY_FAILED,
-        organizationId: input.organizationId,
         projectId: input.projectId,
         userId: input.userId,
         metadata: {
@@ -755,7 +780,6 @@ export class ProjectsService {
 
       await this.audit.record({
         event: AUDIT_EVENTS.PROJECT_GITHUB_REPOSITORY_FAILED,
-        organizationId: input.organizationId,
         projectId: input.projectId,
         userId: input.userId,
         metadata: { reason: message },
@@ -772,7 +796,7 @@ export class ProjectsService {
   }
 
   async findOne(user: AuthenticatedUser, projectId: string) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'viewer', {
+    const context = await this.authz.requireProjectAccess(user, projectId, {
       includeArchived: true,
     });
 
@@ -844,21 +868,21 @@ export class ProjectsService {
           }
         : null,
       recentTasks,
-      viewerRole: context.membership.role,
+      accessReason: context.accessReason,
     };
   }
 
   /**
    * Reveals the Odoo master password for a provisioned instance (ADR-040).
    *
-   * admin/owner only - the master password is full administrative access to
-   * the Odoo instance, not a value a developer or viewer role should be able
-   * to pull on demand. Unsealed on-demand and returned once; never cached,
-   * never logged, never included in `findOne`'s response shape.
+   * Admin only - the master password is full administrative access to the Odoo
+   * instance. Unsealed on-demand and returned once; never cached, never logged,
+   * never included in `findOne`'s response shape.
    */
   async revealMasterPassword(user: AuthenticatedUser, projectId: string) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin', {
+    await this.authz.requireProjectAccess(user, projectId, {
       includeArchived: true,
+      requireAdmin: true,
     });
 
     const [project] = await this.database.db
@@ -886,7 +910,6 @@ export class ProjectsService {
     // "who looked at this" later.
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_MASTER_PASSWORD_REVEALED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
     });
@@ -895,7 +918,7 @@ export class ProjectsService {
   }
 
   async update(user: AuthenticatedUser, projectId: string, dto: UpdateProjectDto) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'developer');
+    await this.authz.requireProjectAccess(user, projectId);
 
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (dto.name !== undefined) patch.name = dto.name;
@@ -914,7 +937,6 @@ export class ProjectsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_UPDATED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: { fields: Object.keys(patch).filter((key) => key !== 'updatedAt') },
@@ -926,8 +948,9 @@ export class ProjectsService {
   async archive(user: AuthenticatedUser, projectId: string) {
     // Archiving one that is already archived is a no-op rather than a 404, so a
     // repeated click is not an error.
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin', {
+    await this.authz.requireProjectAccess(user, projectId, {
       includeArchived: true,
+      requireAdmin: true,
     });
 
     await this.database.db
@@ -937,7 +960,6 @@ export class ProjectsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_ARCHIVED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
     });
@@ -945,8 +967,9 @@ export class ProjectsService {
 
   /** Returns an archived project to the active list. */
   async restore(user: AuthenticatedUser, projectId: string) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin', {
+    await this.authz.requireProjectAccess(user, projectId, {
       includeArchived: true,
+      requireAdmin: true,
     });
 
     const [restored] = await this.database.db
@@ -959,7 +982,6 @@ export class ProjectsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_RESTORED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
     });
@@ -991,8 +1013,9 @@ export class ProjectsService {
   async destroy(user: AuthenticatedUser, projectId: string, confirmation: string) {
     // Archived included: putting a project away and then deleting it is the
     // obvious order, and refusing it would leave archived projects undeletable.
-    const context = await this.authz.requireProjectAccess(user, projectId, 'owner', {
+    await this.authz.requireProjectAccess(user, projectId, {
       includeArchived: true,
+      requireAdmin: true,
     });
 
     const [project] = await this.database.db
@@ -1043,7 +1066,6 @@ export class ProjectsService {
     // row is the only remaining evidence that it existed.
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_DELETED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: {
@@ -1114,7 +1136,9 @@ export class ProjectsService {
     projectId: string,
     submitted: Record<string, boolean>,
   ) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin');
+    await this.authz.requireProjectAccess(user, projectId, {
+      requireAdmin: true,
+    });
 
     const rejected: string[] = [];
     const accepted: Record<string, boolean> = {};
@@ -1151,7 +1175,6 @@ export class ProjectsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_AGENT_PERMISSIONS_CHANGED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: { changed: Object.keys(accepted), resulting: merged },
@@ -1172,7 +1195,9 @@ export class ProjectsService {
     projectId: string,
     dto: CreateConnectionDto,
   ) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin');
+    await this.authz.requireProjectAccess(user, projectId, {
+      requireAdmin: true,
+    });
 
     const credentialKind = dto.credentialKind ?? 'token';
 
@@ -1194,7 +1219,6 @@ export class ProjectsService {
     let secretRef: string | null = null;
     if (dto.credential && dto.credential.length > 0) {
       const reference = await this.secrets.write({
-        organizationId: context.organizationId,
         projectId,
         purpose: `${dto.connectionType}-${credentialKind}`,
         value: dto.credential,
@@ -1226,7 +1250,6 @@ export class ProjectsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_CONNECTION_CREATED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: {
@@ -1299,7 +1322,9 @@ export class ProjectsService {
   }
 
   async deleteConnection(user: AuthenticatedUser, projectId: string, connectionId: string) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin');
+    await this.authz.requireProjectAccess(user, projectId, {
+      requireAdmin: true,
+    });
 
     const [connection] = await this.database.db
       .select()
@@ -1321,7 +1346,6 @@ export class ProjectsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_CONNECTION_DELETED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: { connectionType: connection.connectionType },
@@ -1332,8 +1356,25 @@ export class ProjectsService {
   // Internals
   // -------------------------------------------------------------------------
 
+  /**
+   * Who may create a project in a given region (ADR-044).
+   *
+   * An admin may choose any region. A regular caller may only create in their
+   * own, so a project is never born in a region its creator cannot see.
+   */
+  private assertRegionAllowed(user: AuthenticatedUser, region: UserRegion): void {
+    if (!USER_REGIONS.includes(region)) {
+      throw new BadRequestException(`Unknown region: ${String(region)}.`);
+    }
+    if (!user.isAdmin && region !== user.region) {
+      throw new BadRequestException(
+        'You can only create projects in your own region. Ask an administrator to create it elsewhere.',
+      );
+    }
+  }
+
   private async insertProject(values: {
-    organizationId: string;
+    region: CreateProjectDto['region'];
     name: string;
     description: string | null;
     projectType: CreateProjectDto['projectType'];
@@ -1351,9 +1392,9 @@ export class ProjectsService {
         .returning();
       return project;
     } catch (error) {
-      // The unique index on (organization_id, name) is the authority here.
+      // The global unique index on `name` is the authority here.
       if (isUniqueViolation(error)) {
-        throw new ConflictException('A project with that name already exists in this organisation.');
+        throw new ConflictException('A project with that name already exists.');
       }
       throw error;
     }
@@ -1395,7 +1436,6 @@ export class ProjectsService {
    * destroy it.
    */
   private async scaffoldCustomAddon(input: {
-    organizationId: string;
     projectName: string;
     technicalName?: string;
     projectType: ProjectType;
@@ -1437,12 +1477,12 @@ export class ProjectsService {
       );
     }
 
-    // The organisation's configured projects root, falling back to
-    // ON_PREMISE_ROOT when it has not been set in the portal (ADR-033).
-    const root = await this.odooSettings.projectsRootFor(input.organizationId);
+    // The configured projects root, falling back to ON_PREMISE_ROOT when it has
+    // not been set in the portal (ADR-033).
+    const root = await this.odooSettings.projectsRootFor();
     if (!root) {
       throw new BadRequestException(
-        'No projects root is configured. Set it in the organisation settings, ' +
+        'No projects root is configured. Set it in the settings, ' +
           'or set ON_PREMISE_ROOT on the server.',
       );
     }
@@ -1480,9 +1520,9 @@ export class ProjectsService {
 
     try {
       const runnable = await this.resolveRunnableConfig(
-        input.organizationId,
         directoryName,
         input.odooEdition,
+        input.odooVersion,
       );
       for (const file of buildScaffoldFiles({ projectName: input.projectName, runnable })) {
         const target = join(repositoryPath, file.path);
@@ -1549,8 +1589,8 @@ export class ProjectsService {
    * call site.
    */
   private async provisionAiProject(input: {
-    organizationId: string;
     projectName: string;
+    odooVersion: string | null;
     odooEdition: OdooEdition;
     defaultBranch: string;
     environmentBranches?: readonly string[];
@@ -1578,10 +1618,10 @@ export class ProjectsService {
     }
 
     const result = await this.provisioning.provision({
-      organizationId: input.organizationId,
       projectId: '', // not yet known: the project row does not exist until after this call
       technicalName: directoryName,
       odooEdition: input.odooEdition,
+      odooVersion: input.odooVersion,
     });
 
     if (!result.provisioned) {
@@ -1593,16 +1633,15 @@ export class ProjectsService {
     /**
      * Seals the master password immediately (ADR-040) and discards the
      * plaintext from this function's own scope as soon as `write` returns.
-     * organizationId-scoped, projectId null: the project row does not exist
-     * yet, exactly the shape createConnection uses for a connection credential
-     * created before its project id would be known if it ever needed to be.
+     * projectId null: the project row does not exist yet, exactly the shape
+     * createConnection uses for a connection credential created before its
+     * project id would be known if it ever needed to be.
      * Never logged, never included in the return value, never held past the
      * one call that seals it.
      */
     let masterPasswordRef: string | null = null;
     if (result.masterPassword) {
       const sealed = await this.secrets.write({
-        organizationId: input.organizationId,
         projectId: null,
         purpose: 'odoo-master-password',
         value: result.masterPassword,
@@ -1692,11 +1731,16 @@ export class ProjectsService {
    * path, when present, is the second.
    */
   private async resolveRunnableConfig(
-    organizationId: string,
     directoryName: string,
     edition: OdooEdition,
+    version: string | null = null,
   ): Promise<RunnableConfig | undefined> {
-    const sourcePaths = await this.odooSettings.sourcePathsFor(organizationId);
+    // ADR-045: the per-version catalog is the authority for a declared version.
+    // With no active row for it, the organisation-wide paths (ADR-033) apply,
+    // which keeps a single-version deployment exactly as it was.
+    const sourcePaths =
+      (await this.odooVersions.sourcePathsFor(version, edition)) ??
+      (await this.odooSettings.sourcePathsFor(edition));
     const basePath = sourcePaths[0];
     if (!basePath) return undefined;
 
@@ -1723,7 +1767,7 @@ export class ProjectsService {
   /** Response shape for a project. Declared so no column leaks by accident. */
   private present(project: {
     id: string;
-    organizationId: string;
+    region: string;
     name: string;
     description: string | null;
     projectType: string;
@@ -1747,7 +1791,7 @@ export class ProjectsService {
   }) {
     return {
       id: project.id,
-      organizationId: project.organizationId,
+      region: project.region,
       name: project.name,
       description: project.description,
       projectType: project.projectType,

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service';
 import { auditLogs } from '../database/schema';
 import { redactMetadata } from './redact';
@@ -7,7 +7,6 @@ import type { AuditEvent } from './audit-events';
 
 export interface AuditRecord {
   readonly event: AuditEvent;
-  readonly organizationId?: string | null;
   readonly projectId?: string | null;
   readonly userId?: string | null;
   readonly ipAddress?: string | null;
@@ -33,7 +32,6 @@ export class AuditService {
     try {
       await this.database.db.insert(auditLogs).values({
         eventType: entry.event,
-        organizationId: entry.organizationId ?? null,
         projectId: entry.projectId ?? null,
         userId: entry.userId ?? null,
         ipAddress: entry.ipAddress ?? null,
@@ -46,15 +44,12 @@ export class AuditService {
     }
   }
 
-  /** Organisation-scoped audit trail, most recent first. */
-  async listForOrganization(
-    organizationId: string,
-    options: { limit?: number; projectId?: string } = {},
-  ) {
+  /** Deployment-wide audit trail, most recent first (ADR-044). */
+  async listRecent(options: { limit?: number; projectId?: string } = {}) {
     const limit = Math.min(options.limit ?? 50, 200);
     const where = options.projectId
-      ? and(eq(auditLogs.organizationId, organizationId), eq(auditLogs.projectId, options.projectId))
-      : eq(auditLogs.organizationId, organizationId);
+      ? eq(auditLogs.projectId, options.projectId)
+      : undefined;
 
     return this.database.db
       .select()

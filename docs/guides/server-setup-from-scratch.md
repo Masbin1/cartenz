@@ -378,6 +378,7 @@ things have to travel, and only one of them is code.
 | `AI_BASE_URL` / `AI_API_KEY` / provider chain | `.env` + the portal's per-organisation rows | The agent cannot call a model. The portal rows travel with the database. |
 | sudoers rule | `/etc/sudoers.d/99-linkederp-provisioning` | Project provisioning fails with `sudo: a password is required`. Source is in the repo (`infrastructure/provisioning/`); nothing installs it for you. |
 | The operator's `create_project` scripts | `/opt/odoo/scripts/` | **Not in this repository.** Without them the platform can still create scaffolded projects, but can never turn one into a running Odoo instance. |
+| Odoo template databases (ADR-045) | Postgres `cartenz_tpl_*` | The full-installation templates new project databases are duplicated from. Miss them and provisioning falls back to the operator scripts' own database step (or fails, if they were updated to require templates). Rebuild with `infrastructure/provisioning/build-odoo-templates.sh`. |
 | Project directories | `/opt/odoo/projects/<name>/` | Each holds the project's git repository (`addons/`), its `config/`, `data/` and `logs/`, and its Odoo *database* is a separate database in the same Postgres cluster. Miss this and the projects exist in the portal but not on the host. |
 | Per-project units and Nginx sites | `/etc/systemd/system/odoo-*.service`, `/etc/nginx/sites-available/` | Already-provisioned instances stop answering. |
 | TLS certificates | `/etc/letsencrypt/` | Every hostname loses HTTPS. Reissuing is usually easier than moving them. |
@@ -397,7 +398,7 @@ pg_dump -U linkederp -h 127.0.0.1 linkederp_ai | gzip > cartenz-db-$(date +%F).s
 
 # 3. Every project's own Odoo database (skip if there are none).
 sudo -u postgres pg_dumpall --globals-only > cartenz-roles.sql    # roles, including the projects'
-for db in $(sudo -u postgres psql -Atc "select datname from pg_database where datname not in ('postgres','template0','template1')"); do
+for db in $(sudo -u postgres psql -Atc "select datname from pg_database where datname not in ('postgres','template0','template1') and not datname like 'cartenz_tpl_%'"); do
   sudo -u postgres pg_dump "$db" | gzip > "cartenz-odoo-${db}-$(date +%F).sql.gz"
 done
 

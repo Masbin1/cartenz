@@ -11,40 +11,33 @@ import {
 } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, tokenStore } from './api';
-import type { CurrentUser, OrganizationMembership } from './types';
+import type { CurrentUser } from './types';
 
 interface AuthState {
   user: CurrentUser | null;
-  organization: OrganizationMembership | null;
-  organizations: OrganizationMembership[];
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   register: (input: {
     email: string;
     password: string;
     name: string;
-    organizationName: string;
+    region: string;
   }) => Promise<void>;
   signOut: () => Promise<void>;
-  selectOrganization: (organizationId: string) => void;
   refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
-const SELECTED_ORG_KEY = 'linkederp.organizationId';
-
 /**
  * Session state for the portal.
  *
- * The selected organisation is held here rather than in a route parameter,
- * because every request the portal makes is scoped to one organisation and the
- * user changes it rarely. It persists in sessionStorage alongside the tokens, so
- * a reload does not silently switch which organisation the user is looking at.
+ * Only the caller is held here. There is no selected organisation to remember:
+ * one flat space means the region on the account is the only scope there is
+ * (ADR-044).
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
-  const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
@@ -55,13 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const current = await api.users.me();
-      setUser(current);
-
-      const stored =
-        typeof window === 'undefined' ? null : window.sessionStorage.getItem(SELECTED_ORG_KEY);
-      const valid = current.organizations.some((entry) => entry.organizationId === stored);
-      setOrganizationId(valid ? stored : (current.organizations[0]?.organizationId ?? null));
+      setUser(await api.users.me());
     } catch {
       tokenStore.clear();
       setUser(null);
@@ -74,13 +61,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void load();
   }, [load]);
 
-  const selectOrganization = useCallback((next: string) => {
-    setOrganizationId(next);
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.setItem(SELECTED_ORG_KEY, next);
-    }
-  }, []);
-
   const signIn = useCallback(
     async (email: string, password: string) => {
       const tokens = await api.auth.login({ email, password });
@@ -92,7 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const register = useCallback(
-    async (input: { email: string; password: string; name: string; organizationName: string }) => {
+    async (input: { email: string; password: string; name: string; region: string }) => {
       const tokens = await api.auth.register(input);
       tokenStore.set(tokens);
       await load();
@@ -109,31 +89,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // that matters locally, and the server revokes on the next refresh.
     }
     tokenStore.clear();
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.removeItem(SELECTED_ORG_KEY);
-    }
     setUser(null);
-    setOrganizationId(null);
     router.push('/login');
   }, [router]);
 
-  const value = useMemo<AuthState>(() => {
-    const organizations = user?.organizations ?? [];
-    return {
-      user,
-      organizations,
-      organization:
-        organizations.find((entry) => entry.organizationId === organizationId) ??
-        organizations[0] ??
-        null,
-      loading,
-      signIn,
-      register,
-      signOut,
-      selectOrganization,
-      refresh: load,
-    };
-  }, [user, organizationId, loading, signIn, register, signOut, selectOrganization, load]);
+  const value = useMemo<AuthState>(
+    () => ({ user, loading, signIn, register, signOut, refresh: load }),
+    [user, loading, signIn, register, signOut, load],
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

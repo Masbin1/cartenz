@@ -1,5 +1,3 @@
-import { ORGANIZATION_ROLES, OrganizationRole } from '../enums';
-
 /**
  * Agent permissions (chapter 11 and chapter 12).
  *
@@ -70,10 +68,11 @@ export const APPROVAL_BEARING_PERMISSIONS: readonly AgentPermission[] = [
 ];
 
 /**
- * The minimum organisation role that may change agent permissions. Chapter 11
- * gives configuration of agent permissions to Admin and above.
+ * May this person change a project's agent permissions? (chapter 11 gives the
+ * configuration to Admin and above; with the role hierarchy gone that is the
+ * admin flag alone — see `AuthorizationService.requireProjectAccess` with
+ * `requireAdmin`, which is what actually enforces it.)
  */
-export const AGENT_PERMISSION_ADMIN_ROLE: OrganizationRole = 'admin';
 
 export function isAgentPermission(value: string): value is AgentPermission {
   return (AGENT_PERMISSIONS as readonly string[]).includes(value);
@@ -96,9 +95,4 @@ export function resolveAgentPermissions(
     }
   }
   return resolved;
-}
-
-/** Guard used when validating a role supplied by a request. */
-export function isOrganizationRole(value: string): value is OrganizationRole {
-  return (ORGANIZATION_ROLES as readonly string[]).includes(value);
 }

@@ -7,19 +7,19 @@ import { Spinner } from '@/components/ui/spinner';
 import type { ProjectAccessMember } from '@/lib/types';
 
 /**
- * Who may open this project (ADR-043).
+ * Who may open this project (ADR-043, ADR-044).
  *
- * Every member of the organisation is listed, not only the granted ones: the
- * question is "who can open this", and an admin missing from the list while
- * being able to open it would read as a bug rather than as the rank rule.
+ * The whole user directory is listed, not only the people with a grant: the
+ * question is "who can open this", and an administrator missing from the list
+ * while being able to open it would read as a bug rather than as the flag rule.
  *
- * Members who are in by rank or by having created the project get a label and no
- * toggle, because clearing a toggle that cannot revoke anything is a promise the
- * panel cannot keep.
+ * Anyone in by the admin flag or by having created the project gets a label and
+ * no toggle, because clearing a toggle that cannot revoke anything is a promise
+ * the panel cannot keep.
  */
 
 const SOURCE_LABEL: Record<ProjectAccessMember['source'], string> = {
-  role: 'By role',
+  admin: 'Administrator',
   creator: 'Created it',
   grant: 'Granted',
   none: 'No access',
@@ -94,7 +94,7 @@ export function ProjectAccessPanel({ projectId }: { projectId: string }) {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium">{member.name || member.email}</p>
                     <p className="truncate text-2xs text-content-subtle">
-                      {member.email} · {member.role}
+                      {member.email} · {member.isAdmin ? 'Admin' : 'Member'}
                     </p>
                   </div>
 

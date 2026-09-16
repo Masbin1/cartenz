@@ -12,7 +12,15 @@ export type ProjectType = 'repository' | 'odoo_sh' | 'on_premise' | 'odoo_online
 
 export type ConnectionType = 'github' | 'gitlab' | 'odoo_api' | 'connector';
 
-export type OrganizationRole = 'owner' | 'admin' | 'developer' | 'viewer';
+export type UserRegion = 'indonesia' | 'south_africa' | 'india';
+
+export const USER_REGIONS: readonly UserRegion[] = ['indonesia', 'south_africa', 'india'];
+
+export const USER_REGION_LABELS: Record<UserRegion, string> = {
+  indonesia: 'Indonesia',
+  south_africa: 'South Africa',
+  india: 'India',
+};
 
 export type AgentTaskStatus =
   | 'created'
@@ -42,6 +50,8 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
+  region: UserRegion;
+  isAdmin: boolean;
 }
 
 export interface AuthTokens {
@@ -51,28 +61,24 @@ export interface AuthTokens {
   user: AuthUser;
 }
 
-export interface OrganizationMembership {
-  organizationId: string;
-  organizationName: string;
-  organizationSlug: string;
-  role: OrganizationRole;
-}
+export interface CurrentUser extends AuthUser {}
 
-export interface CurrentUser extends AuthUser {
-  organizations: OrganizationMembership[];
-}
-
-export interface OrganizationMember {
-  userId: string;
+export interface UserRow {
+  id: string;
   email: string;
   name: string;
-  role: OrganizationRole;
-  joinedAt: string;
+  region: UserRegion;
+  isAdmin: boolean;
+  isActive: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
 }
 
 export interface ProjectSummary {
   id: string;
   name: string;
+  /** Which region this project lives in (ADR-044). */
+  region: UserRegion;
   /** Null when the caller cannot open the project (ADR-043). */
   description: string | null;
   projectType: ProjectType;
@@ -92,16 +98,16 @@ export interface ProjectSummary {
   accessRequestStatus: 'pending' | 'rejected' | null;
 }
 
-/** A member of the organisation, as the project access panel sees them (ADR-043). */
+/** A user as the project access panel sees them (ADR-043, ADR-044). */
 export interface ProjectAccessMember {
   userId: string;
   email: string;
   name: string;
-  role: OrganizationRole;
+  isAdmin: boolean;
   hasAccess: boolean;
-  /** Where the access comes from: their rank, having created it, or a grant. */
-  source: 'role' | 'creator' | 'grant' | 'none';
-  /** Only a grant can be taken away. Rank and authorship cannot. */
+  /** Where the access comes from: the admin flag, having created it, or a grant. */
+  source: 'admin' | 'creator' | 'grant' | 'none';
+  /** Only a grant can be taken away. Admin flag and authorship cannot. */
   revocable: boolean;
 }
 
@@ -139,7 +145,7 @@ export interface ProjectSpecification {
 
 export interface ProjectDetail {
   id: string;
-  organizationId: string;
+  region: UserRegion;
   name: string;
   description: string | null;
   projectType: ProjectType;
@@ -157,7 +163,7 @@ export interface ProjectDetail {
   specificationVersion: number | null;
   memory: ProjectMemory | null;
   recentTasks: TaskSummary[];
-  viewerRole: OrganizationRole;
+  accessReason: 'admin' | 'creator' | 'grant';
   provisioning: ProjectProvisioningInfo;
 }
 
@@ -532,6 +538,20 @@ export interface OdooSettings {
   effectiveSourcePaths: string[];
 }
 
+/** One row of the per-version Odoo source catalog (ADR-045). */
+export interface OdooVersionRepository {
+  id: string;
+  version: string;
+  basePath: string;
+  enterprisePath: string | null;
+  isActive: boolean;
+  description: string | null;
+  basePathExists: boolean;
+  enterprisePathExists: boolean | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** A document attached to a project for the agent to read (ADR-030). */
 export interface ProjectDocument {
   id: string;
@@ -548,7 +568,6 @@ export interface ProjectDocumentDetail extends ProjectDocument {
 export interface AuditLogEntry {
   id: string;
   eventType: string;
-  organizationId: string | null;
   projectId: string | null;
   userId: string | null;
   metadata: Record<string, unknown>;

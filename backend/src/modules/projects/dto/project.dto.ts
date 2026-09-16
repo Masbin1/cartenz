@@ -7,7 +7,6 @@ import {
   IsObject,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   ValidateNested,
 } from 'class-validator';
@@ -19,12 +18,14 @@ import {
   ODOO_EDITIONS,
   ODOO_VERSIONS,
   PROJECT_TYPES,
+  USER_REGIONS,
   type ConnectionType,
   type CredentialKind,
   type EnvironmentKind,
   type OdooEdition,
   type OdooVersion,
   type ProjectType,
+  type UserRegion,
 } from '../../../core/enums';
 
 const trim = ({ value }: { value: unknown }) =>
@@ -65,8 +66,8 @@ export class EnvironmentDto {
  * credential never travels in a project payload.
  */
 export class CreateProjectDto {
-  @IsUUID()
-  organizationId!: string;
+  @IsIn(USER_REGIONS, { message: `region must be one of: ${USER_REGIONS.join(', ')}` })
+  region!: UserRegion;
 
   @IsString()
   @IsNotEmpty({ message: 'A project name is required' })
@@ -178,8 +179,8 @@ export class RequirementDto {
  * re-derived from chat history.
  */
 export class CreateAiProjectDto {
-  @IsUUID()
-  organizationId!: string;
+  @IsIn(USER_REGIONS, { message: `region must be one of: ${USER_REGIONS.join(', ')}` })
+  region!: UserRegion;
 
   @IsString()
   @IsNotEmpty({ message: 'A project name is required' })
@@ -308,9 +309,6 @@ export class CreateConnectionDto {
  * rule that governs the network call lives in `assertSafeRemoteUrl`, not here.
  */
 export class RemoteBranchesDto {
-  @IsUUID()
-  organizationId!: string;
-
   @IsString()
   @IsNotEmpty({ message: 'A repository URL is required' })
   @MaxLength(2048)
@@ -320,9 +318,6 @@ export class RemoteBranchesDto {
 
 /** Query filter for the project list. */
 export class ListProjectsQueryDto {
-  @IsUUID()
-  organizationId!: string;
-
   @IsOptional()
   @IsBoolean()
   @Transform(({ value }) => value === true || value === 'true')
@@ -331,12 +326,9 @@ export class ListProjectsQueryDto {
 
 /**
  * Query for the on-premise location list, read while the project form is being
- * filled in. Gated behind developer membership like project creation itself.
+ * filled in. Admin-only: the listing reveals host paths.
  */
-export class OnPremiseLocationsQueryDto {
-  @IsUUID()
-  organizationId!: string;
-}
+export class OnPremiseLocationsQueryDto {}
 
 /**
  * Confirmation for a permanent delete (ADR-024).

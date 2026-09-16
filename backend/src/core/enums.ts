@@ -89,19 +89,21 @@ export const AGENT_TASK_KIND_LABELS: Readonly<Record<AgentTaskKind, string>> = {
   chat: 'Chat',
 };
 
-/** Organisation roles. Table 5 of the Technical Architecture. */
-export const ORGANIZATION_ROLES = ['owner', 'admin', 'developer', 'viewer'] as const;
-export type OrganizationRole = (typeof ORGANIZATION_ROLES)[number];
-
 /**
- * Role precedence, ascending. Used by the authorisation service to answer
- * "is this member at least X" without a chain of comparisons at each call site.
+ * The regions a user or project may belong to (ADR-043 extended).
+ *
+ * Region is an access boundary, not a cosmetic label: a regular user sees the
+ * projects in their own region (plus any cross-region grant), an admin sees
+ * every region. The closed list replaces the organisation role hierarchy.
  */
-export const ROLE_RANK: Readonly<Record<OrganizationRole, number>> = {
-  viewer: 0,
-  developer: 1,
-  admin: 2,
-  owner: 3,
+export const USER_REGIONS = ['indonesia', 'south_africa', 'india'] as const;
+export type UserRegion = (typeof USER_REGIONS)[number];
+
+/** Human-readable label for each region, used by the API and the portal. */
+export const USER_REGION_LABELS: Readonly<Record<UserRegion, string>> = {
+  indonesia: 'Indonesia',
+  south_africa: 'South Africa',
+  india: 'India',
 };
 
 /**
@@ -208,7 +210,7 @@ export const TARGETABLE_ENVIRONMENT_KINDS: readonly EnvironmentKind[] = [
 export const CREDENTIAL_KINDS = ['token', 'ssh_key'] as const;
 
 /**
- * The model providers an organisation may configure (ADR-023).
+ * The model providers this deployment may configure (ADR-023).
  *
  * `openai-compatible` is one entry rather than several because that is what it
  * is: any endpoint speaking the OpenAI wire format, which covers OpenAI itself,

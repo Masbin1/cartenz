@@ -19,8 +19,11 @@ export interface SecretReference {
 }
 
 export interface SecretWriteRequest {
-  readonly organizationId: string;
-  /** Null for an organisation-scoped secret. */
+  /**
+   * Null for a deployment-scoped secret, of which there is exactly one: the
+   * provisioning master password, written before the project row exists.
+   * Otherwise the project the value belongs to.
+   */
   readonly projectId: string | null;
   /** Short label describing the secret's purpose, e.g. `github-token`. */
   readonly purpose: string;

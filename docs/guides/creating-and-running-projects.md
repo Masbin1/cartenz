@@ -2,7 +2,7 @@
 
 This guide explains how to create an Odoo project in Cartenz and run it locally,
 from a user's perspective. It covers the behaviour introduced by ADR-032 through
-ADR-038.
+ADR-038 and ADR-045.
 
 Workflow at a glance:
 
@@ -61,7 +61,22 @@ When creating a project you choose **Community** or **Enterprise**:
 - **Community**: `odoo.conf` includes base only (no enterprise); the agent may
   **not** read the enterprise source.
 
-### 1.4 Environments and branches (ADR-038, ADR-021)
+### 1.4 Odoo version catalog (ADR-045)
+
+The deployment can register one full source checkout per Odoo version in
+**Settings → Odoo versions** (base repo root + enterprise addons). A project
+created with a registered version is generated against that version's own
+source — `odoo.conf`, `run.sh` and the agent's read-only reference all resolve
+through the catalog. A version with no catalog row falls back to the single
+base path in the Odoo settings.
+
+With provisioning enabled, the registered version also selects the
+**full-installation template database** (built once per version and edition by
+`build-odoo-templates.sh`): the new project's database is duplicated from it,
+so every app of the chosen edition is installed on first login — no install
+step, and nothing generated per request.
+
+### 1.5 Environments and branches (ADR-038, ADR-021)
 
 Each environment maps to a git branch. A scaffolded project automatically gets:
 
@@ -315,5 +330,6 @@ Relevant fields: `odooEdition`, `environmentConfig.onPremisePath`, and the
 | ADR-036 | Create-with-AI is scaffolded locally and runs on-premise |
 | ADR-037 | Community/Enterprise edition chosen per project |
 | ADR-038 | Staging + development branches at scaffold time |
+| ADR-045 | Centralized Odoo version catalog and template-database provisioning |
 
 Full technical decisions are in `docs/adr/`.

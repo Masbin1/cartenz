@@ -4,21 +4,23 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/lib/auth';
+import { USER_REGION_LABELS } from '@/lib/types';
 
 /**
- * The application frame: a narrow top bar carrying identity, organisation and
+ * The application frame: a narrow top bar carrying identity, region and
  * global navigation, with the page below it.
  *
  * The bar is deliberately thin. This is a working environment, and vertical
  * space belongs to the agent workspace rather than to chrome.
  */
 export function AppShell({ children }: { children: ReactNode }) {
-  const { user, organization, organizations, selectOrganization, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const pathname = usePathname();
 
   const navigation = [
     { href: '/dashboard', label: 'Dashboard' },
     { href: '/projects', label: 'Projects' },
+    { href: '/users', label: 'Users' },
     { href: '/settings', label: 'Settings' },
   ];
 
@@ -56,30 +58,27 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
 
           <div className="ml-auto flex items-center gap-3">
-            {organizations.length > 1 ? (
-              <select
-                value={organization?.organizationId ?? ''}
-                onChange={(event) => selectOrganization(event.target.value)}
-                className="rounded-md border border-surface-border bg-surface-raised px-2 py-1 text-xs text-content"
-                aria-label="Organisation"
-              >
-                {organizations.map((entry) => (
-                  <option key={entry.organizationId} value={entry.organizationId}>
-                    {entry.organizationName}
-                  </option>
-                ))}
-              </select>
-            ) : organization ? (
-              <span className="text-xs text-content-muted">{organization.organizationName}</span>
+            {user ? (
+              <>
+                <span className="rounded border border-surface-border px-1.5 py-0.5 text-2xs text-content-muted">
+                  {USER_REGION_LABELS[user.region]}
+                </span>
+                <span className="rounded border border-surface-border px-1.5 py-0.5 text-2xs uppercase tracking-wide text-content-subtle">
+                  {user.isAdmin ? 'Admin' : 'Member'}
+                </span>
+              </>
             ) : null}
 
-            {organization ? (
-              <span className="rounded border border-surface-border px-1.5 py-0.5 text-2xs uppercase tracking-wide text-content-subtle">
-                {organization.role}
-              </span>
-            ) : null}
-
-            <span className="hidden text-xs text-content-muted sm:inline">{user?.name}</span>
+            <Link
+              href="/account"
+              className={`hidden text-xs sm:inline ${
+                pathname === '/account'
+                  ? 'text-content'
+                  : 'text-content-muted hover:text-content'
+              }`}
+            >
+              {user?.name}
+            </Link>
 
             <button type="button" onClick={() => void signOut()} className="btn-ghost px-2 py-1 text-xs">
               Sign out

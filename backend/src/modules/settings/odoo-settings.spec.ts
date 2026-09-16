@@ -8,7 +8,6 @@ import { OdooSettingsService } from './odoo-settings.service';
  * it is typed rather than at the first task that needs it.
  */
 describe('OdooSettingsService', () => {
-  const organizationId = '11111111-1111-4111-8111-111111111111';
   const userId = '22222222-2222-4222-8222-222222222222';
 
   // Two directories that certainly exist, used as stand-ins for a real estate.
@@ -32,9 +31,9 @@ describe('OdooSettingsService', () => {
   };
 
   describe('sourcePathsFor', () => {
-    it('uses the environment when the organisation has never configured paths', async () => {
+    it('uses the environment when the deployment has never configured paths', async () => {
       const service = serviceWith(null);
-      expect(await service.sourcePathsFor(organizationId)).toEqual([
+      expect(await service.sourcePathsFor()).toEqual([
         '/env/odoo',
         '/env/enterprise',
       ]);
@@ -49,7 +48,7 @@ describe('OdooSettingsService', () => {
         basePath: '/srv/odoo',
         enterprisePath: '/srv/enterprise',
       });
-      expect(await service.sourcePathsFor(organizationId)).toEqual([
+      expect(await service.sourcePathsFor()).toEqual([
         '/srv/odoo',
         '/srv/enterprise',
       ]);
@@ -57,12 +56,12 @@ describe('OdooSettingsService', () => {
 
     it('keeps a base path configured without an enterprise one', async () => {
       const service = serviceWith({ basePath: '/srv/odoo', enterprisePath: null });
-      expect(await service.sourcePathsFor(organizationId)).toEqual(['/srv/odoo']);
+      expect(await service.sourcePathsFor()).toEqual(['/srv/odoo']);
     });
 
     it('falls back when a row exists but sets no source path', async () => {
       const service = serviceWith({ basePath: null, enterprisePath: null, projectsRoot: '/p' });
-      expect(await service.sourcePathsFor(organizationId)).toEqual([
+      expect(await service.sourcePathsFor()).toEqual([
         '/env/odoo',
         '/env/enterprise',
       ]);
@@ -77,7 +76,7 @@ describe('OdooSettingsService', () => {
         basePath: '/srv/odoo',
         enterprisePath: '/srv/enterprise',
       });
-      expect(await service.sourcePathsFor(organizationId, 'community')).toEqual(['/srv/odoo']);
+      expect(await service.sourcePathsFor('community')).toEqual(['/srv/odoo']);
     });
 
     it('keeps the enterprise path for an enterprise project', async () => {
@@ -85,7 +84,7 @@ describe('OdooSettingsService', () => {
         basePath: '/srv/odoo',
         enterprisePath: '/srv/enterprise',
       });
-      expect(await service.sourcePathsFor(organizationId, 'enterprise')).toEqual([
+      expect(await service.sourcePathsFor('enterprise')).toEqual([
         '/srv/odoo',
         '/srv/enterprise',
       ]);
@@ -94,9 +93,9 @@ describe('OdooSettingsService', () => {
 
   describe('projectsRootFor', () => {
     it('prefers the configured root, falling back to ON_PREMISE_ROOT', async () => {
-      expect(await serviceWith({ projectsRoot: '/srv/projects' }).projectsRootFor(organizationId))
+      expect(await serviceWith({ projectsRoot: '/srv/projects' }).projectsRootFor())
         .toBe('/srv/projects');
-      expect(await serviceWith(null).projectsRootFor(organizationId)).toBe('/env/root');
+      expect(await serviceWith(null).projectsRootFor()).toBe('/env/root');
     });
   });
 
@@ -109,21 +108,21 @@ describe('OdooSettingsService', () => {
     it('refuses a path that does not exist on the server', async () => {
       const service = serviceWith(null);
       await expect(
-        service.update(organizationId, userId, { basePath: '/no/such/directory/anywhere' }),
+        service.update(userId, { basePath: '/no/such/directory/anywhere' }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('refuses a relative path', async () => {
       const service = serviceWith(null);
       await expect(
-        service.update(organizationId, userId, { basePath: 'relative/path' }),
+        service.update(userId, { basePath: 'relative/path' }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('refuses a file where a directory is required', async () => {
       const service = serviceWith(null);
       await expect(
-        service.update(organizationId, userId, { basePath: __filename }),
+        service.update(userId, { basePath: __filename }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -139,7 +138,7 @@ describe('OdooSettingsService', () => {
       (service as unknown as { database: unknown }).database = { db: { insert } };
       jest.spyOn(service, 'get').mockResolvedValue({} as never);
 
-      await service.update(organizationId, userId, {
+      await service.update(userId, {
         basePath: realDirectory,
         enterprisePath: otherRealDirectory,
         projectsRoot: '   ',

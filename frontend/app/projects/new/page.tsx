@@ -7,6 +7,7 @@ import { ApiError, api } from '@/lib/api';
 import { AppShell } from '@/components/ui/app-shell';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
+import { USER_REGIONS, USER_REGION_LABELS, type UserRegion } from '@/lib/types';
 import {
   defaultEnvironments,
   EnvironmentEditor,
@@ -48,7 +49,7 @@ type Flow = 'connect' | 'ai';
  * that become a persisted project specification.
  */
 export default function NewProjectPage() {
-  const { loading, user, organization } = useRequireAuth();
+  const { loading, user } = useRequireAuth();
   const [flow, setFlow] = useState<Flow | null>(null);
 
   if (loading || !user) return <PageLoading />;
@@ -58,7 +59,7 @@ export default function NewProjectPage() {
       <div className="mx-auto max-w-3xl px-5 py-7">
         <h1 className="text-lg font-semibold tracking-tight">New project</h1>
         <p className="mt-0.5 text-xs text-content-muted">
-          Creating in {organization?.organizationName}
+          Creating in {USER_REGION_LABELS[user.region]}
         </p>
 
         {flow === null ? (
@@ -84,9 +85,9 @@ export default function NewProjectPage() {
               Back to both options
             </button>
             {flow === 'connect' ? (
-              <ConnectExistingForm organizationId={organization?.organizationId ?? ''} />
+              <ConnectExistingForm region={user.region} isAdmin={user.isAdmin} />
             ) : (
-              <CreateWithAiForm organizationId={organization?.organizationId ?? ''} />
+              <CreateWithAiForm region={user.region} isAdmin={user.isAdmin} />
             )}
           </div>
         )}
@@ -117,8 +118,55 @@ function FlowCard({
   );
 }
 
-function ConnectExistingForm({ organizationId }: { organizationId: string }) {
+/**
+ * Which region the project belongs to (ADR-044). A regular user may only create
+ * in their own region, so for them this is a fixed label rather than a choice;
+ * an administrator may create anywhere. The server refuses anything else.
+ */
+function RegionField({
+  region,
+  isAdmin,
+  onChange,
+}: {
+  region: UserRegion;
+  isAdmin: boolean;
+  onChange: (region: UserRegion) => void;
+}) {
+  if (!isAdmin) {
+    return (
+      <div>
+        <span className="field-label">Region</span>
+        <p className="field-input flex items-center text-content-muted">
+          {USER_REGION_LABELS[region]}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label htmlFor="region" className="field-label">
+        Region
+      </label>
+      <select
+        id="region"
+        value={region}
+        onChange={(event) => onChange(event.target.value as UserRegion)}
+        className="field-input"
+      >
+        {USER_REGIONS.map((value) => (
+          <option key={value} value={value}>
+            {USER_REGION_LABELS[value]}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin: boolean }) {
   const router = useRouter();
+  const [regionChoice, setRegionChoice] = useState<UserRegion>(region);
   // Seeded with no branch names: the staging and development guesses were the
   // cause of a project whose every task failed on a missing branch. Reading the
   // repository fills them in.
@@ -168,7 +216,7 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
 
     (async () => {
       try {
-        const { root, folders } = await api.projects.onPremiseLocations(organizationId);
+        const { root, folders } = await api.projects.onPremiseLocations();
         if (cancelled) return;
         setOnPremiseRoot(root);
         setOnPremiseFolders(folders);
@@ -184,7 +232,7 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [form.projectType, organizationId]);
+  }, [form.projectType]);
 
   /**
    * Asks the repository which branches it has, so the environments below are
@@ -201,7 +249,6 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
 
     try {
       const { branches: found } = await api.projects.remoteBranchesFor({
-        organizationId,
         repositoryUrl: form.repositoryUrl,
       });
 
@@ -265,7 +312,7 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
 
     try {
       const project = await api.projects.create({
-        organizationId,
+        region: regionChoice,
         name: form.name,
         description: form.description || undefined,
         projectType: form.projectType,
@@ -324,12 +371,14 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
       <h2 className="text-sm font-semibold">Connect an existing project</h2>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="sm:col-span-2">
+        <div>
           <label htmlFor="name" className="field-label">
             Project name
           </label>
           <input id="name" required value={form.name} onChange={update('name')} className="field-input" />
         </div>
+
+        <RegionField region={regionChoice} isAdmin={isAdmin} onChange={setRegionChoice} />
 
         <div>
           <label htmlFor="projectType" className="field-label">
@@ -628,8 +677,9 @@ function ConnectExistingForm({ organizationId }: { organizationId: string }) {
   );
 }
 
-function CreateWithAiForm({ organizationId }: { organizationId: string }) {
+function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: boolean }) {
   const router = useRouter();
+  const [regionChoice, setRegionChoice] = useState<UserRegion>(region);
   const [name, setName] = useState('');
   const [odooVersion, setOdooVersion] = useState('18.0');
   const [odooEdition, setOdooEdition] = useState('enterprise');
@@ -663,7 +713,7 @@ function CreateWithAiForm({ organizationId }: { organizationId: string }) {
     setSubmitting(true);
     try {
       const project = await api.projects.createWithAi({
-        organizationId,
+        region: regionChoice,
         name,
         odooVersion,
         odooEdition,
@@ -740,6 +790,8 @@ function CreateWithAiForm({ organizationId }: { organizationId: string }) {
             ))}
           </select>
         </div>
+
+        <RegionField region={regionChoice} isAdmin={isAdmin} onChange={setRegionChoice} />
       </div>
 
       <div>

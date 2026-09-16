@@ -72,11 +72,8 @@ export class ProjectAccessController {
     return this.access.decide(user, projectId, requestId, dto);
   }
 
-  @Get('organizations/:organizationId/access-requests')
-  listPending(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('organizationId', ParseUUIDPipe) organizationId: string,
-  ) {
-    return this.access.listPending(user, organizationId);
+  @Get('access-requests')
+  listPending(@CurrentUser() user: AuthenticatedUser) {
+    return this.access.listPending(user);
   }
 }

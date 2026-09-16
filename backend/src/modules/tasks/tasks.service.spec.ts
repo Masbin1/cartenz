@@ -46,7 +46,6 @@ describe('TasksService.create — main branch restriction', () => {
 
     const authz = {
       requireProjectAccess: async () => ({
-        organizationId: 'org-1',
         projectId: 'project-1',
         agentPermissions: resolveAgentPermissions({}),
       }),
@@ -159,7 +158,6 @@ describe('TasksService.create — a project whose repository is a connection (AD
 
     const authz = {
       requireProjectAccess: async () => ({
-        organizationId: 'org-1',
         projectId: 'project-1',
         agentPermissions: resolveAgentPermissions({}),
       }),

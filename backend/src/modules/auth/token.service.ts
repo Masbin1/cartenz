@@ -6,6 +6,7 @@ import { DatabaseService } from '../../core/database/database.service';
 import { refreshTokens } from '../../core/database/schema';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
+import type { UserRegion } from '../../core/enums';
 import type {
   AccessTokenClaims,
   RefreshTokenClaims,
@@ -35,17 +36,31 @@ export class TokenService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
-  async issuePair(user: { id: string; email: string; name: string }): Promise<RotatedTokens> {
+  async issuePair(user: {
+    id: string;
+    email: string;
+    name: string;
+    region: UserRegion;
+    isAdmin: boolean;
+  }): Promise<RotatedTokens> {
     const accessToken = await this.signAccessToken(user);
     const refreshToken = await this.issueRefreshToken(user.id);
     return { accessToken, refreshToken, userId: user.id };
   }
 
-  async signAccessToken(user: { id: string; email: string; name: string }): Promise<string> {
+  async signAccessToken(user: {
+    id: string;
+    email: string;
+    name: string;
+    region: UserRegion;
+    isAdmin: boolean;
+  }): Promise<string> {
     const claims: AccessTokenClaims = {
       sub: user.id,
       email: user.email,
       name: user.name,
+      region: user.region,
+      isAdmin: user.isAdmin,
       type: 'access',
     };
     return this.jwt.signAsync(claims, { expiresIn: this.config.auth.accessTtl });

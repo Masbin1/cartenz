@@ -10,6 +10,7 @@ import { PageLoading } from '@/components/ui/spinner';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Alert } from '@/components/ui/alert';
 import { PROJECT_TYPE_LABELS, relativeTime } from '@/lib/format';
+import { USER_REGION_LABELS } from '@/lib/types';
 import type { ProjectSummary } from '@/lib/types';
 
 /**
@@ -29,7 +30,7 @@ export default function ProjectsPage() {
 }
 
 function ProjectsView() {
-  const { loading, user, organization } = useRequireAuth();
+  const { loading, user } = useRequireAuth();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [busy, setBusy] = useState(true);
   const [query, setQuery] = useState('');
@@ -42,17 +43,15 @@ function ProjectsView() {
   const deletedName = params.get('deleted');
   const deletedTasks = params.get('tasks');
 
-  const organizationId = organization?.organizationId ?? null;
-
   const load = useCallback(async () => {
-    if (!organizationId) return;
+    if (!user) return;
     setBusy(true);
     try {
-      setProjects(await api.projects.list(organizationId, showArchived));
+      setProjects(await api.projects.list(showArchived));
     } finally {
       setBusy(false);
     }
-  }, [organizationId, showArchived]);
+  }, [user, showArchived]);
 
   useEffect(() => {
     void load();
@@ -78,7 +77,7 @@ function ProjectsView() {
             <h1 className="text-lg font-semibold tracking-tight">Projects</h1>
             <p className="mt-0.5 text-xs text-content-muted">
               {projects.length} project{projects.length === 1 ? '' : 's'} in{' '}
-              {organization?.organizationName}
+              {USER_REGION_LABELS[user.region]}
             </p>
           </div>
           <div className="flex items-center gap-3">

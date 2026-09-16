@@ -138,7 +138,7 @@ export class AiSdkModelProvider implements ModelProvider {
       throw new ModelProviderError(
         settings.provider,
         `No API key is set for "${settings.provider}". Configure one in the ` +
-          'organisation settings, set AI_API_KEY, or choose the mock provider to ' +
+          'settings, set AI_API_KEY, or choose the mock provider to ' +
           'run without calling a model.',
       );
     }
@@ -479,7 +479,7 @@ export class AiSdkModelProvider implements ModelProvider {
         return this.usingPlaceholderKey
           ? `${this.id} refused the request because no key is stored. A placeholder is ` +
             'sent for a local endpoint, and this gateway authenticates. Enter a token ' +
-            `in the organisation settings.${suffix}`
+            `in the settings.${suffix}`
           : `${this.id} rejected the API key.${suffix}`;
       case 403:
         return `The API key was accepted but is not allowed to use ${this.model}.${suffix}`;
@@ -610,7 +610,10 @@ async function jsonObjectInstruction(
   schema: StructuredRequest<unknown>['schema'],
   schemaName: string,
 ): Promise<string> {
-  const resolved = await Promise.resolve(asSchema(schema).jsonSchema);
+  // The schema is a zod type nested deeply enough that asSchema's inference
+  // gives up (TS2589), exactly as generateObject does above. Only inference is
+  // lost: asSchema still renders the zod schema into its JSON Schema at runtime.
+  const resolved = await Promise.resolve(asSchema<unknown>(schema as never).jsonSchema);
 
   return [
     '# Response format',

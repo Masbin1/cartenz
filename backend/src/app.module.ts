@@ -12,8 +12,8 @@ import { EventsModule } from './core/events/events.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
 import { HealthModule } from './modules/health/health.module';
-import { ModelSettingsModule } from './modules/organizations/model-settings.module';
-import { OrganizationsModule } from './modules/organizations/organizations.module';
+import { ModelSettingsModule } from './modules/settings/model-settings.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { ProjectAccessModule } from './modules/project-access/project-access.module';
 import { DocumentsModule } from './modules/documents/documents.module';
@@ -21,7 +21,6 @@ import { TasksModule } from './modules/tasks/tasks.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
 import { AgentModule } from './agent/agent.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
-import { AuditController } from './modules/organizations/audit.controller';
 
 /**
  * The application root, shared by both entry points: the API (main.ts) and the
@@ -47,7 +46,7 @@ import { AuditController } from './modules/organizations/audit.controller';
     AuthModule,
     HealthModule,
     ModelSettingsModule,
-    OrganizationsModule,
+    SettingsModule,
     ProjectsModule,
     ProjectAccessModule,
     DocumentsModule,
@@ -56,7 +55,7 @@ import { AuditController } from './modules/organizations/audit.controller';
     ApprovalsModule,
     RealtimeModule,
   ],
-  controllers: [AuditController],
+  controllers: [],
   providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
 })
 export class AppModule {}

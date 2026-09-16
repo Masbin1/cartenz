@@ -41,7 +41,7 @@ const PERMISSION_NOTES: Record<string, string> = {
  * refuses them by design and does not simply lack the feature.
  */
 export default function ProjectSettingsPage() {
-  const { loading, user, organization } = useRequireAuth();
+  const { loading, user } = useRequireAuth();
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId;
   const router = useRouter();
@@ -54,7 +54,7 @@ export default function ProjectSettingsPage() {
   const [environments, setEnvironments] = useState<ProjectEnvironment[]>([]);
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
 
-  const canEdit = organization?.role === 'owner' || organization?.role === 'admin';
+  const canEdit = user?.isAdmin ?? false;
 
   const load = useCallback(async () => {
     try {
@@ -88,7 +88,7 @@ export default function ProjectSettingsPage() {
   const [confirmName, setConfirmName] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const isOwner = organization?.role === 'owner';
+  const isOwner = user?.isAdmin ?? false;
 
   /** Archive, restore and delete share their reporting, so they share a wrapper. */
   const run = async (

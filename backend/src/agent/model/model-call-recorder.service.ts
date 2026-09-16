@@ -6,7 +6,6 @@ import type { BoundaryFinding } from '../../core/ai-boundary/boundary-types';
 
 export interface RecordModelCallInput {
   readonly taskId: string;
-  readonly organizationId: string;
   readonly operation: 'planning' | 'implementation' | 'chat';
   readonly providerId: string;
   readonly model: string;
@@ -41,7 +40,6 @@ export class ModelCallRecorder {
     try {
       await this.database.db.insert(agentModelCalls).values({
         taskId: input.taskId,
-        organizationId: input.organizationId,
         operation: input.operation,
         providerId: input.providerId,
         model: input.model,
@@ -71,8 +69,8 @@ export class ModelCallRecorder {
       .orderBy(agentModelCalls.createdAt);
   }
 
-  /** Organisation totals, for cost visibility on the dashboard. */
-  async summariseForOrganization(organizationId: string) {
+  /** Deployment totals, for cost visibility on the dashboard. */
+  async summarise() {
     const [row] = await this.database.db
       .select({
         calls: sql<number>`count(*)::int`,
@@ -82,8 +80,7 @@ export class ModelCallRecorder {
         redactions: sql<number>`coalesce(sum(redaction_count), 0)::int`,
         refusals: sql<number>`count(*) filter (where boundary_refused)::int`,
       })
-      .from(agentModelCalls)
-      .where(eq(agentModelCalls.organizationId, organizationId));
+      .from(agentModelCalls);
 
     return row ?? {
       calls: 0,
@@ -95,12 +92,11 @@ export class ModelCallRecorder {
     };
   }
 
-  /** Most recent calls in an organisation, for the audit surface. */
-  async recentForOrganization(organizationId: string, limit = 20) {
+  /** Most recent calls, for the audit surface. */
+  async recent(limit = 20) {
     return this.database.db
       .select()
       .from(agentModelCalls)
-      .where(eq(agentModelCalls.organizationId, organizationId))
       .orderBy(desc(agentModelCalls.createdAt))
       .limit(Math.min(limit, 100));
   }

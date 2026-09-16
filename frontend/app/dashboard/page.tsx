@@ -9,6 +9,7 @@ import { PageLoading } from '@/components/ui/spinner';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PROJECT_TYPE_LABELS, humanise, isActiveStatus, relativeTime } from '@/lib/format';
+import { USER_REGION_LABELS } from '@/lib/types';
 import type {
   AuditLogEntry,
   PendingApprovalSummary,
@@ -22,23 +23,22 @@ import type {
  * answer one of those is not on this page.
  */
 export default function DashboardPage() {
-  const { loading, user, organization } = useRequireAuth();
+  const { loading, user } = useRequireAuth();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [approvals, setApprovals] = useState<PendingApprovalSummary[]>([]);
   const [tasks, setTasks] = useState<(TaskSummary & { projectName: string })[]>([]);
   const [audit, setAudit] = useState<AuditLogEntry[]>([]);
   const [busy, setBusy] = useState(true);
 
-  const organizationId = organization?.organizationId ?? null;
-  const canReadAudit = organization?.role === 'owner' || organization?.role === 'admin';
+  const canReadAudit = user?.isAdmin ?? false;
 
   const load = useCallback(async () => {
-    if (!organizationId) return;
+    if (!user) return;
     setBusy(true);
     try {
       const [projectList, pending] = await Promise.all([
-        api.projects.list(organizationId),
-        api.approvals.pending(organizationId),
+        api.projects.list(),
+        api.approvals.pending(),
       ]);
 
       setProjects(projectList);
@@ -62,12 +62,12 @@ export default function DashboardPage() {
       );
 
       if (canReadAudit) {
-        setAudit(await api.organizations.auditLogs(organizationId, 12));
+        setAudit(await api.settings.auditLogs(12));
       }
     } finally {
       setBusy(false);
     }
-  }, [organizationId, canReadAudit]);
+  }, [canReadAudit, user]);
 
   useEffect(() => {
     void load();
@@ -84,7 +84,7 @@ export default function DashboardPage() {
           <div>
             <h1 className="text-lg font-semibold tracking-tight">Dashboard</h1>
             <p className="mt-0.5 text-xs text-content-muted">
-              {organization?.organizationName ?? 'No organisation'}
+              {USER_REGION_LABELS[user.region]} region
             </p>
           </div>
           <Link href="/projects/new" className="btn-primary">

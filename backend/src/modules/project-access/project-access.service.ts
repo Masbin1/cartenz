@@ -1,19 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, desc, eq } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
-import {
-  organizationMembers,
-  projectAccessRequests,
-  projectMembers,
-  projects,
-  users,
-} from '../../core/database/schema';
+import { projectAccessRequests, projectMembers, projects, users } from '../../core/database/schema';
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import { AuthorizationService } from '../../core/authz/authorization.service';
-import { PROJECT_ACCESS_BYPASS_ROLE } from '../../core/authz/project-access';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
-import { ROLE_RANK, type OrganizationRole } from '../../core/enums';
 import type {
   DecideAccessRequestDto,
   GrantProjectAccessDto,
@@ -23,7 +15,7 @@ import type {
 /** How a member reaches a project, and whether that can be taken away. */
 export interface ProjectAccessDescription {
   readonly hasAccess: boolean;
-  readonly source: 'role' | 'creator' | 'grant' | 'none';
+  readonly source: 'admin' | 'creator' | 'grant' | 'none';
   readonly revocable: boolean;
 }
 
@@ -31,17 +23,17 @@ export interface ProjectAccessDescription {
  * How the panel should describe one member's standing on one project (ADR-043).
  *
  * Pure, and exported, because the distinction it draws is the one the UI gets
- * wrong if left to infer: only a grant is revocable. Rank and authorship are
- * not, and offering a toggle for them would promise something clearing it
- * cannot deliver.
+ * wrong if left to infer: only a grant is revocable. The admin flag and
+ * authorship are not, and offering a toggle for them would promise something
+ * clearing it cannot deliver.
  */
 export function describeProjectAccess(
-  role: OrganizationRole,
+  isAdmin: boolean,
   isCreator: boolean,
   hasGrant: boolean,
 ): ProjectAccessDescription {
-  if (ROLE_RANK[role] >= ROLE_RANK[PROJECT_ACCESS_BYPASS_ROLE]) {
-    return { hasAccess: true, source: 'role', revocable: false };
+  if (isAdmin) {
+    return { hasAccess: true, source: 'admin', revocable: false };
   }
 
   if (isCreator) {
@@ -60,7 +52,7 @@ export function describeProjectAccess(
  *
  * Separate from ProjectsService, which is already large and answers a different
  * question. Everything here resolves authority through AuthorizationService
- * rather than reading roles itself.
+ * rather than reading the admin flag itself.
  */
 @Injectable()
 export class ProjectAccessService {
@@ -71,16 +63,15 @@ export class ProjectAccessService {
   ) {}
 
   /**
-   * Every member of the organisation with their standing on this project.
+   * Every account in the deployment with their standing on this project.
    *
-   * Not only the granted rows: the panel's question is "who can open this", and
-   * an admin missing from the list while being able to open it would read as a
-   * bug in the panel rather than as the rank rule working.
+   * The whole directory, not only the granted rows: the panel's question is "who
+   * can open this", and an admin missing from the list while being able to open it
+   * would read as a bug in the panel rather than as the flag working. With one
+   * flat space there is no membership list to narrow it to.
    */
   async listMembers(user: AuthenticatedUser, projectId: string) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin', {
-      includeArchived: true,
-    });
+    await this.authz.requireProjectAccess(user, projectId, { includeArchived: true, requireAdmin: true });
 
     const [project] = await this.database.db
       .select({ createdByUserId: projects.createdByUserId })
@@ -93,11 +84,10 @@ export class ProjectAccessService {
         userId: users.id,
         email: users.email,
         name: users.name,
-        role: organizationMembers.role,
+        region: users.region,
+        isAdmin: users.isAdmin,
       })
-      .from(organizationMembers)
-      .innerJoin(users, eq(users.id, organizationMembers.userId))
-      .where(eq(organizationMembers.organizationId, context.organizationId))
+      .from(users)
       .orderBy(users.name);
 
     const granted = new Set(
@@ -112,20 +102,21 @@ export class ProjectAccessService {
     return members.map((member) => ({
       ...member,
       ...describeProjectAccess(
-        member.role as OrganizationRole,
+        member.isAdmin,
         project?.createdByUserId === member.userId,
         granted.has(member.userId),
       ),
     }));
   }
 
-  /** Give a member access to this project. Idempotent. */
+  /** Give an account access to this project. Idempotent. */
   async grant(user: AuthenticatedUser, projectId: string, dto: GrantProjectAccessDto) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin', {
+    await this.authz.requireProjectAccess(user, projectId, {
       includeArchived: true,
+      requireAdmin: true,
     });
 
-    await this.assertOrganizationMember(context.organizationId, dto.userId);
+    await this.assertAccountExists(dto.userId);
 
     await this.database.db
       .insert(projectMembers)
@@ -138,7 +129,6 @@ export class ProjectAccessService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_ACCESS_GRANTED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: { grantedUserId: dto.userId },
@@ -147,10 +137,11 @@ export class ProjectAccessService {
     return { granted: true };
   }
 
-  /** Withdraw a grant. Leaves access that comes from rank or authorship alone. */
+  /** Withdraw a grant. Leaves access that comes from the admin flag or authorship alone. */
   async revoke(user: AuthenticatedUser, projectId: string, memberUserId: string) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin', {
+    await this.authz.requireProjectAccess(user, projectId, {
       includeArchived: true,
+      requireAdmin: true,
     });
 
     await this.database.db
@@ -161,7 +152,6 @@ export class ProjectAccessService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_ACCESS_REVOKED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: { revokedUserId: memberUserId },
@@ -173,13 +163,15 @@ export class ProjectAccessService {
   /**
    * Ask for access to a project you cannot open.
    *
-   * Authority is resolved through requireOrganizationMember rather than
-   * requireProjectAccess: a person who could already open the project has
-   * nothing to ask for, and a person who cannot must still be able to ask.
+   * Deliberately not resolveable through requireProjectAccess: a person who could
+   * already open the project has nothing to ask for, and a person who cannot must
+   * still be able to ask. What gates it instead is the region boundary — you may
+   * ask about a project in your own region, or any project if you are an admin,
+   * which is the same set of projects the list shows you.
    */
   async request(user: AuthenticatedUser, projectId: string, dto: RequestProjectAccessDto) {
     const [project] = await this.database.db
-      .select({ id: projects.id, organizationId: projects.organizationId })
+      .select({ id: projects.id, region: projects.region })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
@@ -188,9 +180,11 @@ export class ProjectAccessService {
       throw new NotFoundException('Project not found');
     }
 
-    // Membership of the project's organisation, so a request cannot be aimed at
-    // a project in an organisation the caller has nothing to do with.
-    await this.authz.requireOrganizationMember(user, project.organizationId);
+    if (!user.isAdmin && project.region !== user.region) {
+      throw new BadRequestException(
+        'That project is in another region. You can request access to projects in your own region.',
+      );
+    }
 
     const [existing] = await this.database.db
       .select({ id: projectAccessRequests.id })
@@ -220,7 +214,6 @@ export class ProjectAccessService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_ACCESS_REQUESTED,
-      organizationId: project.organizationId,
       projectId,
       userId: user.userId,
       metadata: { requestId: row.id },
@@ -229,15 +222,22 @@ export class ProjectAccessService {
     return row;
   }
 
-  /** Every pending request across the organisation's projects. */
-  async listPending(user: AuthenticatedUser, organizationId: string) {
-    await this.authz.requireOrganizationMember(user, organizationId, 'admin');
+  /**
+   * Every pending request, across every project.
+   *
+   * Admin-only and unfiltered. Region does not narrow it here: an admin sees all
+   * regions by definition, and a queue that silently hid another region's asks
+   * would be a queue with an invisible backlog.
+   */
+  async listPending(user: AuthenticatedUser) {
+    await this.authz.requireAdmin(user);
 
     return this.database.db
       .select({
         id: projectAccessRequests.id,
         projectId: projectAccessRequests.projectId,
         projectName: projects.name,
+        projectRegion: projects.region,
         userId: projectAccessRequests.userId,
         userName: users.name,
         userEmail: users.email,
@@ -247,12 +247,7 @@ export class ProjectAccessService {
       .from(projectAccessRequests)
       .innerJoin(projects, eq(projects.id, projectAccessRequests.projectId))
       .innerJoin(users, eq(users.id, projectAccessRequests.userId))
-      .where(
-        and(
-          eq(projects.organizationId, organizationId),
-          eq(projectAccessRequests.status, 'pending'),
-        ),
-      )
+      .where(eq(projectAccessRequests.status, 'pending'))
       .orderBy(desc(projectAccessRequests.createdAt));
   }
 
@@ -269,8 +264,9 @@ export class ProjectAccessService {
     requestId: string,
     dto: DecideAccessRequestDto,
   ) {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'admin', {
+    await this.authz.requireProjectAccess(user, projectId, {
       includeArchived: true,
+      requireAdmin: true,
     });
 
     const [request] = await this.database.db
@@ -322,7 +318,6 @@ export class ProjectAccessService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_ACCESS_DECIDED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: { requestId, decision: dto.decision, requesterUserId: request.userId },
@@ -331,22 +326,22 @@ export class ProjectAccessService {
     return { decision: dto.decision };
   }
 
-  private async assertOrganizationMember(organizationId: string, userId: string): Promise<void> {
-    const [member] = await this.database.db
-      .select({ id: organizationMembers.id })
-      .from(organizationMembers)
-      .where(
-        and(
-          eq(organizationMembers.organizationId, organizationId),
-          eq(organizationMembers.userId, userId),
-        ),
-      )
+  /**
+   * Refuses to grant to an account that does not exist.
+   *
+   * Kept even though there is no membership to check any more: the insert would
+   * otherwise fail on the foreign key with a message about a constraint, which
+   * reads like a platform fault rather than a bad user id.
+   */
+  private async assertAccountExists(userId: string): Promise<void> {
+    const [account] = await this.database.db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, userId))
       .limit(1);
 
-    if (!member) {
-      throw new BadRequestException(
-        'That person is not a member of this organisation. Add them to the organisation first.',
-      );
+    if (!account) {
+      throw new BadRequestException('That account does not exist.');
     }
   }
 }

@@ -16,7 +16,7 @@ import {
   ModelSettingsService,
   assertHttpsUrl,
   type ResolvedModelSettings,
-} from '../../modules/organizations/model-settings.service';
+} from '../../modules/settings/model-settings.service';
 import { AiSdkModelProvider } from './ai-sdk-model-provider';
 import { ScriptedModelProvider } from './scripted-model-provider';
 import { GuardedModelProvider } from './guarded-model-provider';
@@ -48,8 +48,8 @@ export interface ProviderTestResult {
 }
 
 /**
- * Builds the model provider(s) an organisation has configured (ADR-023, extended
- * to a failover chain).
+ * Builds the model provider(s) this deployment has configured (ADR-023, ADR-044,
+ * extended to a failover chain).
  *
  * This replaces a provider bound once at boot from the environment. The reason
  * is a product one - "which AIs, in what order, with whose key" should be a
@@ -72,7 +72,7 @@ export class ModelProviderResolver {
   private readonly logger = new Logger(ModelProviderResolver.name);
 
   /**
-   * Built providers, keyed by organisation and the settings revision they were
+   * Built providers, keyed by project and the settings revision they were
    * built from. Caching matters because a provider construction reads and
    * unseals a secret, and a task makes several model calls; keying on the
    * revision is what makes a key change take effect on the next task rather than
@@ -90,12 +90,12 @@ export class ModelProviderResolver {
   /**
    * `projectId` is optional and only affects an agent-backed endpoint: it becomes
    * the session key that scopes that agent's long-term memory, so two projects in
-   * one organisation do not accumulate into the same memory. Because the built
+   * do not accumulate into the same memory. Because the built
    * providers then carry different headers, it is part of the cache key.
    */
-  async forOrganization(organizationId: string, projectId?: string): Promise<ModelProvider> {
-    const chain = await this.settings.resolveChain(organizationId);
-    const cacheKey = `${organizationId}:${projectId ?? '-'}`;
+  async forProject(projectId?: string): Promise<ModelProvider> {
+    const chain = await this.settings.resolveChain();
+    const cacheKey = projectId ?? '-';
 
     const cached = this.cache.get(cacheKey);
     if (cached && cached.revision === chain.revision) return cached.provider;
@@ -116,7 +116,7 @@ export class ModelProviderResolver {
       members.push({
         priority: settings.priority,
         label: settings.label,
-        provider: await this.buildOne(organizationId, settings, projectId),
+        provider: await this.buildOne(settings, projectId),
       });
     }
 
@@ -133,45 +133,37 @@ export class ModelProviderResolver {
   }
 
   /**
-   * Drops an organisation's cached providers, so the next call rebuilds them.
+   * Drops every cached provider, so the next call rebuilds them.
    *
-   * Every per-project entry is removed, not just the organisation-wide one: they
-   * were all built from the settings that just changed.
+   * All of them, not just the chain-wide entry: one global settings row changed,
+   * and every cached provider was built from it.
    */
-  invalidate(organizationId: string): void {
-    const prefix = `${organizationId}:`;
-    for (const key of this.cache.keys()) {
-      if (key.startsWith(prefix)) this.cache.delete(key);
-    }
+  invalidate(): void {
+    this.cache.clear();
   }
 
   /**
    * Calls one configured row's provider and reports whether it answered.
    *
    * Looks the row up in the resolved chain rather than adding a second query
-   * path to the database: a row that is disabled, or that belongs to a
-   * different organisation, is not in the chain and is reported as not found
-   * rather than tested.
+   * path to the database: a row that is disabled is not in the chain and is
+   * reported as not found rather than tested.
    */
-  async testRow(organizationId: string, rowId: string, userId: string): Promise<ProviderTestResult> {
-    const chain = await this.settings.resolveChain(organizationId);
+  async testRow(rowId: string, userId: string): Promise<ProviderTestResult> {
+    const chain = await this.settings.resolveChain();
     const member = chain.members.find((candidate) => candidate.id === rowId);
 
     if (!member) {
-      throw new NotFoundException(
-        'That model provider row is not enabled for this organisation.',
-      );
+      throw new NotFoundException('That model provider row is not enabled.');
     }
 
-    return this.testMember(organizationId, member, userId);
+    return this.testMember(member, userId);
   }
 
   /** Calls every member of the chain and reports on each, in priority order. */
-  async testChain(organizationId: string, userId: string): Promise<ProviderTestResult[]> {
-    const chain = await this.settings.resolveChain(organizationId);
-    return Promise.all(
-      chain.members.map((member) => this.testMember(organizationId, member, userId)),
-    );
+  async testChain(userId: string): Promise<ProviderTestResult[]> {
+    const chain = await this.settings.resolveChain();
+    return Promise.all(chain.members.map((member) => this.testMember(member, userId)));
   }
 
   /**
@@ -237,7 +229,6 @@ export class ModelProviderResolver {
    * URL and a wrong key read differently.
    */
   private async testMember(
-    organizationId: string,
     settings: ResolvedModelSettings,
     userId: string,
   ): Promise<ProviderTestResult> {
@@ -264,7 +255,7 @@ export class ModelProviderResolver {
       // is stored now, including a key saved a moment ago. Guarded here exactly
       // like the real path, so the test cannot be used to reach an unguarded
       // provider either.
-      const inner = await this.buildOne(organizationId, settings);
+      const inner = await this.buildOne(settings);
       const provider = new GuardedModelProvider(inner, this.boundary);
 
       const result = await provider.generateStructured({
@@ -289,7 +280,6 @@ export class ModelProviderResolver {
 
       await this.audit.record({
         event: AUDIT_EVENTS.MODEL_PROVIDER_TESTED,
-        organizationId,
         userId,
         metadata: {
           rowId: settings.id,
@@ -321,7 +311,6 @@ export class ModelProviderResolver {
 
       await this.audit.record({
         event: AUDIT_EVENTS.MODEL_PROVIDER_TESTED,
-        organizationId,
         userId,
         // Recorded because it is diagnostic. It passes through the audit
         // redaction filter, which strips anything key-shaped.
@@ -336,8 +325,7 @@ export class ModelProviderResolver {
       });
 
       this.logger.warn(
-        `Model provider test failed for ${organizationId} (priority ${settings.priority}, ` +
-          `${settings.label}): ${message}`,
+        `Model provider test failed (priority ${settings.priority}, ${settings.label}): ${message}`,
       );
 
       return {
@@ -357,18 +345,17 @@ export class ModelProviderResolver {
   /**
    * Builds one member's provider, unguarded.
    *
-   * The guard now lives outside the whole chain (`forOrganization`) or outside
+   * The guard now lives outside the whole chain (`forProject`) or outside
    * this single member (`testMember`), never here — a provider returned by this
    * method must not be handed to a caller directly.
    */
   private async buildOne(
-    organizationId: string,
     settings: ResolvedModelSettings,
     projectId?: string,
   ): Promise<ModelProvider> {
     if (settings.providerId === 'mock') {
       this.logger.log(
-        `Organisation ${organizationId}: priority ${settings.priority} (${settings.label}) ` +
+        `Model provider priority ${settings.priority} (${settings.label}) ` +
           'calls nothing. Plans come from the scripted provider and every plan says so.',
       );
       return new ScriptedModelProvider(this.config);
@@ -380,11 +367,11 @@ export class ModelProviderResolver {
     // have no key to give - so an absent key is only an error when the endpoint
     // is somewhere else. Anywhere else, reaching here means a secret was
     // destroyed underneath a stored row, which is worth failing loudly rather
-    // than silently falling back to a provider the organisation did not choose.
+    // than silently falling back to a provider the operator did not choose.
     if (!apiKey && !isLoopbackUrl(settings.baseUrl)) {
       throw new Error(
-        `No API key is available for organisation ${organizationId}, priority ` +
-          `${settings.priority} (${settings.label}, "${settings.providerId}"). Reconfigure it.`,
+        `No API key is available for model provider priority ${settings.priority} ` +
+          `(${settings.label}, "${settings.providerId}"). Reconfigure it.`,
       );
     }
 
@@ -403,7 +390,7 @@ export class ModelProviderResolver {
     });
 
     this.logger.log(
-      `Organisation ${organizationId}: priority ${settings.priority} (${settings.label}) ` +
+      `Model provider priority ${settings.priority} (${settings.label}) ` +
         `provider ${inner.id}/${inner.model} ` +
         `(${settings.fromEnvironment ? 'from the environment' : 'configured in the portal'})`,
     );

@@ -52,7 +52,7 @@ export class DocumentsService {
     projectId: string,
     file: UploadedFile,
   ): Promise<ProjectDocumentSummary> {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'developer');
+    await this.authz.requireProjectAccess(user, projectId);
 
     if (!file.buffer || file.buffer.length === 0) {
       throw new BadRequestException('The uploaded file is empty.');
@@ -90,7 +90,6 @@ export class DocumentsService {
     const [row] = await this.database.db
       .insert(projectDocuments)
       .values({
-        organizationId: context.organizationId,
         projectId,
         uploadedByUserId: user.userId,
         filename: file.originalname || (isImage ? 'image' : 'document'),
@@ -109,7 +108,6 @@ export class DocumentsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_DOCUMENT_UPLOADED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: {
@@ -125,7 +123,7 @@ export class DocumentsService {
   }
 
   async list(user: AuthenticatedUser, projectId: string): Promise<ProjectDocumentSummary[]> {
-    await this.authz.requireProjectAccess(user, projectId, 'viewer');
+    await this.authz.requireProjectAccess(user, projectId);
 
     return this.database.db
       .select({
@@ -145,7 +143,7 @@ export class DocumentsService {
     projectId: string,
     documentId: string,
   ): Promise<ProjectDocumentDetail> {
-    await this.authz.requireProjectAccess(user, projectId, 'viewer');
+    await this.authz.requireProjectAccess(user, projectId);
 
     const [row] = await this.database.db
       .select({
@@ -177,7 +175,7 @@ export class DocumentsService {
     projectId: string,
     documentId: string,
   ): Promise<{ id: string }> {
-    const context = await this.authz.requireProjectAccess(user, projectId, 'developer');
+    await this.authz.requireProjectAccess(user, projectId);
 
     const [deleted] = await this.database.db
       .delete(projectDocuments)
@@ -195,7 +193,6 @@ export class DocumentsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.PROJECT_DOCUMENT_DELETED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: { documentId: deleted.id, filename: deleted.filename },

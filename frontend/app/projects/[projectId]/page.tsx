@@ -262,7 +262,7 @@ export default function ProjectDetailPage() {
 
           <div className="space-y-5">
             {project.provisioning.status !== 'none' ? (
-              <InstancePanel projectId={project.id} provisioning={project.provisioning} viewerRole={project.viewerRole} />
+              <InstancePanel projectId={project.id} provisioning={project.provisioning} isAdmin={user.isAdmin} />
             ) : null}
 
             <section className="panel">
@@ -281,7 +281,7 @@ export default function ProjectDetailPage() {
                   value={project.repositoryUrl ?? 'None connected'}
                   mono
                 />
-                <DetailRow label="Your role" value={humanise(project.viewerRole)} />
+                <DetailRow label="Your access" value={humanise(project.accessReason)} />
                 <DetailRow label="Created" value={relativeTime(project.createdAt)} />
               </dl>
             </section>
@@ -410,13 +410,13 @@ function DetailRow({
 function InstancePanel({
   projectId,
   provisioning,
-  viewerRole,
+  isAdmin,
 }: {
   projectId: string;
   provisioning: import('@/lib/types').ProjectProvisioningInfo;
-  viewerRole: string;
+  isAdmin: boolean;
 }) {
-  const canReveal = viewerRole === 'owner' || viewerRole === 'admin';
+  const canReveal = isAdmin;
   const [revealed, setRevealed] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);

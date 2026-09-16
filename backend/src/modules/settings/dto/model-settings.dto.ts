@@ -39,8 +39,7 @@ export class AddModelProviderDto {
   baseUrl?: string;
 
   /**
-   * Omit to keep the key already stored, which is what someone editing the model
-   * name expects. Send an empty string to remove it.
+   * Omit to store no key for a new row. Send one to seal it.
    */
   @IsOptional()
   @IsString()

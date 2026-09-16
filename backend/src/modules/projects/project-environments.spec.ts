@@ -19,8 +19,8 @@ describe('ProjectEnvironmentsService', () => {
   // dependencies stay unused here. A stub that throws would be equally fine.
   const service = new ProjectEnvironmentsService({} as DatabaseService, {} as AuditService);
 
-  const build = (environments: Parameters<typeof service.buildForCreation>[3]) =>
-    service.buildForCreation('project-1', 'org-1', 'main', environments);
+  const build = (environments: Parameters<typeof service.buildForCreation>[2]) =>
+    service.buildForCreation('project-1', 'main', environments);
 
   describe('defaulting', () => {
     it('gives a project with no declared environments one development environment', () => {
@@ -146,7 +146,7 @@ describe('ProjectEnvironmentsService', () => {
    * dangerous one waved through, and every existing test passed.
    */
   describe('adding one environment', () => {
-    const one = (input: Parameters<typeof service.buildForCreation>[3]) =>
+    const one = (input: Parameters<typeof service.buildForCreation>[2]) =>
       // buildForCreation applies the set rules; assertValidOne applies the item's.
       // Reaching through the private member is deliberate: the point is that these
       // two are different, and a test that could only see the set rules is what
@@ -183,7 +183,7 @@ describe('ProjectEnvironmentsService', () => {
       // The set rule says a project needs something targetable. Applied to one
       // production environment it refuses the very declaration that makes the
       // platform leave that branch alone.
-      expect(() => service.buildForCreation('p', 'o', 'main', [
+      expect(() => service.buildForCreation('p', 'main', [
         { name: 'production', branch: 'main', kind: 'production' },
       ])).toThrow(/no task could ever run/);
 

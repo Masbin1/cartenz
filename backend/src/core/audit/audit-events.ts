@@ -9,11 +9,20 @@ export const AUDIT_EVENTS = {
   USER_LOGIN_FAILED: 'user.login_failed',
   USER_LOGGED_OUT: 'user.logged_out',
   USER_TOKEN_REFRESHED: 'user.token_refreshed',
-
-  ORGANIZATION_CREATED: 'organization.created',
-  ORGANIZATION_MEMBER_ADDED: 'organization.member_added',
-  ORGANIZATION_MEMBER_ROLE_CHANGED: 'organization.member_role_changed',
-  ORGANIZATION_MEMBER_REMOVED: 'organization.member_removed',
+  /** An admin changed another account's region or admin flag (ADR-044). */
+  USER_UPDATED: 'user.updated',
+  /** An admin created an account directly rather than through self-registration. */
+  USER_CREATED: 'user.created',
+  /** An admin deleted an account. */
+  USER_DELETED: 'user.deleted',
+  /** Somebody changed their own password, having proved the current one. */
+  USER_PASSWORD_CHANGED: 'user.password_changed',
+  /**
+   * An admin set another account's password without knowing the old one. Kept
+   * distinct from a self-service change: this is one person taking over another's
+   * credential, which is exactly the event an audit reader is looking for.
+   */
+  USER_PASSWORD_RESET: 'user.password_reset',
 
   PROJECT_CREATED: 'project.created',
   PROJECT_UPDATED: 'project.updated',
@@ -80,6 +89,11 @@ export const AUDIT_EVENTS = {
 
   /** The organisation's Odoo paths were configured in the portal (ADR-033). */
   ODOO_SETTINGS_UPDATED: 'odoo_settings.updated',
+
+  /** The per-version Odoo source catalog was changed (ADR-045). */
+  ODOO_VERSION_REPOSITORY_CREATED: 'odoo_version_repository.created',
+  ODOO_VERSION_REPOSITORY_UPDATED: 'odoo_version_repository.updated',
+  ODOO_VERSION_REPOSITORY_REMOVED: 'odoo_version_repository.removed',
 
   AUTHORIZATION_DENIED: 'authorization.denied',
 } as const;

@@ -29,7 +29,6 @@ import type { ImplementationPlan, ModifiedFile, TaskTestResults } from './orches
 export interface TaskExecutionSnapshot {
   readonly taskId: string;
   readonly reference: string;
-  readonly organizationId: string;
   readonly projectId: string;
   readonly projectName: string;
   readonly projectType: ProjectType;
@@ -130,7 +129,6 @@ export class TaskRepository {
       .select({
         taskId: agentTasks.id,
         reference: agentTasks.reference,
-        organizationId: agentTasks.organizationId,
         projectId: agentTasks.projectId,
         projectName: projects.name,
         prompt: agentTasks.prompt,
@@ -226,7 +224,6 @@ export class TaskRepository {
     return {
       taskId: row.taskId,
       reference: row.reference,
-      organizationId: row.organizationId,
       projectId: row.projectId,
       projectName: row.projectName,
       projectType: row.projectType as ProjectType,
@@ -302,7 +299,6 @@ export class TaskRepository {
       .returning({
         id: agentTasks.id,
         reference: agentTasks.reference,
-        organizationId: agentTasks.organizationId,
         projectId: agentTasks.projectId,
       });
 
@@ -313,7 +309,7 @@ export class TaskRepository {
       return false;
     }
 
-    const { reference, organizationId, projectId } = updated[0];
+    const { reference, projectId } = updated[0];
 
     await this.appendTransition(taskId, from, to);
 
@@ -329,7 +325,6 @@ export class TaskRepository {
 
     await this.audit.record({
       event: auditEventForStatus(to),
-      organizationId,
       projectId,
       metadata: { taskReference: reference, from, to, reason: options.failureReason },
     });

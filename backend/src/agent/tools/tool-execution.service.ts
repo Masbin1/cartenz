@@ -124,7 +124,6 @@ export class ToolExecutionService {
 
       await this.audit.record({
         event: AUDIT_EVENTS.AGENT_ACTION_COMPLETED,
-        organizationId: request.context.organizationId,
         projectId: request.context.projectId,
         metadata: { taskReference: request.context.taskReference, toolName: tool.name, durationMs },
       });
@@ -209,7 +208,6 @@ export class ToolExecutionService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.AGENT_ACTION_DENIED,
-      organizationId: request.context.organizationId,
       projectId: request.context.projectId,
       metadata: {
         taskReference: request.context.taskReference,

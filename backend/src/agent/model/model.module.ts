@@ -12,8 +12,9 @@ import { ModelProviderResolver } from './model-provider-resolver';
  * control.
  *
  * What changed in ADR-023 is *when* the provider is chosen. It used to be bound
- * once at boot from the environment; it is now built per organisation from that
- * organisation's stored configuration, falling back to the environment. The
+ * once at boot from the environment; it is now built from the deployment's
+ * stored configuration, falling back to the environment. ADR-044 made that
+ * configuration a single global chain rather than one per organisation. The
  * boundary wrapping is identical in both cases.
  */
 @Global()

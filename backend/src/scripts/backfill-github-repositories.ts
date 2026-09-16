@@ -62,7 +62,6 @@ async function main(): Promise<void> {
       .select({
         id: projects.id,
         name: projects.name,
-        organizationId: projects.organizationId,
         projectType: projects.projectType,
         defaultBranch: projects.defaultBranch,
         environmentConfig: projects.environmentConfig,
@@ -110,7 +109,6 @@ async function main(): Promise<void> {
 
       try {
         const result = await github.connect({
-          organizationId: row.organizationId,
           projectId: row.id,
           projectName: row.name,
           repositoryName,

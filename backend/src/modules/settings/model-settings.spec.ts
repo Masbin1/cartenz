@@ -6,7 +6,8 @@ import type { SecretsProvider } from '../../core/secrets/secrets.provider';
 import type { AppConfig } from '../../core/config/configuration';
 
 /**
- * The organisation's model provider configuration (ADR-023, extended to a list).
+ * The deployment's model provider configuration (ADR-023, ADR-044: a single
+ * global chain, not per-organisation).
  *
  * The validation tests use no database: `assertValid` is reached before any
  * query, and keeping it that way is what makes the refusals easy to be certain
@@ -40,8 +41,8 @@ describe('ModelSettingsService', () => {
 
     // Reaching the database would mean the refusal came too late to be certain
     // nothing was written, so these assert the message rather than mock storage.
-    const add = (input: Parameters<ModelSettingsService['addRow']>[2]) =>
-      service.addRow('org-1', 'user-1', input);
+    const add = (input: Parameters<ModelSettingsService['addRow']>[1]) =>
+      service.addRow('user-1', input);
 
     it('refuses a provider that is not offered', async () => {
       await expect(add({ providerId: 'gemini' as never })).rejects.toThrow(BadRequestException);
@@ -111,13 +112,13 @@ describe('ModelSettingsService', () => {
      * asserts is that the ordering is done here rather than assumed downstream.
      */
     const rows = [
-      { id: 'r2', organizationId: 'org-1', priority: 2, label: 'fallback', enabled: true,
+      { id: 'r2', priority: 2, label: 'fallback', enabled: true,
         providerId: 'anthropic', model: null, baseUrl: null, structuredOutputs: null,
         secretRef: 'secret:b', revision: 1 },
-      { id: 'r3', organizationId: 'org-1', priority: 3, label: 'disabled one', enabled: false,
+      { id: 'r3', priority: 3, label: 'disabled one', enabled: false,
         providerId: 'anthropic', model: null, baseUrl: null, structuredOutputs: null,
         secretRef: 'secret:c', revision: 1 },
-      { id: 'r1', organizationId: 'org-1', priority: 1, label: 'primary', enabled: true,
+      { id: 'r1', priority: 1, label: 'primary', enabled: true,
         providerId: 'openai-compatible', model: 'deepseek-chat',
         baseUrl: 'https://api.deepseek.com', structuredOutputs: false,
         secretRef: 'secret:a', revision: 1 },
@@ -129,11 +130,9 @@ describe('ModelSettingsService', () => {
           db: {
             select: () => ({
               from: () => ({
-                where: () => ({
-                  // Sorted here because this stands in for the SQL ORDER BY;
-                  // the assertion below is that the service asks for it at all.
-                  orderBy: async () => [...returned].sort((a, b) => a.priority - b.priority),
-                }),
+                // Sorted here because this stands in for the SQL ORDER BY;
+                // the assertion below is that the service asks for it at all.
+                orderBy: async () => [...returned].sort((a, b) => a.priority - b.priority),
               }),
             }),
           },
@@ -145,12 +144,12 @@ describe('ModelSettingsService', () => {
       );
 
     it('hands the members over in priority order', async () => {
-      const chain = await withRows(rows).resolveChain('org-1');
+      const chain = await withRows(rows).resolveChain();
       expect(chain.members.map((member) => member.label)).toEqual(['primary', 'fallback']);
     });
 
     it('leaves a disabled row out rather than filtering it downstream', async () => {
-      const chain = await withRows(rows).resolveChain('org-1');
+      const chain = await withRows(rows).resolveChain();
       expect(chain.members.map((member) => member.id)).not.toContain('r3');
       // The revision sums only what will actually be called, so disabling a row
       // changes it and the cached chain is rebuilt.
@@ -205,7 +204,6 @@ describe('ModelSettingsService', () => {
     it('reports both the absent key and the warning, from one answer', async () => {
       const row = {
         id: 'row-1',
-        organizationId: 'org-1',
         priority: 1,
         label: null,
         enabled: true,
@@ -223,9 +221,7 @@ describe('ModelSettingsService', () => {
           db: {
             select: () => ({
               from: () => ({
-                where: () => ({
-                  orderBy: async () => [row],
-                }),
+                orderBy: async () => [row],
               }),
             }),
           },
@@ -240,7 +236,7 @@ describe('ModelSettingsService', () => {
         config,
       );
 
-      const list = await service.list('org-1');
+      const list = await service.list();
 
       expect(list.fromEnvironment).toBe(false);
       expect(list.rows[0].hasApiKey).toBe(false);
@@ -250,7 +246,6 @@ describe('ModelSettingsService', () => {
     it('says nothing once a key is stored against the same row', async () => {
       const row = {
         id: 'row-1',
-        organizationId: 'org-1',
         priority: 1,
         label: null,
         enabled: true,
@@ -268,9 +263,7 @@ describe('ModelSettingsService', () => {
           db: {
             select: () => ({
               from: () => ({
-                where: () => ({
-                  orderBy: async () => [row],
-                }),
+                orderBy: async () => [row],
               }),
             }),
           },
@@ -285,7 +278,7 @@ describe('ModelSettingsService', () => {
         config,
       );
 
-      const list = await service.list('org-1');
+      const list = await service.list();
 
       expect(list.rows[0].hasApiKey).toBe(true);
       expect(list.rows[0].warning).toBeNull();

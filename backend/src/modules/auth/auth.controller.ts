@@ -1,7 +1,13 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
-import { LoginDto, RefreshDto, RegisterDto, type AuthTokensResponse } from './dto/auth.dto';
+import {
+  ChangePasswordDto,
+  LoginDto,
+  RefreshDto,
+  RegisterDto,
+  type AuthTokensResponse,
+} from './dto/auth.dto';
 import { Public } from '../../core/http/public.decorator';
 import { CurrentUser, clientIp } from '../../core/http/current-user.decorator';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
@@ -45,5 +51,16 @@ export class AuthController {
     @Body() body: { refreshToken?: string },
   ): Promise<void> {
     await this.auth.logout(user.userId, body?.refreshToken);
+  }
+
+  /** Change your own password. Authenticated, and proves the current one. */
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  changePassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ChangePasswordDto,
+    @Req() request: Request,
+  ): Promise<{ changed: true }> {
+    return this.auth.changePassword(user.userId, dto, clientIp(request));
   }
 }

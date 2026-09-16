@@ -1,8 +1,8 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, isNull } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service';
-import { organizationMembers, projectMembers, projects } from '../database/schema';
-import { ROLE_RANK, OrganizationRole } from '../enums';
+import { projectMembers, projects } from '../database/schema';
+import type { UserRegion } from '../enums';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_EVENTS } from '../audit/audit-events';
 import type { AuthenticatedUser } from './authenticated-user';
@@ -11,42 +11,44 @@ import {
   APPROVAL_BEARING_PERMISSIONS,
   resolveAgentPermissions,
 } from './agent-permissions';
-import {
-  decideProjectAccess,
-  PROJECT_ACCESS_BYPASS_ROLE,
-  type ProjectAccessReason,
-} from './project-access';
+import { decideProjectAccess, type ProjectAccessReason } from './project-access';
 
-/** A membership resolved for an authorisation decision. */
-export interface MembershipContext {
-  readonly organizationId: string;
+/**
+ * The caller, as the rest of the request pipeline needs them (ADR-044).
+ *
+ * Returned by requireAdmin so a handler that has already proven the flag does
+ * not have to reach back into the token for the region.
+ */
+export interface AccessContext {
   readonly userId: string;
-  readonly role: OrganizationRole;
+  readonly region: UserRegion;
+  readonly isAdmin: boolean;
 }
 
-/** A project resolved for an authorisation decision, with its organisation. */
+/** A project resolved for an authorisation decision, with its region. */
 export interface ProjectContext {
   readonly projectId: string;
-  readonly organizationId: string;
-  readonly membership: MembershipContext;
+  readonly region: UserRegion;
+  readonly userId: string;
+  readonly isAdmin: boolean;
   readonly agentPermissions: Record<AgentPermission, boolean>;
   /**
-   * Why this caller is allowed in (ADR-043): their rank, having created the
-   * project, or an explicit grant. Carried so a caller that renders the
-   * difference does not have to ask again.
+   * Why this caller is allowed in (ADR-043): admin, having created the project,
+   * or an explicit grant. Carried so a caller that renders the difference does
+   * not have to ask again.
    */
   readonly accessReason: ProjectAccessReason;
   readonly hasProjectGrant: boolean;
 }
 
 /**
- * The single place authorisation is decided (ADR-015).
+ * The single place authorisation is decided (ADR-015, ADR-044).
  *
  * No controller, service or query composes its own permission logic. Every
- * request that touches organisation-scoped data resolves a context here first,
- * and the returned context carries the organisation id that the subsequent query
- * must filter on - so organisation isolation is a consequence of asking, not
- * something each query has to remember.
+ * request that touches project-scoped data resolves a context here first, and
+ * the returned context carries the region the subsequent query must filter on -
+ * so region isolation is a consequence of asking, not something each query has
+ * to remember.
  *
  * Denials are recorded to the audit trail. A refused request is a security event
  * and is more interesting than a permitted one.
@@ -59,57 +61,23 @@ export class AuthorizationService {
   ) {}
 
   /**
-   * Resolves the caller's membership of an organisation, requiring at least
-   * `minimumRole`.
+   * Requires the caller to be an admin.
+   *
+   * The flag is already on the verified token, so this is a comparison rather
+   * than a query. Admin status is changed by an operator through the users
+   * endpoint, and a demoted account loses the flag at its next token refresh -
+   * a window the platform accepts because the alternative is a database read on
+   * every settings route.
    */
-  async requireOrganizationMember(
-    user: AuthenticatedUser,
-    organizationId: string,
-    minimumRole: OrganizationRole = 'viewer',
-  ): Promise<MembershipContext> {
-    const [membership] = await this.database.db
-      .select({
-        organizationId: organizationMembers.organizationId,
-        userId: organizationMembers.userId,
-        role: organizationMembers.role,
-      })
-      .from(organizationMembers)
-      .where(
-        and(
-          eq(organizationMembers.organizationId, organizationId),
-          eq(organizationMembers.userId, user.userId),
-        ),
-      )
-      .limit(1);
-
-    if (!membership) {
-      await this.recordDenial(user, organizationId, null, 'not a member of the organisation');
-      // Not found rather than forbidden: a non-member must not be able to learn
-      // that an organisation exists by the difference in the response.
-      throw new NotFoundException('Organisation not found');
+  async requireAdmin(user: AuthenticatedUser): Promise<AccessContext> {
+    if (!user.isAdmin) {
+      await this.recordDenial(user, null, 'admin flag required');
+      throw new ForbiddenException('This action requires an administrator account.');
     }
 
-    const role = membership.role as OrganizationRole;
-    if (ROLE_RANK[role] < ROLE_RANK[minimumRole]) {
-      await this.recordDenial(
-        user,
-        organizationId,
-        null,
-        `role ${role} is below the required ${minimumRole}`,
-      );
-      throw new ForbiddenException(
-        `This action requires the ${minimumRole} role or above. Your role is ${role}.`,
-      );
-    }
-
-    return { organizationId, userId: user.userId, role };
+    return { userId: user.userId, region: user.region, isAdmin: true };
   }
 
-  /**
-   * Resolves a project and the caller's standing in its organisation. The
-   * project is looked up first and its organisation is taken from the row, so a
-   * caller cannot reach a project by naming an organisation they do belong to.
-   */
   /**
    * Project access, with the archived state deliberately part of the question.
    *
@@ -121,12 +89,14 @@ export class AuthorizationService {
    * `includeArchived` is for. Without it, archiving is a trapdoor: the project
    * disappears from the list and cannot then be looked at, restored or removed
    * (ADR-024).
+   *
+   * `requireAdmin` narrows further than opening the project does: managing
+   * grants, environments and settings asks for the flag as well as access.
    */
   async requireProjectAccess(
     user: AuthenticatedUser,
     projectId: string,
-    minimumRole: OrganizationRole = 'viewer',
-    options: { includeArchived?: boolean } = {},
+    options: { includeArchived?: boolean; requireAdmin?: boolean } = {},
   ): Promise<ProjectContext> {
     const scope = options.includeArchived
       ? eq(projects.id, projectId)
@@ -135,7 +105,7 @@ export class AuthorizationService {
     const [project] = await this.database.db
       .select({
         id: projects.id,
-        organizationId: projects.organizationId,
+        region: projects.region,
         agentPermissions: projects.agentPermissions,
         createdByUserId: projects.createdByUserId,
       })
@@ -147,21 +117,12 @@ export class AuthorizationService {
       throw new NotFoundException('Project not found');
     }
 
-    const membership = await this.requireOrganizationMember(
-      user,
-      project.organizationId,
-      minimumRole,
-    );
-
     /**
-     * Organisation membership is necessary but no longer sufficient (ADR-043).
-     *
-     * The grant is only read when the rule might need it: an admin is in by rank
-     * and a creator by the row already fetched, so the common paths cost nothing.
+     * The grant is only read when the rule might need it: an admin is in by
+     * flag and a creator by the row already fetched, so the common paths cost
+     * nothing (ADR-043).
      */
-    const bypasses =
-      ROLE_RANK[membership.role] >= ROLE_RANK[PROJECT_ACCESS_BYPASS_ROLE] ||
-      project.createdByUserId === user.userId;
+    const bypasses = user.isAdmin || project.createdByUserId === user.userId;
 
     const hasGrant = bypasses
       ? false
@@ -179,35 +140,37 @@ export class AuthorizationService {
         ).length > 0;
 
     const decision = decideProjectAccess({
-      role: membership.role,
       userId: user.userId,
+      isAdmin: user.isAdmin,
       createdByUserId: project.createdByUserId,
       hasGrant,
     });
 
     if (!decision.allowed) {
-      await this.recordDenial(
-        user,
-        project.organizationId,
-        project.id,
-        'no grant for this project',
-      );
+      await this.recordDenial(user, project.id, 'no grant for this project');
       /**
-       * Forbidden, not NotFound - deliberately unlike the organisation refusal
-       * above, which hides an organisation's existence from a non-member. A
-       * project's existence is published in the list on purpose, so hiding it
-       * here would conceal nothing and would leave the portal's "Request access"
-       * button with nothing to point at.
+       * Forbidden, not NotFound - deliberately. A project's existence is
+       * published in the list on purpose, so hiding it here would conceal
+       * nothing and would leave the portal's "Request access" button with
+       * nothing to point at.
        */
       throw new ForbiddenException(
         'You do not have access to this project. You can request access from the projects list.',
       );
     }
 
+    if (options.requireAdmin && !user.isAdmin) {
+      await this.recordDenial(user, project.id, 'admin flag required for this operation');
+      throw new ForbiddenException(
+        'Managing a project requires an administrator account. You can ask an administrator to do this.',
+      );
+    }
+
     return {
       projectId: project.id,
-      organizationId: project.organizationId,
-      membership,
+      region: project.region as UserRegion,
+      userId: user.userId,
+      isAdmin: user.isAdmin,
       agentPermissions: resolveAgentPermissions(project.agentPermissions),
       accessReason: decision.reason,
       hasProjectGrant: decision.reason === 'grant',
@@ -219,7 +182,7 @@ export class AuthorizationService {
    * capability additionally requires human approval.
    *
    * This answers the policy question only. It does not execute anything and it
-   * does not consider user roles: agent permissions are per project and
+   * does not consider the caller: agent permissions are per project and
    * independent of who submitted the task.
    */
   evaluateAgentCapability(
@@ -234,31 +197,26 @@ export class AuthorizationService {
   }
 
   /**
-   * Roles permitted to decide an approval. Chapter 11 gives developers the right
-   * to approve development actions; production actions are reserved to admin and
-   * above.
+   * Who may decide an approval.
+   *
+   * Binary since ADR-044: the organisation role hierarchy that once let a
+   * developer approve a development action is gone, and with one rank left the
+   * answer cannot differ by action. Admins decide everything, everyone else
+   * decides nothing.
    */
-  requireApprovalAuthority(
-    membership: MembershipContext,
-    isProductionAction: boolean,
-  ): void {
-    const required: OrganizationRole = isProductionAction ? 'admin' : 'developer';
-    if (ROLE_RANK[membership.role] < ROLE_RANK[required]) {
-      throw new ForbiddenException(
-        `Deciding this approval requires the ${required} role or above. Your role is ${membership.role}.`,
-      );
+  requireApprovalAuthority(user: AuthenticatedUser): void {
+    if (!user.isAdmin) {
+      throw new ForbiddenException('Deciding an approval requires an administrator account.');
     }
   }
 
   private async recordDenial(
     user: AuthenticatedUser,
-    organizationId: string | null,
     projectId: string | null,
     reason: string,
   ): Promise<void> {
     await this.audit.record({
       event: AUDIT_EVENTS.AUTHORIZATION_DENIED,
-      organizationId,
       projectId,
       userId: user.userId,
       metadata: { reason },

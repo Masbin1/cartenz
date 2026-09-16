@@ -16,7 +16,8 @@ import { ApprovalRequiredError, ToolExecutionService } from '../tools/tool-execu
 import { ToolRegistry } from '../tools/tool-registry';
 import { ApprovalService } from '../../modules/approvals/approval.service';
 import { DocumentsService } from '../../modules/documents/documents.service';
-import { OdooSettingsService } from '../../modules/organizations/odoo-settings.service';
+import { OdooSettingsService } from '../../modules/settings/odoo-settings.service';
+import { OdooVersionsService } from '../../modules/settings/odoo-versions.service';
 import { OdooProjectAnalyser } from '../analysis/odoo-project-analyser';
 import { ProjectMemoryService } from '../analysis/project-memory.service';
 import { GitService } from '../git/git.service';
@@ -94,6 +95,7 @@ export class AgentWorkflow {
     private readonly validation: OdooValidationRunner,
     private readonly documents: DocumentsService,
     private readonly odooSettings: OdooSettingsService,
+    private readonly odooVersions: OdooVersionsService,
     private readonly audit: AuditService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
@@ -349,8 +351,7 @@ export class AgentWorkflow {
     // Persisted so project context survives the workspace it was derived from.
     await this.projectMemory.record({
       projectId: snapshot.projectId,
-        organizationId: snapshot.organizationId,
-      taskId: snapshot.taskId,
+              taskId: snapshot.taskId,
       analysis,
     });
 
@@ -440,8 +441,7 @@ export class AgentWorkflow {
     let outcome;
     try {
       outcome = await this.planner.createOdooOnlinePlan({
-        organizationId: snapshot.organizationId,
-        projectId: snapshot.projectId,
+                projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -458,8 +458,7 @@ export class AgentWorkflow {
 
     await this.modelCalls.record({
       taskId: snapshot.taskId,
-      organizationId: snapshot.organizationId,
-      operation: 'planning',
+            operation: 'planning',
       providerId: outcome.providerId,
       model: outcome.model,
       calledExternalService: outcome.calledExternalService,
@@ -484,8 +483,7 @@ export class AgentWorkflow {
     await this.approvals.request({
       taskId: snapshot.taskId,
       taskReference: snapshot.reference,
-      organizationId: snapshot.organizationId,
-      action: 'implementation_plan',
+            action: 'implementation_plan',
       requiredReason:
         'This plan changes a live Odoo Online instance. It must be approved before anything is created there.',
       context: {
@@ -530,8 +528,7 @@ export class AgentWorkflow {
     let outcome;
     try {
       outcome = await this.implementationLoop.run({
-        organizationId: snapshot.organizationId,
-        projectId: snapshot.projectId,
+                projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -554,8 +551,7 @@ export class AgentWorkflow {
 
     await this.modelCalls.record({
       taskId: snapshot.taskId,
-      organizationId: snapshot.organizationId,
-      operation: 'implementation',
+            operation: 'implementation',
       providerId: outcome.providerId,
       model: outcome.model,
       calledExternalService: outcome.calledExternalService,
@@ -671,8 +667,7 @@ export class AgentWorkflow {
     let outcome;
     try {
       outcome = await this.planner.createPlan({
-        organizationId: snapshot.organizationId,
-        projectId: snapshot.projectId,
+                projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -692,8 +687,7 @@ export class AgentWorkflow {
 
     await this.modelCalls.record({
       taskId: snapshot.taskId,
-        organizationId: snapshot.organizationId,
-      operation: 'planning',
+              operation: 'planning',
       providerId: outcome.providerId,
       model: outcome.model,
       calledExternalService: outcome.calledExternalService,
@@ -726,8 +720,7 @@ export class AgentWorkflow {
     await this.approvals.request({
       taskId: snapshot.taskId,
       taskReference: snapshot.reference,
-        organizationId: snapshot.organizationId,
-      action: 'implementation_plan',
+              action: 'implementation_plan',
       requiredReason: 'The implementation plan must be approved before any file is modified.',
       context: {
         summary: plan.summary,
@@ -782,8 +775,7 @@ export class AgentWorkflow {
     let outcome;
     try {
       outcome = await this.implementationLoop.run({
-        organizationId: snapshot.organizationId,
-        projectId: snapshot.projectId,
+                projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -804,8 +796,7 @@ export class AgentWorkflow {
 
     await this.modelCalls.record({
       taskId: snapshot.taskId,
-        organizationId: snapshot.organizationId,
-      operation: 'implementation',
+              operation: 'implementation',
       providerId: outcome.providerId,
       model: outcome.model,
       calledExternalService: outcome.calledExternalService,
@@ -896,8 +887,7 @@ export class AgentWorkflow {
     let outcome;
     try {
       outcome = await this.chatLoop.run({
-        organizationId: snapshot.organizationId,
-        projectId: snapshot.projectId,
+                projectId: snapshot.projectId,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -918,8 +908,7 @@ export class AgentWorkflow {
 
     await this.modelCalls.record({
       taskId: snapshot.taskId,
-      organizationId: snapshot.organizationId,
-      operation: 'chat',
+            operation: 'chat',
       providerId: outcome.providerId,
       model: outcome.model,
       calledExternalService: outcome.calledExternalService,
@@ -1210,8 +1199,7 @@ export class AgentWorkflow {
 
       await this.audit.record({
         event: AUDIT_EVENTS.TASK_PUSH_AUTO_APPROVED,
-        organizationId: snapshot.organizationId,
-        projectId: snapshot.projectId,
+                projectId: snapshot.projectId,
         userId: null,
         metadata: {
           branch: workspace.branch,
@@ -1261,8 +1249,7 @@ export class AgentWorkflow {
     await this.approvals.request({
       taskId: snapshot.taskId,
       taskReference: snapshot.reference,
-        organizationId: snapshot.organizationId,
-      action: 'git_push',
+              action: 'git_push',
       requiredReason:
         'Pushing the branch sends the change to the connected repository, outside the platform.',
       context: {
@@ -1403,8 +1390,7 @@ export class AgentWorkflow {
 
     await this.modelCalls.record({
       taskId: snapshot.taskId,
-      organizationId: snapshot.organizationId,
-      operation,
+            operation,
       providerId: attemptedProvider,
       model: attemptedModel,
       calledExternalService: attemptedProvider !== 'mock',
@@ -1441,8 +1427,7 @@ export class AgentWorkflow {
     const workspace = await this.workspaceManager.allocate({
       taskId: snapshot.taskId,
       taskReference: snapshot.reference,
-        organizationId: snapshot.organizationId,
-      projectId: snapshot.projectId,
+              projectId: snapshot.projectId,
       repositoryUrl: snapshot.repositoryUrl,
       // The environment's branch, not the repository's default. The target is a
       // choice; the default branch is a fact about the repository (ADR-021).
@@ -1454,14 +1439,14 @@ export class AgentWorkflow {
       sshHostKey: snapshot.sshHostKey,
       executionMode: snapshot.executionMode,
       onPremiseProjectPath: snapshot.onPremiseProjectPath,
-      // The organisation's configured Odoo estate, falling back to the
-      // deployment's environment when it has not been set in the portal
-      // (ADR-033). A community project excludes the enterprise source (ADR-037),
-      // so the agent reads only what the project is entitled to.
-      odooSourcePaths: await this.odooSettings.sourcePathsFor(
-        snapshot.organizationId,
-        snapshot.odooEdition,
-      ),
+      // The source the agent may read (ADR-033, ADR-037): the per-version
+      // catalog row for the project's declared version when one is active
+      // (ADR-045), otherwise the organisation-wide paths, falling back to the
+      // environment. A community project excludes the enterprise source either
+      // way, so the agent reads only what the project is entitled to.
+      odooSourcePaths:
+        (await this.odooVersions.sourcePathsFor(snapshot.odooVersion, snapshot.odooEdition)) ??
+        (await this.odooSettings.sourcePathsFor(snapshot.odooEdition)),
       baseCommit: snapshot.baseCommit,
     });
 
@@ -1529,8 +1514,7 @@ export class AgentWorkflow {
       taskId: snapshot.taskId,
       taskReference: snapshot.reference,
       projectId: snapshot.projectId,
-        organizationId: snapshot.organizationId,
-      executionMode: snapshot.executionMode,
+              executionMode: snapshot.executionMode,
       workspace: {
         workspaceId: workspace.workspaceId,
         repositoryPath: workspace.repositoryPath,
@@ -1573,8 +1557,7 @@ export class AgentWorkflow {
         await this.approvals.request({
           taskId: snapshot.taskId,
           taskReference: snapshot.reference,
-          organizationId: snapshot.organizationId,
-          action: error.approvalAction,
+                    action: error.approvalAction,
           requiredReason: error.reason,
           context: { toolName: error.toolName, branch: workspace.branch, path: input.path },
           taskStatus: snapshot.status,

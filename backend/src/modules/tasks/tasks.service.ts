@@ -90,7 +90,7 @@ export class TasksService {
     // development run; `chat` answers a question and never commits or pushes.
     const kind: AgentTaskKind = dto.kind ?? 'change';
 
-    const context = await this.authz.requireProjectAccess(user, projectId, 'developer');
+    const context = await this.authz.requireProjectAccess(user, projectId);
 
     const [project] = await this.database.db
       .select({
@@ -212,7 +212,6 @@ export class TasksService {
       // same event with a reason that names this decision.
       await this.audit.record({
         event: AUDIT_EVENTS.ENVIRONMENT_TARGET_REFUSED,
-        organizationId: context.organizationId,
         projectId,
         userId: user.userId,
         metadata: {
@@ -236,7 +235,6 @@ export class TasksService {
       : await this.openSession(projectId, user.userId, dto.prompt);
 
     const task = await this.insertTask({
-      organizationId: context.organizationId,
       projectId,
       sessionId,
       createdByUserId: user.userId,
@@ -248,7 +246,6 @@ export class TasksService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.TASK_CREATED,
-      organizationId: context.organizationId,
       projectId,
       userId: user.userId,
       metadata: {
@@ -478,7 +475,7 @@ export class TasksService {
 
     if (!task) throw new NotFoundException('Task not found');
 
-    const context = await this.authz.requireProjectAccess(user, task.projectId, 'developer');
+    await this.authz.requireProjectAccess(user, task.projectId);
     const status = task.status as AgentTaskStatus;
 
     if (isTerminalStatus(status)) {
@@ -498,7 +495,6 @@ export class TasksService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.TASK_CANCELLED,
-      organizationId: context.organizationId,
       projectId: task.projectId,
       userId: user.userId,
       metadata: { taskReference: task.reference, reason },
@@ -602,7 +598,6 @@ export class TasksService {
   }
 
   private async insertTask(values: {
-    organizationId: string;
     projectId: string;
     sessionId: string;
     createdByUserId: string;

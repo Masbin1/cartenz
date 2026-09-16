@@ -510,8 +510,9 @@ const HTTPS_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * run anything its sudoers rule permits, as root. The grant is narrowed here to
  * three fixed shapes - mirroring assertOdooInvocation above - and nothing else:
  *
- *   `sudo -n <create-script> <project-name> <port>` — the operator's
- *   create_project / create_project_enterprise scripts.
+ *   `sudo -n <create-script> <project-name> <port> [<version>]` — the
+ *   operator's create_project / create_project_enterprise scripts. The optional
+ *   version (ADR-045) selects the template database for that Odoo series.
  *
  *   `sudo -n <grant-script> <project-name>` — the addons-ownership fix-up
  *   script, which takes no port because it touches only a directory the
@@ -617,9 +618,21 @@ export function assertProvisioningInvocation(
     );
   }
 
-  if (args.length !== 4) {
+  // ADR-045: an optional fourth argument names the Odoo series, so the script
+  // can select the template database for that version. Absent means "install
+  // base only", exactly what the scripts did before this existed.
+  if (args.length === 5) {
+    const version = args[4];
+    if (!version || !/^\d+\.\d+$/.test(version)) {
+      throw new CommandArgumentError(
+        'sudo provisioning accepts an optional Odoo version as the fourth argument, shaped ' +
+          `like "19.0"; got "${String(version)}".`,
+      );
+    }
+  } else if (args.length !== 4) {
     throw new CommandArgumentError(
-      `sudo provisioning takes exactly "-n <script> <project-name> <port>"; got ${args.length} arguments.`,
+      `sudo provisioning takes exactly "-n <script> <project-name> <port> [<version>]"; got ` +
+        `${args.length} arguments.`,
     );
   }
 }

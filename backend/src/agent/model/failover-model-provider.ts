@@ -34,7 +34,7 @@ export class FailoverModelProvider implements ModelProvider {
     if (members.length === 0) {
       throw new ModelProviderError(
         'failover',
-        'A failover chain needs at least one provider. An organisation with no ' +
+        'A failover chain needs at least one provider. A deployment with no ' +
           'configured providers falls back to the environment instead.',
         false,
       );

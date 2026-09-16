@@ -1,10 +1,10 @@
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { OrganizationsController } from './organizations.controller';
-import { OrganizationsService } from './organizations.service';
+import { SettingsController } from './settings.controller';
 import { ModelSettingsService } from './model-settings.service';
 import { OdooSettingsService } from './odoo-settings.service';
+import { OdooVersionsService } from './odoo-versions.service';
 import { ModelProviderResolver } from '../../agent/model/model-provider-resolver';
 import { AuthorizationService } from '../../core/authz/authorization.service';
 import { AUTH_USER_KEY } from '../../core/http/current-user.decorator';
@@ -19,7 +19,6 @@ import type { AuthenticatedRequest } from '../../core/http/current-user.decorato
  * the client, which is why it is asserted here, against the real decorators.
  */
 describe('model provider route matching', () => {
-  const organizationId = '11111111-1111-4111-8111-111111111111';
   const rowId = '22222222-2222-4222-8222-222222222222';
 
   let app: INestApplication;
@@ -28,13 +27,13 @@ describe('model provider route matching', () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      controllers: [OrganizationsController],
+      controllers: [SettingsController],
       providers: [
-        { provide: OrganizationsService, useValue: {} },
         { provide: ModelSettingsService, useValue: { reorder, updateRow } },
         { provide: OdooSettingsService, useValue: { get: jest.fn(), update: jest.fn() } },
+        { provide: OdooVersionsService, useValue: { list: jest.fn() } },
         { provide: ModelProviderResolver, useValue: { invalidate: jest.fn() } },
-        { provide: AuthorizationService, useValue: { requireOrganizationMember: jest.fn() } },
+        { provide: AuthorizationService, useValue: { requireAdmin: jest.fn() } },
       ],
     }).compile();
 
@@ -62,7 +61,7 @@ describe('model provider route matching', () => {
 
   it('sends PATCH .../order to reorder rather than to the row update', async () => {
     await request(app.getHttpServer())
-      .patch(`/organizations/${organizationId}/model-providers/order`)
+      .patch('/settings/model-providers/order')
       .send({ order: [rowId] })
       .expect(200);
 
@@ -72,7 +71,7 @@ describe('model provider route matching', () => {
 
   it('still sends PATCH .../<uuid> to the row update', async () => {
     await request(app.getHttpServer())
-      .patch(`/organizations/${organizationId}/model-providers/${rowId}`)
+      .patch(`/settings/model-providers/${rowId}`)
       .send({ label: 'renamed' })
       .expect(200);
 

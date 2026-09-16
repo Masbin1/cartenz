@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
-import { organizationOdooSettings } from '../../core/database/schema';
+import { odooSettings } from '../../core/database/schema';
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import { APP_CONFIG } from '../../core/config/config.module';
@@ -38,13 +38,14 @@ export interface UpdateOdooSettingsInput {
 }
 
 /**
- * Where an organisation's Odoo estate lives (ADR-033).
+ * Where this deployment's Odoo estate lives (ADR-033, ADR-044).
  *
- * Read by the workspace layer to decide what the agent may read, and by project
- * creation to decide where a new project's directory goes. The environment is
- * the fallback rather than the authority: a deployment that configured
- * ODOO_SOURCE_PATHS keeps working, and one that fills in the portal stops
- * depending on its .env.
+ * One row for the whole deployment: the estate is operator configuration, and
+ * region is an access boundary rather than a configuration one. Read by the
+ * workspace layer to decide what the agent may read, and by project creation to
+ * decide where a new project's directory goes. The environment is the fallback
+ * rather than the authority: a deployment that configured ODOO_SOURCE_PATHS
+ * keeps working, and one that fills in the portal stops depending on its .env.
  */
 @Injectable()
 export class OdooSettingsService {
@@ -56,18 +57,14 @@ export class OdooSettingsService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
-  /** The stored row, or null when the organisation has never configured one. */
-  async findRow(organizationId: string) {
-    const [row] = await this.database.db
-      .select()
-      .from(organizationOdooSettings)
-      .where(eq(organizationOdooSettings.organizationId, organizationId))
-      .limit(1);
+  /** The stored row, or null when the deployment has never configured one. */
+  async findRow() {
+    const [row] = await this.database.db.select().from(odooSettings).limit(1);
     return row ?? null;
   }
 
   /**
-   * The read-only Odoo source paths in force for an organisation.
+   * The read-only Odoo source paths in force.
    *
    * The stored base and enterprise paths when set, otherwise the deployment's
    * configuration (ADR-031). Empty means no reference, in which case every read
@@ -81,11 +78,8 @@ export class OdooSettingsService {
    * configured, so a deployment that wants the narrower behaviour sets the paths
    * in the portal.
    */
-  async sourcePathsFor(
-    organizationId: string,
-    edition: OdooEdition = 'enterprise',
-  ): Promise<readonly string[]> {
-    const row = await this.findRow(organizationId);
+  async sourcePathsFor(edition: OdooEdition = 'enterprise'): Promise<readonly string[]> {
+    const row = await this.findRow();
     const enterprisePath = edition === 'community' ? null : row?.enterprisePath;
     const configured = [row?.basePath, enterprisePath].filter(
       (path): path is string => typeof path === 'string' && path.length > 0,
@@ -100,13 +94,13 @@ export class OdooSettingsService {
    * neither is configured, which project creation reports rather than defaulting
    * to a platform directory.
    */
-  async projectsRootFor(organizationId: string): Promise<string | null> {
-    const row = await this.findRow(organizationId);
+  async projectsRootFor(): Promise<string | null> {
+    const row = await this.findRow();
     return row?.projectsRoot || this.config.onPremise.root || null;
   }
 
-  async get(organizationId: string): Promise<PublicOdooSettings> {
-    const row = await this.findRow(organizationId);
+  async get(): Promise<PublicOdooSettings> {
+    const row = await this.findRow();
     const fallbackRoot = this.config.onPremise.root ?? null;
 
     const basePath = row?.basePath ?? null;
@@ -118,15 +112,11 @@ export class OdooSettingsService {
       enterprisePath: await this.describe(enterprisePath),
       projectsRoot: await this.describe(projectsRoot),
       fromEnvironment: !row || (!row.basePath && !row.enterprisePath),
-      effectiveSourcePaths: await this.sourcePathsFor(organizationId),
+      effectiveSourcePaths: await this.sourcePathsFor(),
     };
   }
 
-  async update(
-    organizationId: string,
-    userId: string,
-    input: UpdateOdooSettingsInput,
-  ): Promise<PublicOdooSettings> {
+  async update(userId: string, input: UpdateOdooSettingsInput): Promise<PublicOdooSettings> {
     const basePath = this.normalise('basePath', input.basePath);
     const enterprisePath = this.normalise('enterprisePath', input.enterprisePath);
     const projectsRoot = this.normalise('projectsRoot', input.projectsRoot);
@@ -151,38 +141,31 @@ export class OdooSettingsService {
       }
     }
 
-    await this.database.db
-      .insert(organizationOdooSettings)
-      .values({
-        organizationId,
-        basePath,
-        enterprisePath,
-        projectsRoot,
-        updatedByUserId: userId,
-      })
-      .onConflictDoUpdate({
-        target: organizationOdooSettings.organizationId,
-        set: {
-          basePath,
-          enterprisePath,
-          projectsRoot,
-          updatedByUserId: userId,
-          updatedAt: new Date(),
-        },
-      });
+    // Single row, so the update is a read-then-write rather than an upsert: the
+    // former needs a natural key to conflict on and there is none.
+    const existing = await this.findRow();
+    if (existing) {
+      await this.database.db
+        .update(odooSettings)
+        .set({ basePath, enterprisePath, projectsRoot, updatedByUserId: userId, updatedAt: new Date() })
+        .where(eq(odooSettings.id, existing.id));
+    } else {
+      await this.database.db
+        .insert(odooSettings)
+        .values({ basePath, enterprisePath, projectsRoot, updatedByUserId: userId });
+    }
 
     await this.audit.record({
       event: AUDIT_EVENTS.ODOO_SETTINGS_UPDATED,
-      organizationId,
       userId,
       metadata: { basePath, enterprisePath, projectsRoot },
     });
 
     this.logger.log(
-      `Odoo settings updated for organisation ${organizationId}: base=${basePath ?? '-'}, enterprise=${enterprisePath ?? '-'}, projects=${projectsRoot ?? '-'}`,
+      `Odoo settings updated: base=${basePath ?? '-'}, enterprise=${enterprisePath ?? '-'}, projects=${projectsRoot ?? '-'}`,
     );
 
-    return this.get(organizationId);
+    return this.get();
   }
 
   /** Trims, treats blank as cleared, and requires an absolute path. */

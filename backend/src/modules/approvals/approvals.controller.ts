@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApprovalService } from './approval.service';
 import { DecideApprovalDto } from './dto/approval.dto';
 import { CurrentUser } from '../../core/http/current-user.decorator';
@@ -16,11 +16,8 @@ export class ApprovalsController {
   constructor(private readonly approvals: ApprovalService) {}
 
   @Get('approvals')
-  listPending(
-    @CurrentUser() user: AuthenticatedUser,
-    @Query('organizationId', ParseUUIDPipe) organizationId: string,
-  ) {
-    return this.approvals.listPending(user, organizationId);
+  listPending(@CurrentUser() user: AuthenticatedUser) {
+    return this.approvals.listPending(user);
   }
 
   @Get('tasks/:taskId/approvals')

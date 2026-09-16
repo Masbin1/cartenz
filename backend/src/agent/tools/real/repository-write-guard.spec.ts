@@ -50,7 +50,6 @@ describe('repository write guard', () => {
       taskId: 'task-1',
       taskReference: 'task_1',
       projectId: 'project-1',
-      organizationId: 'org-1',
       executionMode: 'odoo_sh',
       workspace: {
         workspaceId: 'ws-1',

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
-import { and, eq, isNull } from 'drizzle-orm';
+import { eq, isNull } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service';
 import { secretDataKeys, secretRecords } from '../database/schema';
 import { APP_CONFIG } from '../config/config.module';
@@ -47,12 +47,11 @@ export class EnvelopeEncryptionSecretsProvider implements SecretsProvider {
   }
 
   async write(request: SecretWriteRequest): Promise<SecretReference> {
-    const dataKey = await this.resolveDataKey(request.organizationId, request.projectId);
+    const dataKey = await this.resolveDataKey(request.projectId);
     const sealed = this.seal(dataKey.key, Buffer.from(request.value, 'utf8'));
     const ref = mintReference(request.purpose);
 
     await this.database.db.insert(secretRecords).values({
-      organizationId: request.organizationId,
       projectId: request.projectId,
       ref,
       dataKeyId: dataKey.id,
@@ -111,21 +110,13 @@ export class EnvelopeEncryptionSecretsProvider implements SecretsProvider {
 
   /**
    * Returns the data key for a scope, generating and sealing one on first use.
-   * The scope is the project where there is one, otherwise the organisation.
+   * The scope is the project where there is one, otherwise the single global
+   * scope (ADR-044).
    */
-  private async resolveDataKey(
-    organizationId: string,
-    projectId: string | null,
-  ): Promise<{ id: string; key: Buffer }> {
+  private async resolveDataKey(projectId: string | null): Promise<{ id: string; key: Buffer }> {
     const scopeMatch = projectId
-      ? and(
-          eq(secretDataKeys.organizationId, organizationId),
-          eq(secretDataKeys.projectId, projectId),
-        )
-      : and(
-          eq(secretDataKeys.organizationId, organizationId),
-          isNull(secretDataKeys.projectId),
-        );
+      ? eq(secretDataKeys.projectId, projectId)
+      : isNull(secretDataKeys.projectId);
 
     const [existing] = await this.database.db
       .select()
@@ -150,7 +141,6 @@ export class EnvelopeEncryptionSecretsProvider implements SecretsProvider {
     const [created] = await this.database.db
       .insert(secretDataKeys)
       .values({
-        organizationId,
         projectId,
         wrappedKey: wrapped.ciphertext,
         iv: wrapped.iv,

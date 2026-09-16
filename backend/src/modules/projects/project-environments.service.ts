@@ -31,9 +31,8 @@ export const DEFAULT_SCAFFOLD_ENVIRONMENTS: readonly EnvironmentInput[] = [
   { name: 'Staging', branch: 'staging', kind: 'staging' },
 ];
 
-/** A row as this service reads it: the resolved shape plus its scope and flag. */
+/** A row as this service reads it: the resolved shape plus its flag. */
 interface TrackedEnvironment extends ResolvedEnvironment {
-  readonly organizationId: string;
   readonly isDefaultTarget: boolean;
 }
 
@@ -91,7 +90,6 @@ export class ProjectEnvironmentsService {
    */
   buildForCreation(
     projectId: string,
-    organizationId: string,
     defaultBranch: string,
     declared: readonly EnvironmentInput[] | undefined,
   ) {
@@ -125,7 +123,6 @@ export class ProjectEnvironmentsService {
 
     return inputs.map((input) => ({
       projectId,
-      organizationId,
       name: input.name.trim(),
       branch: input.branch.trim(),
       kind: input.kind,
@@ -274,7 +271,6 @@ export class ProjectEnvironmentsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.ENVIRONMENT_TARGET_REFUSED,
-      organizationId: environment.organizationId,
       projectId,
       userId: actorUserId ?? null,
       metadata: {
@@ -303,7 +299,6 @@ export class ProjectEnvironmentsService {
 
     return rows.map((row) => ({
       id: row.id,
-      organizationId: row.organizationId,
       name: row.name,
       branch: row.branch,
       kind: row.kind as EnvironmentKind,
@@ -314,7 +309,6 @@ export class ProjectEnvironmentsService {
   /** Adds one environment to an existing project. */
   async add(
     projectId: string,
-    organizationId: string,
     input: EnvironmentInput,
   ): Promise<ResolvedEnvironment> {
     // The item's own rules only. Whether the project ends up with something
@@ -337,7 +331,6 @@ export class ProjectEnvironmentsService {
       .insert(projectEnvironments)
       .values({
         projectId,
-        organizationId,
         name: input.name.trim(),
         branch: input.branch.trim(),
         kind: input.kind,
@@ -348,7 +341,6 @@ export class ProjectEnvironmentsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.ENVIRONMENT_ADDED,
-      organizationId,
       projectId,
       metadata: { environmentId: created.id, name: created.name, branch: created.branch, kind: created.kind },
     });
@@ -388,7 +380,6 @@ export class ProjectEnvironmentsService {
 
     await this.audit.record({
       event: AUDIT_EVENTS.ENVIRONMENT_DEFAULT_CHANGED,
-      organizationId: target.organizationId,
       projectId,
       metadata: { environmentId: target.id, name: target.name, branch: target.branch },
     });

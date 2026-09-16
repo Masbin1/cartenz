@@ -7,7 +7,6 @@ import type { ProjectAnalysis } from './odoo-project-analyser';
 
 export interface RecordAnalysisInput {
   readonly projectId: string;
-  readonly organizationId: string;
   readonly taskId: string;
   readonly analysis: ProjectAnalysis;
 }
@@ -55,7 +54,6 @@ export class ProjectMemoryService {
 
     const values = {
       projectId: input.projectId,
-      organizationId: input.organizationId,
       detectedOdooVersion: input.analysis.detectedOdooVersion,
       pythonVersion: input.analysis.pythonVersion,
       modules: (redactMetadata({ modules }).modules ?? []) as unknown[],

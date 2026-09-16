@@ -23,10 +23,10 @@ import {
   CONNECTION_STATUSES,
   CONNECTION_TYPES,
   ODOO_EDITIONS,
-  ORGANIZATION_ROLES,
   PROJECT_ACCESS_REQUEST_STATUSES,
   PROJECT_PROVISIONING_STATUSES,
   PROJECT_TYPES,
+  USER_REGIONS,
 } from '../enums';
 import { AGENT_TASK_STATUSES } from '../../agent/task-state';
 
@@ -37,10 +37,10 @@ import { AGENT_TASK_STATUSES } from '../../agent/task-state';
  *
  * Two conventions hold throughout:
  *
- *  1. Organisation isolation. Every row that can be reached by a request carries
- *     `organization_id`, either directly or through exactly one hop. Queries
- *     filter on it, and the authorisation service is the only place that decides
- *     which organisation a request may see.
+ *  1. Region isolation. Every row that can be reached by a request carries a
+ *     `region` or `project_id`, either directly or through exactly one hop.
+ *     Queries filter on it, and the authorisation service is the only place that
+ *     decides which region a request may see.
  *
  *  2. No secret material. No column on any table below holds a credential, a
  *     token or a password in plaintext. `project_connections` holds a reference;
@@ -64,6 +64,18 @@ export const users = pgTable(
     // scrypt output, salt and parameters. Never a plaintext or reversible value.
     passwordHash: text('password_hash').notNull(),
     name: text('name').notNull(),
+    /**
+     * The region this account works in (ADR-044). Chosen at registration and
+     * changeable by an admin afterwards. It is the access boundary: a regular
+     * user sees the projects of their own region plus any they were granted.
+     */
+    region: text('region', { enum: asEnum(USER_REGIONS) }).notNull().default('indonesia'),
+    /**
+     * Whether this account is an admin. One flag rather than a role hierarchy:
+     * an admin sees every region, opens every project, and is the only rank that
+     * may grant access or approve an agent action.
+     */
+    isAdmin: boolean('is_admin').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
     ...timestamps,
@@ -72,41 +84,6 @@ export const users = pgTable(
     // Case-insensitive uniqueness: sign-in must not depend on how the address
     // was typed, and two accounts must not differ only by case.
     emailUnique: uniqueIndex('users_email_lower_unique').on(sql`lower(${table.email})`),
-  }),
-);
-
-export const organizations = pgTable(
-  'organizations',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    name: text('name').notNull(),
-    slug: text('slug').notNull(),
-    ...timestamps,
-  },
-  (table) => ({
-    slugUnique: uniqueIndex('organizations_slug_unique').on(table.slug),
-  }),
-);
-
-export const organizationMembers = pgTable(
-  'organization_members',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    role: text('role', { enum: asEnum(ORGANIZATION_ROLES) }).notNull(),
-    ...timestamps,
-  },
-  (table) => ({
-    membershipUnique: uniqueIndex('organization_members_org_user_unique').on(
-      table.organizationId,
-      table.userId,
-    ),
-    byUser: index('organization_members_user_idx').on(table.userId),
   }),
 );
 
@@ -144,9 +121,8 @@ export const secretRecords = pgTable(
   'secret_records',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
+    // Null for a deployment-wide secret (the one global scope), else the project
+    // the value belongs to.
     projectId: uuid('project_id'),
     // Stable, human-readable handle used as the reference from other tables.
     ref: text('ref').notNull(),
@@ -167,9 +143,7 @@ export const secretDataKeys = pgTable(
   'secret_data_keys',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
+    // Null for the one global scope; otherwise the project the key seals.
     projectId: uuid('project_id'),
     wrappedKey: text('wrapped_key').notNull(),
     iv: text('iv').notNull(),
@@ -178,10 +152,15 @@ export const secretDataKeys = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    scopeUnique: uniqueIndex('secret_data_keys_scope_unique').on(
-      table.organizationId,
-      table.projectId,
-    ),
+    // At most one key per scope. Postgres treats NULLs as distinct in a unique
+    // index, so the global (project_id IS NULL) row is guarded by its own index
+    // below rather than by this one.
+    scopeUnique: uniqueIndex('secret_data_keys_project_unique')
+      .on(table.projectId)
+      .where(sql`${table.projectId} is not null`),
+    globalUnique: uniqueIndex('secret_data_keys_global_unique')
+      .on(table.projectId)
+      .where(sql`${table.projectId} is null`),
   }),
 );
 
@@ -189,9 +168,11 @@ export const projects = pgTable(
   'projects',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
+    /**
+     * The region this project belongs to (ADR-044). Chosen at creation; it is
+     * the access boundary a regular user's project list filters on.
+     */
+    region: text('region', { enum: asEnum(USER_REGIONS) }).notNull().default('indonesia'),
     name: text('name').notNull(),
     description: text('description'),
     projectType: text('project_type', { enum: asEnum(PROJECT_TYPES) }).notNull(),
@@ -281,32 +262,30 @@ export const projects = pgTable(
     ...timestamps,
   },
   (table) => ({
-    byOrganization: index('projects_organization_idx').on(table.organizationId),
-    nameUniquePerOrg: uniqueIndex('projects_org_name_unique').on(
-      table.organizationId,
-      table.name,
-    ),
+    byRegion: index('projects_region_idx').on(table.region),
+    // One flat space: project names are unique across the deployment, so a
+    // branch name, a workspace directory and a URL segment collide loudly rather
+    // than silently in two places.
+    nameUnique: uniqueIndex('projects_name_unique').on(table.name),
   }),
 );
 
 /**
- * The model providers an organisation has configured (ADR-023).
+ * The model providers configured for the whole deployment (ADR-023, ADR-044).
  *
- * One row per provider, ordered by `priority`, so an organisation's failover
- * chain is a list it can see and reorder rather than a single environment
- * variable. The API key is not here: `secret_ref` points into secret_records,
- * the same way a repository credential does.
+ * One row per provider, ordered by `priority`, so the failover chain is a list
+ * an operator can see and reorder rather than a single environment variable.
+ * Region is an access boundary, not a configuration boundary, so there is one
+ * global chain. The API key is not here: `secret_ref` points into
+ * secret_records, the same way a repository credential does.
  */
-export const organizationModelSettings = pgTable(
-  'organization_model_settings',
+export const modelSettings = pgTable(
+  'model_settings',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
     /**
-     * Tried in ascending order. Unique per organisation, so "which is first" has
-     * one answer rather than a tie the database would break arbitrarily.
+     * Tried in ascending order. Unique, so "which is first" has one answer
+     * rather than a tie the database would break arbitrarily.
      */
     priority: integer('priority').notNull().default(1),
     /** What a person calls this entry: "9router Paket-Hemat", "DeepSeek fallback". */
@@ -330,9 +309,9 @@ export const organizationModelSettings = pgTable(
     /** Reference into secret_records. Null for mock, which calls nothing. */
     secretRef: text('secret_ref'),
     /**
-     * Bumped on every write. The resolver caches built providers against the sum
-     * of an organisation's revisions, so any edit, addition or removal changes it
-     * and the chain is rebuilt on the next task rather than on the next restart.
+     * Bumped on every write. The resolver caches built providers against the
+     * chain's total revision, so any edit, addition or removal changes it and
+     * the chain is rebuilt on the next task rather than on the next restart.
      */
     revision: integer('revision').notNull().default(1),
     updatedByUserId: uuid('updated_by_user_id').references(() => users.id, {
@@ -342,24 +321,20 @@ export const organizationModelSettings = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    byOrganizationPriority: uniqueIndex('organization_model_settings_priority_idx').on(
-      table.organizationId,
-      table.priority,
-    ),
+    priorityUnique: uniqueIndex('model_settings_priority_unique').on(table.priority),
   }),
 );
 
 /**
- * Where this organisation's Odoo estate lives (ADR-033).
+ * Where this deployment's Odoo estate lives (ADR-033, ADR-044).
  *
- * One row per organisation. Filesystem locations rather than credentials, so
- * they are stored in plain columns and displayed in the portal — being able to
- * see and correct them is the reason they moved out of the environment.
+ * One row for the whole deployment, as the estate is operator config rather than
+ * a per-region boundary. Filesystem locations rather than credentials, so they
+ * are stored in plain columns and displayed in the portal — being able to see and
+ * correct them is the reason they moved out of the environment.
  */
-export const organizationOdooSettings = pgTable('organization_odoo_settings', {
-  organizationId: uuid('organization_id')
-    .primaryKey()
-    .references(() => organizations.id, { onDelete: 'cascade' }),
+export const odooSettings = pgTable('odoo_settings', {
+  id: uuid('id').primaryKey().defaultRandom(),
   /** The Odoo base checkout, read-only to the agent. */
   basePath: text('base_path'),
   /** The enterprise addons, read-only to the agent. */
@@ -372,7 +347,41 @@ export const organizationOdooSettings = pgTable('organization_odoo_settings', {
   ...timestamps,
 });
 
-export type OrganizationOdooSettingsRow = typeof organizationOdooSettings.$inferSelect;
+export type OdooSettingsRow = typeof odooSettings.$inferSelect;
+
+/**
+ * Per-version Odoo source repositories (centralized version catalog).
+ *
+ * Allows registering a full Odoo source tree per version (e.g. 17.0, 18.0)
+ * so that new installations can reference the actual Odoo codebase instead of
+ * generating boilerplate via AI. One row per version; the active row for a
+ * version is what the agent reads as reference source.
+ */
+export const odooVersionRepositories = pgTable(
+  'odoo_version_repositories',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** The Odoo version this repository serves, e.g. '17.0'. */
+    version: text('version').notNull(),
+    /** The Odoo base checkout for this version (holds odoo-bin, addons/). */
+    basePath: text('base_path').notNull(),
+    /** The enterprise addons for this version, when available. */
+    enterprisePath: text('enterprise_path'),
+    /** Whether this repository is available for new projects. */
+    isActive: boolean('is_active').notNull().default(true),
+    /** Optional description for operators. */
+    description: text('description'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    ...timestamps,
+  },
+  (table) => ({
+    versionUnique: uniqueIndex('odoo_version_repositories_version_unique').on(table.version),
+  }),
+);
+
+export type OdooVersionRepositoryRow = typeof odooVersionRepositories.$inferSelect;
 
 export const projectConnections = pgTable(
   'project_connections',
@@ -448,9 +457,6 @@ export const projectDocuments = pgTable(
   'project_documents',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
@@ -595,9 +601,6 @@ export const agentTasks = pgTable(
      * interface.
      */
     reference: text('reference').notNull(),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
@@ -675,10 +678,6 @@ export const agentTasks = pgTable(
   (table) => ({
     referenceUnique: uniqueIndex('agent_tasks_reference_unique').on(table.reference),
     byProject: index('agent_tasks_project_created_idx').on(table.projectId, table.createdAt),
-    byOrganizationStatus: index('agent_tasks_org_status_idx').on(
-      table.organizationId,
-      table.status,
-    ),
   }),
 );
 
@@ -746,9 +745,6 @@ export const approvals = pgTable(
   'approvals',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
     taskId: uuid('task_id')
       .notNull()
       .references(() => agentTasks.id, { onDelete: 'cascade' }),
@@ -767,7 +763,7 @@ export const approvals = pgTable(
   },
   (table) => ({
     byTask: index('approvals_task_idx').on(table.taskId),
-    byStatus: index('approvals_org_status_idx').on(table.organizationId, table.status),
+    byStatus: index('approvals_status_idx').on(table.status),
     // At most one pending approval per (task, action): the request path dedupes
     // with a read-modify-write, and this partial index makes the dedup a schema
     // fact so two parallel requests cannot both insert a pending row (ADR-029).
@@ -787,9 +783,6 @@ export const auditLogs = pgTable(
   'audit_logs',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id').references(() => organizations.id, {
-      onDelete: 'set null',
-    }),
     projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
     eventType: text('event_type').notNull(),
@@ -799,7 +792,7 @@ export const auditLogs = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    byOrganization: index('audit_logs_org_created_idx').on(table.organizationId, table.createdAt),
+    byCreated: index('audit_logs_created_idx').on(table.createdAt),
     byEventType: index('audit_logs_event_type_idx').on(table.eventType),
   }),
 );
@@ -809,27 +802,10 @@ export const auditLogs = pgTable(
 // ---------------------------------------------------------------------------
 
 export const usersRelations = relations(users, ({ many }) => ({
-  memberships: many(organizationMembers),
+  memberships: many(projectMembers),
 }));
 
-export const organizationsRelations = relations(organizations, ({ many }) => ({
-  members: many(organizationMembers),
-  projects: many(projects),
-}));
-
-export const organizationMembersRelations = relations(organizationMembers, ({ one }) => ({
-  organization: one(organizations, {
-    fields: [organizationMembers.organizationId],
-    references: [organizations.id],
-  }),
-  user: one(users, { fields: [organizationMembers.userId], references: [users.id] }),
-}));
-
-export const projectsRelations = relations(projects, ({ one, many }) => ({
-  organization: one(organizations, {
-    fields: [projects.organizationId],
-    references: [organizations.id],
-  }),
+export const projectsRelations = relations(projects, ({ many }) => ({
   connections: many(projectConnections),
   specifications: many(projectSpecifications),
   tasks: many(agentTasks),
@@ -874,8 +850,6 @@ export const approvalsRelations = relations(approvals, ({ one }) => ({
 
 export type UserRow = typeof users.$inferSelect;
 export type NewUserRow = typeof users.$inferInsert;
-export type OrganizationRow = typeof organizations.$inferSelect;
-export type OrganizationMemberRow = typeof organizationMembers.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;
 export type NewProjectRow = typeof projects.$inferInsert;
 export type ProjectConnectionRow = typeof projectConnections.$inferSelect;
@@ -908,9 +882,6 @@ export const agentWorkspaces = pgTable(
     taskId: uuid('task_id')
       .notNull()
       .references(() => agentTasks.id, { onDelete: 'cascade' }),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
@@ -953,9 +924,6 @@ export const projectMemory = pgTable(
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
     /** Detected from the repository, which may differ from the declared value. */
     detectedOdooVersion: text('detected_odoo_version'),
     pythonVersion: text('python_version'),
@@ -1007,9 +975,6 @@ export const agentModelCalls = pgTable(
     taskId: uuid('task_id')
       .notNull()
       .references(() => agentTasks.id, { onDelete: 'cascade' }),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
     /** `planning`, `implementation` or `chat`. */
     operation: text('operation').notNull(),
     providerId: text('provider_id').notNull(),
@@ -1032,10 +997,7 @@ export const agentModelCalls = pgTable(
   },
   (table) => ({
     byTask: index('agent_model_calls_task_idx').on(table.taskId),
-    byOrganization: index('agent_model_calls_org_created_idx').on(
-      table.organizationId,
-      table.createdAt,
-    ),
+    byCreated: index('agent_model_calls_created_idx').on(table.createdAt),
   }),
 );
 
@@ -1066,9 +1028,6 @@ export const projectEnvironments = pgTable(
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
     /** What a person calls it: "Production", "Staging", "Feature QA". */
     name: text('name').notNull(),
     /** The branch this environment is. */
