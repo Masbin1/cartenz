@@ -212,6 +212,17 @@ const environmentSchema = z.object({
     .default('/opt/cartenz/infrastructure/provisioning/setup-project-https.sh'),
 
   /**
+   * Absolute path to the project-pull script (ADR-049).
+   *
+   * Defaulted rather than required, and empty disables the feature: a deployment
+   * that has not installed the script's sudoers entry would otherwise offer a
+   * Deploy button whose every press is refused by the second gate.
+   */
+  PROJECT_PULL_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/pull-project.sh'),
+
+  /**
    * The email certbot registers a Let's Encrypt account under. Never a
    * secret — passed as a plain argument to certbot, and used only for expiry
    * notifications — but required (not defaulted) once PROJECT_HTTPS_ENABLED is
@@ -468,6 +479,12 @@ export interface AppConfig {
     readonly communityScript: string;
     readonly enterpriseScript: string;
     readonly grantScript: string;
+    /**
+     * The project-pull script (ADR-049), or null when the deployment has not
+     * configured one. Null disables the deploy/pull feature end to end: the
+     * guard refuses the invocation and the portal does not offer it.
+     */
+    readonly pullScript: string | null;
     readonly portRangeStart: number;
     readonly portRangeEnd: number;
     readonly baseDomain: string | null;
@@ -639,6 +656,12 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   if (!isAbsolute(env.PROJECT_PROVISION_GRANT_SCRIPT)) {
     throw new ConfigurationError(['PROJECT_PROVISION_GRANT_SCRIPT must be an absolute path.']);
   }
+  // ADR-049. Empty is meaningful and allowed: it disables the pull feature on a
+  // deployment that has not installed the script's sudoers entry, rather than
+  // offering a Deploy button that is refused by the second gate every time.
+  if (env.PROJECT_PULL_SCRIPT && !isAbsolute(env.PROJECT_PULL_SCRIPT)) {
+    throw new ConfigurationError(['PROJECT_PULL_SCRIPT must be an absolute path.']);
+  }
   if (!isAbsolute(env.PROJECT_PROVISION_PROJECTS_DIR)) {
     throw new ConfigurationError(['PROJECT_PROVISION_PROJECTS_DIR must be an absolute path.']);
   }
@@ -797,6 +820,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       communityScript: env.PROJECT_PROVISION_SCRIPT,
       enterpriseScript: env.PROJECT_PROVISION_SCRIPT_ENTERPRISE,
       grantScript: env.PROJECT_PROVISION_GRANT_SCRIPT,
+      pullScript: emptyToUndefined(env.PROJECT_PULL_SCRIPT) ?? null,
       portRangeStart: env.PROJECT_PORT_RANGE_START,
       portRangeEnd: env.PROJECT_PORT_RANGE_END,
       baseDomain: emptyToUndefined(env.PROJECT_BASE_DOMAIN) ?? null,

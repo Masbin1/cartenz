@@ -443,6 +443,39 @@ function InstancePanel({
         ? 'text-state-failure'
         : 'text-state-waiting';
 
+  /**
+   * Deploy: put the project's own branch onto the running instance (ADR-049).
+   *
+   * Shown only to an admin on a provisioned instance, which is the same gate the
+   * API applies — the button is not the guard, but offering it to someone the API
+   * will refuse is a dead end that reads like a bug.
+   */
+  const [deploying, setDeploying] = useState(false);
+  const [deployError, setDeployError] = useState<string | null>(null);
+  const [deployed, setDeployed] = useState<{ commit: string | null; branch: string | null } | null>(
+    null,
+  );
+
+  const deploy = useCallback(async () => {
+    setDeploying(true);
+    setDeployError(null);
+    setDeployed(null);
+    try {
+      const result = await api.projects.pull(projectId);
+      if (result.ok) {
+        setDeployed({ commit: result.commit, branch: result.branch });
+      } else {
+        // The API reports a refusal as a normal result, not a throw: what to say
+        // is the script's own message, which names the cause.
+        setDeployError(result.message);
+      }
+    } catch (caught) {
+      setDeployError(caught instanceof ApiError ? caught.message : 'The deploy could not be run.');
+    } finally {
+      setDeploying(false);
+    }
+  }, [projectId]);
+
   return (
     <section className="panel">
       <div className="panel-header">
@@ -481,6 +514,34 @@ function InstancePanel({
           <DetailRow label="Provisioned" value={relativeTime(provisioning.provisionedAt)} />
         ) : null}
       </dl>
+
+      {canReveal && provisioning.status === 'provisioned' ? (
+        <div className="space-y-2 border-t border-surface-border px-4 py-3">
+          <p className="panel-title">Repository</p>
+          <p className="text-2xs leading-relaxed text-content-subtle">
+            Run this project&apos;s branch onto the instance. The server resets to the tip of
+            the branch, so anything that is only on the server and not in the repository is
+            replaced.
+          </p>
+          <button
+            type="button"
+            onClick={() => void deploy()}
+            disabled={deploying}
+            className="btn-secondary text-2xs"
+          >
+            {deploying ? 'Deploying…' : 'Deploy latest'}
+          </button>
+          {deployed ? (
+            <p className="text-2xs leading-relaxed text-state-success">
+              Deployed {deployed.branch ?? 'the branch'}
+              {deployed.commit ? ` at ${deployed.commit.slice(0, 8)}` : ''}.
+            </p>
+          ) : null}
+          {deployError ? (
+            <p className="text-2xs leading-relaxed text-state-failure">{deployError}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       {provisioning.hasMasterPassword ? (
         <div className="border-t border-surface-border px-4 py-3">

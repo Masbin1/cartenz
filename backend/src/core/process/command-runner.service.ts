@@ -177,6 +177,8 @@ export class CommandRunner {
   private readonly provisioningGrantScript: string;
   /** The HTTPS-issuance script sudo may be asked to run (ADR-040). */
   private readonly httpsScript: string;
+  /** The project-pull script sudo may be asked to run (ADR-049). */
+  private readonly pullScript: string;
   /** Settings that enable a guarded subcommand, by setting name. */
   private readonly enabled: Readonly<Record<string, boolean>>;
 
@@ -204,6 +206,12 @@ export class CommandRunner {
       : [];
     this.provisioningGrantScript = config.provisioning?.grantScript ?? '';
     this.httpsScript = config.https?.enabled ? (config.https.script ?? '') : '';
+    // ADR-049. Unlike HTTPS this is not gated on a second boolean: an empty
+    // PROJECT_PULL_SCRIPT is the off switch, and it has to hold even when
+    // PROJECT_PROVISIONING_ENABLED is true, which is the normal case.
+    this.pullScript = config.provisioning?.enabled
+      ? (config.provisioning.pullScript ?? '')
+      : '';
 
     if (config.validation.enabled) {
       this.logger.warn(
@@ -295,6 +303,7 @@ export class CommandRunner {
         this.provisioningScripts,
         this.provisioningGrantScript,
         this.httpsScript || null,
+        this.pullScript || null,
       );
     }
 
@@ -503,6 +512,26 @@ const HTTPS_DOMAIN = /^[a-z0-9.-]+$/;
 const HTTPS_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
+ * A repository URL the project-pull script will accept (ADR-049).
+ *
+ * Mirrors the check inside `infrastructure/provisioning/pull-project.sh`, and
+ * accepts exactly two shapes: `https://…` and scp-style `user@host:path`. A
+ * `file://` remote is absent deliberately — ADR-026 keeps that behind its own
+ * setting, off by default, because it would let a caller read any repository on
+ * the platform host.
+ */
+const PULL_REPOSITORY_URL =
+  /^(https:\/\/[A-Za-z0-9._~%:@/+-]+|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[A-Za-z0-9._/-]+)$/;
+
+/**
+ * A branch name the project-pull script will accept.
+ *
+ * Must not begin with a hyphen: git would read it as an option rather than a
+ * ref (`--upload-pack=…` is the classic).
+ */
+const PULL_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+
+/**
  * Refuses a sudo invocation that is not exactly a provisioning run (ADR-039)
  * or an HTTPS-issuance run (ADR-040).
  *
@@ -540,6 +569,7 @@ export function assertProvisioningInvocation(
   createScripts: readonly string[],
   grantScript: string | null = null,
   httpsScript: string | null = null,
+  pullScript: string | null = null,
 ): void {
   if (args[0] !== '-n') {
     throw new CommandArgumentError(
@@ -557,12 +587,14 @@ export function assertProvisioningInvocation(
   const isCreate = createScripts.includes(script);
   const isGrant = grantScript !== null && script === grantScript;
   const isHttps = httpsScript !== null && script === httpsScript;
+  const isPull = pullScript !== null && script === pullScript;
 
-  if (!isCreate && !isGrant && !isHttps) {
+  if (!isCreate && !isGrant && !isHttps && !isPull) {
     const configured = [
       ...createScripts,
       ...(grantScript ? [grantScript] : []),
       ...(httpsScript ? [httpsScript] : []),
+      ...(pullScript ? [pullScript] : []),
     ];
     throw new CommandArgumentError(
       `"${script}" is not a configured provisioning script. Configured: ` +
@@ -605,6 +637,31 @@ export function assertProvisioningInvocation(
       throw new CommandArgumentError(
         `The HTTPS-issuance script takes exactly "-n <script> <project-name> <domain> ` +
           `<email>"; got ${args.length} arguments.`,
+      );
+    }
+    return;
+  }
+
+  if (isPull) {
+    const repositoryUrl = args[3];
+    const branch = args[4];
+
+    if (!repositoryUrl || !PULL_REPOSITORY_URL.test(repositoryUrl)) {
+      throw new CommandArgumentError(
+        'sudo project pull requires a repository URL as the third argument: https://… or ' +
+          `scp-style git@host:owner/repo.git; got "${String(repositoryUrl)}".`,
+      );
+    }
+    if (!branch || !PULL_BRANCH.test(branch)) {
+      throw new CommandArgumentError(
+        'sudo project pull requires a branch name as the fourth argument: it may not begin ' +
+          `with a hyphen; got "${String(branch)}".`,
+      );
+    }
+    if (args.length !== 5) {
+      throw new CommandArgumentError(
+        `The project-pull script takes exactly "-n <script> <project-name> <repository-url> ` +
+          `<branch>"; got ${args.length} arguments.`,
       );
     }
     return;

@@ -428,6 +428,20 @@ export const api = {
     remoteBranches: (projectId: string) =>
       request<{ branches: string[] }>(`/projects/${projectId}/remote-branches`),
 
+    /**
+     * Brings the project's provisioned instance up to date with its repository
+     * (ADR-049): the platform runs the project's own branch onto the server,
+     * the way odoo.sh deploys a build.
+     */
+    pull: (projectId: string) =>
+      request<{
+        ok: boolean;
+        commit: string | null;
+        branch: string | null;
+        message: string;
+        durationMs: number;
+      }>(`/projects/${projectId}/pull`, { method: 'POST' }),
+
     update: (projectId: string, body: Record<string, unknown>) =>
       request<ProjectDetail>(`/projects/${projectId}`, { method: 'PATCH', body }),
 

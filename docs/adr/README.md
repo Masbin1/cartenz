@@ -48,3 +48,4 @@ with the condition under which it is retired.
 | [ADR-046](ADR-046-tasks-work-on-the-chosen-branch.md) | A task works on the branch a person chose, not a branch of its own | Accepted |
 | [ADR-047](ADR-047-workspace-history-lists-conversations.md) | The workspace history lists conversations, not requests | Accepted |
 | [ADR-048](ADR-048-single-staged-installer.md) | One staged installer for the whole estate, replacing three overlapping scripts | Accepted |
+| [ADR-049](ADR-049-on-premise-instance-pulls-its-repository.md) | An instance pulls its own repository (the odoo.sh half ADR-041 left out) | Accepted |

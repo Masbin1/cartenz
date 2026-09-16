@@ -43,6 +43,14 @@ export const AUDIT_EVENTS = {
    * real and usable either way, but a person who expected a remote has to know.
    */
   PROJECT_GITHUB_REPOSITORY_FAILED: 'project.github_repository_failed',
+  /** A provisioned instance was brought up to date with its own repository (ADR-049). */
+  PROJECT_PULLED: 'project.pulled',
+  /**
+   * ...and it could not be. Recorded separately from the success because the
+   * instance is left at whatever commit it already had: a person who pressed
+   * Deploy is entitled to know that what is running is not what is on the branch.
+   */
+  PROJECT_PULL_FAILED: 'project.pull_failed',
 
   /** A person was given, or had withdrawn, access to a single project (ADR-043). */
   PROJECT_ACCESS_GRANTED: 'project.access_granted',

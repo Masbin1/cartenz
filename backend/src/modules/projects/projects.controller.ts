@@ -232,4 +232,21 @@ export class ProjectsController {
   ) {
     return this.projects.deleteConnection(user, projectId, connectionId);
   }
+
+  /**
+   * Brings a provisioned instance up to date with its own repository (ADR-049).
+   *
+   * POST rather than PATCH: this is not an edit to the project row, it is an
+   * action against the host — the same shape as the routes that provision and
+   * issue certificates. The response carries the resulting commit, so a caller
+   * can tell what the instance is now serving.
+   */
+  @Post(':projectId/pull')
+  @HttpCode(HttpStatus.OK)
+  pull(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ) {
+    return this.projects.pull(user, projectId);
+  }
 }
