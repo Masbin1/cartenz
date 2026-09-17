@@ -325,12 +325,6 @@ export class ListProjectsQueryDto {
 }
 
 /**
- * Query for the on-premise location list, read while the project form is being
- * filled in. Admin-only: the listing reveals host paths.
- */
-export class OnPremiseLocationsQueryDto {}
-
-/**
  * Confirmation for a permanent delete (ADR-024).
  *
  * The project's own name, typed back. A boolean would be as easy to send by

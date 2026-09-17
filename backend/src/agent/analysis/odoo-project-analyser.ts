@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { readFile } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
+import { dirname, relative } from 'node:path';
 import { toPosixPath } from '../../core/path-utils';
 import { odooSeriesFromVersion, parseOdooManifest, type OdooManifest } from './manifest-parser';
 import { SOURCE_EXTENSIONS, walkRepository } from './repository-walker';
@@ -252,9 +252,4 @@ export class OdooProjectAnalyser {
 
     return notes;
   }
-}
-
-/** Absolute path of a module's manifest, for the tools that read one. */
-export function manifestPathFor(repositoryPath: string, modulePath: string): string {
-  return join(repositoryPath, modulePath, '__manifest__.py');
 }

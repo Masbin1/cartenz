@@ -116,8 +116,6 @@ export interface ModelProvider {
   runToolLoop(request: ToolLoopRequest): Promise<ModelResult<ToolLoopOutcome>>;
 }
 
-export const MODEL_PROVIDER = 'MODEL_PROVIDER';
-
 /** Raised when a provider fails in a way the agent should report, not retry. */
 export class ModelProviderError extends Error {
   constructor(

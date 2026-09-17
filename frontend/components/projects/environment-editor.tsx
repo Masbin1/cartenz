@@ -1,6 +1,6 @@
 'use client';
 
-import type { EnvironmentKind, ProjectEnvironment } from '@/lib/types';
+import type { EnvironmentKind } from '@/lib/types';
 
 export interface EnvironmentDraft {
   name: string;
@@ -175,28 +175,6 @@ export function EnvironmentEditor({ value, onChange, disabled = false, branches 
         </p>
       ) : null}
     </div>
-  );
-}
-
-/** Read-only summary of the environments a project already has. */
-export function EnvironmentList({ environments }: { environments: ProjectEnvironment[] }) {
-  if (environments.length === 0) {
-    return <p className="text-2xs text-content-subtle">No environments declared.</p>;
-  }
-
-  return (
-    <ul className="space-y-1.5">
-      {environments.map((environment) => (
-        <li key={environment.id} className="flex items-center gap-2 text-xs">
-          <span className="font-medium">{environment.name}</span>
-          <span className="font-mono text-2xs text-content-subtle">{environment.branch}</span>
-          <EnvironmentKindBadge kind={environment.kind} />
-          {environment.isDefaultTarget ? (
-            <span className="text-2xs text-content-subtle">default target</span>
-          ) : null}
-        </li>
-      ))}
-    </ul>
   );
 }
 
