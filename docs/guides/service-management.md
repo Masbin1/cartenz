@@ -192,7 +192,21 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<domain>/api/v1/auth/lo
   -d '{"email":"cek@example.com","password":"salah-sekali-panjang"}'
 ```
 
-Rebuild as `cartenz`, never as root:
+Rebuild as `cartenz`, never as root — and prefer the script, which exists so this
+cannot be got wrong by hand:
+
+```bash
+/opt/cartenz/infrastructure/scripts/build-portal.sh          # build + verify
+/opt/cartenz/infrastructure/scripts/build-portal.sh --verify-only   # check what is on disk
+```
+
+It exports exactly the two `NEXT_PUBLIC_*` values (read from `.env` as values, never
+sourced), moves a root-owned `.next` aside, runs the build, and then **reads the emitted
+bundle back** and fails if `localhost:4000` is in it or the configured URL is not. A build
+that exits 0 proves nothing about what it emitted, which is why the check is part of the
+build rather than a thing someone remembers afterwards. It also refuses to run as root.
+
+By hand, the same thing:
 
 ```bash
 cd /opt/cartenz/frontend
