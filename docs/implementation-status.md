@@ -3,9 +3,9 @@
 | Field | Value |
 | --- | --- |
 | Document owner | Lead Software Architect |
-| Last updated | 14 September 2026 |
+| Last updated | 17 September 2026 |
 | Milestone delivered | Phase 5 — Odoo-aware development (Phases 1–4 complete) |
-| Governing documents | `docs/reference/` (Technical Architecture v1.7, Framework and Technology Selection v1.0) |
+| Governing documents | `docs/reference/` (Technical Architecture v1.8, Framework and Technology Selection v1.0) |
 
 This document records the state of the implementation against the approved architecture. It is
 updated at the end of every milestone. It is a working engineering record, not a client deliverable.
@@ -16,7 +16,7 @@ updated at the end of every milestone. It is a working engineering record, not a
 
 The primary source of truth is the pair of approved documents held in `docs/reference/`:
 
-1. `LinkedERP_AIDevAgent_TechArchitecture_v1.7_2026-09-16_1.docx`
+1. `LinkedERP_AIDevAgent_TechArchitecture_v1.8_2026-09-17_1.docx`
 2. `LinkedERP_AIDevAgent_FrameworkSelection_v1.0_2026-08-27_1.docx`
 
 The Framework and Technology Selection record (ADR-01 to ADR-10) supersedes any earlier indicative
@@ -205,6 +205,8 @@ has been reviewed.
 | Centralised Odoo version catalog and template databases | Complete (ADR-045) |
 | A task works on the branch it was given | Complete (ADR-046) |
 | Session listing and threaded task history | Complete (ADR-047) |
+| Repo-backed connected projects (`on_premise` with a repository clones) | Complete (ADR-050) |
+| Standard-database catalog, region/edition/version aware | Infrastructure complete (ADR-051); artifacts pending the operator's upload |
 
 ### 3.3 Frontend (Next.js)
 
@@ -305,6 +307,10 @@ implementation decisions taken by the engineering team.
 | ADR-045 | Centralised Odoo version repositories and full-installation template databases |
 | ADR-046 | A task works on the branch a person chose, not a branch of its own |
 | ADR-047 | The workspace history lists conversations, not requests |
+| ADR-048 | One staged installer for the whole estate, replacing three overlapping scripts |
+| ADR-049 | An instance pulls its own repository (the odoo.sh half ADR-041 left out) |
+| ADR-050 | Repo-backed connected projects, and the remote deploy target |
+| ADR-051 | A standard-database catalog for AI-safe instances |
 
 ---
 
@@ -844,3 +850,29 @@ linked hosted server, and an administration dashboard with notifications. None o
 blocked by a decision recorded here — each is an operational build the architecture does not yet
 have an ADR for. `docs/reference/` chapter 18 (Client Estate Architecture) states this explicitly,
 capability by capability.
+
+---
+
+## Operator request register (17 September 2026)
+
+The operator's list, checked against the code and recorded here so the state of each item is in
+one place. The full architecture and the next step for each item are in
+`docs/architecture/client-estate-and-server-architecture.md` §6.
+
+| # | Requested capability | Status | Next step |
+| --- | --- | --- | --- |
+| 1 | Centralised Odoo version repository; full code per version; no AI tokens per creation | **Done** (ADR-045) | Build templates on the host; update the operator's `create_project` scripts |
+| 2 | Server and development architecture per client (GitHub + hosting server) | **Documented; mostly built** | Independent backup/restore; monitoring/dashboard |
+| 3 | Linked on-premise server: security updates, monitoring, server admin | **Not done** | Adopt the runbook in the architecture doc §4.4 |
+| 4 | Backup triggered before a push to staging/main | **Not done** | Build the per-client backup first, then hook the push path |
+| 5 | Fix code changes in Chat / Change code | **`change` works; a `chat` write is diffed but never committed or pushed** | Decide (ADR): let an approved chat write land, or add "turn into a change task" |
+| 6 | Data exposed to outside LLM (data-breach concern) | **Boundary implemented** (ADR-020); source code and image bytes are deliberate exceptions | Document a data-processing posture; add a per-project local-only provider flag |
+| 7 | Paste image/photo/file in the chat | **Images done** (ADR-042); documents are upload-only | Accept non-image clipboard files through the same upload endpoint |
+| 8 | UI preview before approving/deploying to Odoo | **Not done** | Decide (ADR): static render, ephemeral preview instance, or deploy-to-staging preview |
+| 9 | **Access Right set on the portal** | **Done and verified** (ADR-043, ADR-044) — grants, requests, approve/reject, region scoping, admin flag, 403 on open, redacted locked list, 24-check smoke test | No further work for the stated scope; notifications remain the shared gap with item 3 |
+
+Item 9 was the one to confirm: it is complete. `infrastructure/scripts/smoke-test-access.sh`
+exercises the whole flow and passes on the development host. Two things remain deliberately
+unbuilt rather than unfinished: notifications for the request queue (the same dashboard gap as
+item 3) and per-project roles (a grant carries access only; depth stays with `users.is_admin`
+and the project's `agentPermissions`).

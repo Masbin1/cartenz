@@ -134,6 +134,25 @@ Menu: **Projects → New**. Choose the **On-premise** type, then:
   automatically. If you declare your own environments, they are honoured and a
   branch is created for each.
 
+**Folder or repository (ADR-050).** A connected project needs one or the other,
+and which one decides how the agent works:
+
+- **Folder only** — Cartenz is installed beside the customer's Odoo and operates
+  **in place** on that directory (ADR-026).
+- **Repository (with or without a folder)** — the customer's Odoo may be on
+  another server, so the platform changes the code in an isolated clone of the
+  chosen branch and pushes it. The customer's own host pulls the branch; the
+  platform does not deploy to it. This is the odoo.sh shape.
+- **Neither** is refused.
+
+**Standard database (ADR-051).** When a versioned project is provisioned, the
+database is cloned from the standard database matching its **version, edition and
+region** — an Odoo 19 Enterprise Indonesia project clones
+`cartenz_tpl_19_0_ent_indonesia`. If that region template does not exist, the
+scripts fall back to the source-built full-installation template of ADR-045. To
+use region standard databases, put the archives in the repository's `database/`
+folder and run `build-standard-template.sh` (see `database/README.md`).
+
 #### Deploying: running the repository onto the instance
 
 The project page's **Instance** panel carries **Deploy latest** (ADR-049). It runs

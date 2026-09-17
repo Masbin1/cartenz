@@ -6,7 +6,7 @@ import { DatabaseService } from '../../core/database/database.service';
 import { projects } from '../../core/database/schema';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
-import type { OdooEdition } from '../../core/enums';
+import type { OdooEdition, UserRegion } from '../../core/enums';
 
 /**
  * Turns a scaffolded "Create with AI" / on-premise project directory into a
@@ -49,6 +49,12 @@ export interface ProvisionProjectInput {
    * the scripts install base only, as before.
    */
   readonly odooVersion: string | null;
+  /**
+   * The project's region (ADR-051). Sent after the version so the scripts select
+   * the standard database for that version, edition and region. Only sent when a
+   * version is present, because the region is part of how the template is chosen.
+   */
+  readonly region: UserRegion;
 }
 
 export interface ProvisionProjectResult {
@@ -142,7 +148,13 @@ export class ProjectProvisioningService {
 
     try {
       const args = ['-n', script, input.technicalName, String(port)];
-      if (input.odooVersion) args.push(input.odooVersion);
+      if (input.odooVersion) {
+        args.push(input.odooVersion);
+        // Region after the version (ADR-051): the scripts select the standard
+        // database for the version, edition and region. Omitting it (no version)
+        // keeps the pre-ADR-051 shape.
+        args.push(input.region);
+      }
       const result = await this.commands.run('sudo', args, {
         cwd: '/',
         // The scripts install a database (`-i base`, or duplicate a template for

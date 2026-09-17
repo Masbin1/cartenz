@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { APP_CONFIG } from '../config/config.module';
 import type { AppConfig } from '../config/configuration';
+import { USER_REGIONS } from '../enums';
 
 /**
  * The only place in the platform that starts a child process (ADR-019).
@@ -539,9 +540,11 @@ const PULL_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
  * run anything its sudoers rule permits, as root. The grant is narrowed here to
  * three fixed shapes - mirroring assertOdooInvocation above - and nothing else:
  *
- *   `sudo -n <create-script> <project-name> <port> [<version>]` — the
+ *   `sudo -n <create-script> <project-name> <port> [<version>] [<region>]` — the
  *   operator's create_project / create_project_enterprise scripts. The optional
- *   version (ADR-045) selects the template database for that Odoo series.
+ *   version (ADR-045) selects the template database for that Odoo series, and
+ *   the optional region (ADR-051) selects the standard database for that
+ *   version, edition and region.
  *
  *   `sudo -n <grant-script> <project-name>` — the addons-ownership fix-up
  *   script, which takes no port because it touches only a directory the
@@ -678,7 +681,15 @@ export function assertProvisioningInvocation(
   // ADR-045: an optional fourth argument names the Odoo series, so the script
   // can select the template database for that version. Absent means "install
   // base only", exactly what the scripts did before this existed.
-  if (args.length === 5) {
+  //
+  // ADR-051: an optional fifth argument names the region, so the script selects
+  // the standard database for that version, edition and region. It only appears
+  // with a version, because it is part of how the template is chosen.
+  if (args.length === 4) {
+    return;
+  }
+
+  if (args.length === 5 || args.length === 6) {
     const version = args[4];
     if (!version || !/^\d+\.\d+$/.test(version)) {
       throw new CommandArgumentError(
@@ -686,10 +697,24 @@ export function assertProvisioningInvocation(
           `like "19.0"; got "${String(version)}".`,
       );
     }
-  } else if (args.length !== 4) {
-    throw new CommandArgumentError(
-      `sudo provisioning takes exactly "-n <script> <project-name> <port> [<version>]"; got ` +
-        `${args.length} arguments.`,
-    );
+
+    if (args.length === 6) {
+      const region = args[5];
+      // Accept the hyphenated form the file names use as well as the underscored
+      // form the enum uses; the scripts normalise to one.
+      const normalised = (region ?? '').replace(/-/g, '_');
+      if (!region || !(USER_REGIONS as readonly string[]).includes(normalised)) {
+        throw new CommandArgumentError(
+          `sudo provisioning accepts an optional region as the fifth argument, one of ` +
+            `${USER_REGIONS.join(', ')}; got "${String(region)}".`,
+        );
+      }
+    }
+    return;
   }
+
+  throw new CommandArgumentError(
+    `sudo provisioning takes exactly "-n <script> <project-name> <port> [<version>] ` +
+      `[<region>]"; got ${args.length} arguments.`,
+  );
 }

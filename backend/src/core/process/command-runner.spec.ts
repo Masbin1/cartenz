@@ -480,10 +480,34 @@ describe('assertProvisioningInvocation', () => {
     }
   });
 
-  it('refuses a sixth argument even when the fifth is a valid version', () => {
+  it('permits a version-and-region call selecting the standard database (ADR-051)', () => {
+    for (const region of ['indonesia', 'south-africa', 'south_africa', 'india']) {
+      expect(() =>
+        assertProvisioningInvocation(
+          ['-n', createScripts[0], 'dodolbintangmas', '7001', '19.0', region],
+          createScripts,
+          grantScript,
+        ),
+      ).not.toThrow();
+    }
+  });
+
+  it('refuses a region that is not one of the three (ADR-051)', () => {
+    for (const bad of ['extra', 'europe', 'ID', 'south africa', '']) {
+      expect(() =>
+        assertProvisioningInvocation(
+          ['-n', createScripts[0], 'name', '7001', '19.0', bad],
+          createScripts,
+          grantScript,
+        ),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a seventh argument even when version and region are valid', () => {
     expect(() =>
       assertProvisioningInvocation(
-        ['-n', createScripts[0], 'name', '7001', '19.0', 'extra'],
+        ['-n', createScripts[0], 'name', '7001', '19.0', 'indonesia', 'extra'],
         createScripts,
         grantScript,
       ),

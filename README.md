@@ -7,7 +7,7 @@ validates it, commits and pushes.
 
 The governing architecture is held in `docs/reference/`:
 
-1. `LinkedERP_AIDevAgent_TechArchitecture_v1.7_2026-09-16_1.docx`
+1. `LinkedERP_AIDevAgent_TechArchitecture_v1.8_2026-09-17_1.docx`
 2. `LinkedERP_AIDevAgent_FrameworkSelection_v1.0_2026-08-27_1.docx`
 
 Those documents are authoritative. Implementation decisions that deviate from
@@ -410,6 +410,7 @@ Each is recorded in an ADR where it is a deviation from the approved architectur
 | Question | Document |
 | --- | --- |
 | What is built, and what was found while building it | `docs/implementation-status.md` |
+| Where a client's estate lives (servers, GitHub, databases, access, backup) | `docs/architecture/client-estate-and-server-architecture.md` |
 | What was run, and what it printed | `docs/verification-log.md` |
 | Why a decision was taken | `docs/adr/` |
 | How to create and run a project | `docs/guides/creating-and-running-projects.md` |

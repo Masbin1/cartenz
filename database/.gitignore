@@ -1,0 +1,11 @@
+# The standard database archives ARE tracked in git (decision: commit via git).
+# Each is Odoo's own backup format — a dump.sql plus a filestore — zipped.
+# Do not ignore *.zip here.
+#
+# Extracted or raw dumps are not tracked: they are large, temporary, and the zip
+# is the artifact of record.
+*.sql
+*.sql.gz
+*.dump
+!linkederp-standard-*.zip
+extracted/

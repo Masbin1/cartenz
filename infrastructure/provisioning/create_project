@@ -9,7 +9,7 @@ set -Eeuo pipefail
 # It implements the contract the platform depends on (ADR-039/040):
 #
 #   - runs as root via the narrow sudoers rule (99-linkederp-provisioning)
-#   - args: <project-name> <http-port> [<odo version>]
+#   - args: <project-name> <http-port> [<odo version>] [<region>]
 #   - creates /opt/odoo/projects/<name>/{addons,config,data,logs}, all
 #     chown'd odoo:odoo mode 750 (addons/ is later made group-writable by
 #     grant-addons-write.sh)
@@ -26,10 +26,10 @@ set -Eeuo pipefail
 # assertProvisioningInvocation and parseMasterPassword rely on it.
 #
 # Usage:
-#   create_project <project-name> <http-port> [<odo version>]
+#   create_project <project-name> <http-port> [<odo version>] [<region>]
 #
 # Example:
-#   create_project dodolbintangmas 7001 19.0
+#   create_project dodolbintangmas 7001 19.0 indonesia
 #
 # The gevent/websocket worker is <http-port> + 1, which is how the platform
 # allocates ports (ProjectProvisioningService.allocatePort).
@@ -50,7 +50,7 @@ DB_PORT="5432"
 usage() {
     echo
     echo "Usage:"
-    echo "  create_project <project-name> <http-port> [<odo version>]"
+    echo "  create_project <project-name> <http-port> [<odo version>] [<region>]"
     echo
     exit 1
 }
@@ -60,13 +60,14 @@ if [[ "$EUID" -ne 0 ]]; then
     exit 1
 fi
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
+if [[ $# -lt 2 || $# -gt 4 ]]; then
     usage
 fi
 
 PROJECT_NAME="$1"
 HTTP_PORT="$2"
 VERSION="${3:-}"
+REGION="${4:-}"
 
 if [[ ! "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]{1,30}$ ]]; then
     echo "ERROR: Invalid project name." >&2
@@ -81,6 +82,19 @@ fi
 if [[ -n "$VERSION" && ! "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
     echo "ERROR: Invalid Odoo version '${VERSION}'." >&2
     exit 1
+fi
+
+# Region (ADR-051): selects the standard database for that region. It requires a
+# version, because it is part of how the template is chosen.
+if [[ -n "$REGION" ]]; then
+    if [[ -z "$VERSION" ]]; then
+        echo "ERROR: a region requires an Odoo version, because the region selects a template." >&2
+        exit 1
+    fi
+    if [[ ! "$REGION" =~ ^(indonesia|south-africa|south_africa|india)$ ]]; then
+        echo "ERROR: Invalid region '${REGION}'. Expected indonesia, south-africa or india." >&2
+        exit 1
+    fi
 fi
 
 GEVENT_PORT=$((HTTP_PORT + 1))
@@ -102,7 +116,7 @@ mkdir -p "${PROJECT_DIR}"/{addons,config,data,logs}
 # enterprise set.
 if [[ -n "$VERSION" ]]; then
     URL="https://${PROJECT_NAME}.${BASE_DOMAIN}"
-    "${SCRIPTS_DIR}/create-project-db.sh" "$PROJECT_NAME" community "$VERSION" "$URL"
+    "${SCRIPTS_DIR}/create-project-db.sh" "$PROJECT_NAME" community "$VERSION" "$URL" "$REGION"
 else
     # Pre-ADR-045 behaviour: empty database, base only. Keep for deployments
     # that have not built templates yet.

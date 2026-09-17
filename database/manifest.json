@@ -1,0 +1,105 @@
+{
+  "$comment": "Catalogue of LinkedERP standard Odoo databases. These are LinkedERP's own baselines, never client data. One artifact per edition + region + Odoo series; a project resolves to exactly one, by (odooVersion, edition, region). This manifest is the authoritative resolver input; the file name is only a convention. The .zip files are tracked in git (decision: commit via git). The first six unversioned names are superseded by the -v<major> names below.",
+  "naming": "linkederp-standard-<edition>-<region>-v<major>.zip",
+  "editions": ["enterprise", "ce"],
+  "regions": ["indonesia", "south-africa", "india"],
+  "versions": ["18.0", "19.0"],
+  "artifacts": [
+    {
+      "file": "linkederp-standard-enterprise-south-africa-v18.zip",
+      "edition": "enterprise",
+      "region": "south_africa",
+      "odooVersion": "18.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-enterprise-south-africa-v19.zip",
+      "edition": "enterprise",
+      "region": "south_africa",
+      "odooVersion": "19.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-enterprise-india-v18.zip",
+      "edition": "enterprise",
+      "region": "india",
+      "odooVersion": "18.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-enterprise-india-v19.zip",
+      "edition": "enterprise",
+      "region": "india",
+      "odooVersion": "19.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-enterprise-indonesia-v18.zip",
+      "edition": "enterprise",
+      "region": "indonesia",
+      "odooVersion": "18.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-enterprise-indonesia-v19.zip",
+      "edition": "enterprise",
+      "region": "indonesia",
+      "odooVersion": "19.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-ce-south-africa-v18.zip",
+      "edition": "ce",
+      "region": "south_africa",
+      "odooVersion": "18.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-ce-south-africa-v19.zip",
+      "edition": "ce",
+      "region": "south_africa",
+      "odooVersion": "19.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-ce-india-v18.zip",
+      "edition": "ce",
+      "region": "india",
+      "odooVersion": "18.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-ce-india-v19.zip",
+      "edition": "ce",
+      "region": "india",
+      "odooVersion": "19.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-ce-indonesia-v18.zip",
+      "edition": "ce",
+      "region": "indonesia",
+      "odooVersion": "18.0",
+      "sha256": null,
+      "status": "expected"
+    },
+    {
+      "file": "linkederp-standard-ce-indonesia-v19.zip",
+      "edition": "ce",
+      "region": "indonesia",
+      "odooVersion": "19.0",
+      "sha256": null,
+      "status": "expected"
+    }
+  ]
+}

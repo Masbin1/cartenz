@@ -598,6 +598,7 @@ export class ProjectsService {
           projectName: dto.name,
           odooVersion: dto.odooVersion,
           odooEdition,
+          region: dto.region,
           defaultBranch: 'main',
           environmentBranches: scaffoldEnvironments.map((environment) => environment.branch),
         })
@@ -1618,6 +1619,8 @@ export class ProjectsService {
     projectName: string;
     odooVersion: string | null;
     odooEdition: OdooEdition;
+    /** Selects the standard database for the version, edition and region (ADR-051). */
+    region: UserRegion;
     defaultBranch: string;
     environmentBranches?: readonly string[];
   }): Promise<{
@@ -1648,6 +1651,7 @@ export class ProjectsService {
       technicalName: directoryName,
       odooEdition: input.odooEdition,
       odooVersion: input.odooVersion,
+      region: input.region,
     });
 
     if (!result.provisioned) {

@@ -49,3 +49,5 @@ with the condition under which it is retired.
 | [ADR-047](ADR-047-workspace-history-lists-conversations.md) | The workspace history lists conversations, not requests | Accepted |
 | [ADR-048](ADR-048-single-staged-installer.md) | One staged installer for the whole estate, replacing three overlapping scripts | Accepted |
 | [ADR-049](ADR-049-on-premise-instance-pulls-its-repository.md) | An instance pulls its own repository (the odoo.sh half ADR-041 left out) | Accepted |
+| [ADR-050](ADR-050-repo-backed-connected-projects.md) | Repo-backed connected projects, and the remote deploy target | Accepted |
+| [ADR-051](ADR-051-standard-database-catalog.md) | A standard-database catalog for AI-safe instances | Accepted |
