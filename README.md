@@ -7,7 +7,7 @@ validates it, commits and pushes.
 
 The governing architecture is held in `docs/reference/`:
 
-1. `LinkedERP_AIDevAgent_TechArchitecture_v1.8_2026-09-17_1.docx`
+1. `LinkedERP_AIDevAgent_TechArchitecture_v1.9_2026-09-17_1.docx`
 2. `LinkedERP_AIDevAgent_FrameworkSelection_v1.0_2026-08-27_1.docx`
 
 Those documents are authoritative. Implementation decisions that deviate from

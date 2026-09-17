@@ -5,7 +5,7 @@
 | Document owner | Lead Software Architect |
 | Last updated | 17 September 2026 |
 | Milestone delivered | Phase 5 — Odoo-aware development (Phases 1–4 complete) |
-| Governing documents | `docs/reference/` (Technical Architecture v1.8, Framework and Technology Selection v1.0) |
+| Governing documents | `docs/reference/` (Technical Architecture v1.9, Framework and Technology Selection v1.0) |
 
 This document records the state of the implementation against the approved architecture. It is
 updated at the end of every milestone. It is a working engineering record, not a client deliverable.
@@ -16,7 +16,7 @@ updated at the end of every milestone. It is a working engineering record, not a
 
 The primary source of truth is the pair of approved documents held in `docs/reference/`:
 
-1. `LinkedERP_AIDevAgent_TechArchitecture_v1.8_2026-09-17_1.docx`
+1. `LinkedERP_AIDevAgent_TechArchitecture_v1.9_2026-09-17_1.docx`
 2. `LinkedERP_AIDevAgent_FrameworkSelection_v1.0_2026-08-27_1.docx`
 
 The Framework and Technology Selection record (ADR-01 to ADR-10) supersedes any earlier indicative
