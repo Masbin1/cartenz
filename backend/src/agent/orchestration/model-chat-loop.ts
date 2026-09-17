@@ -27,7 +27,12 @@ export interface ChatLoopToolCall {
  */
 export type ChatLoopToolRunner = (
   call: ChatLoopToolCall,
-) => Promise<{ status: LoopToolResult; output: Record<string, unknown> }>;
+) => Promise<{
+  status: LoopToolResult;
+  output: Record<string, unknown>;
+  /** Why a refused call was refused. See the implementation loop's runner. */
+  denialReason?: string;
+}>;
 
 /** Mirrors the implementation loop's tool status vocabulary. */
 export type LoopToolResult = 'succeeded' | 'failed' | 'denied' | 'approval_required';
@@ -156,7 +161,9 @@ export class ChatLoop {
         return {
           result: {
             status: 'denied',
-            message: 'The platform refused this call. Do not retry it or work around it.',
+            message: outcome.denialReason
+              ? `The platform refused this call: ${outcome.denialReason}`
+              : 'The platform refused this call. Do not retry it or work around it.',
             detail: outcome.output,
           },
         };

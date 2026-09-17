@@ -542,7 +542,11 @@ export class AgentWorkflow {
           if (result.status === 'succeeded' && CHANGING_ODOO_TOOLS.includes(call.name)) {
             applied.push(describeOdooChange(call.name, result.output));
           }
-          return { status: toLoopResult(result.status), output: result.output };
+          return {
+            status: toLoopResult(result.status),
+            output: result.output,
+            denialReason: result.denialReason,
+          };
         },
       });
     } catch (error) {
@@ -787,7 +791,11 @@ export class AgentWorkflow {
         odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
         run: async (call) => {
           const outcome = await this.callTool(snapshot, workspace, call.name, call.input);
-          return { status: toLoopResult(outcome.status), output: outcome.output };
+          return {
+            status: toLoopResult(outcome.status),
+            output: outcome.output,
+            denialReason: outcome.denialReason,
+          };
         },
       });
     } catch (error) {
@@ -899,7 +907,11 @@ export class AgentWorkflow {
         odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
         run: async (call) => {
           const result = await this.callTool(snapshot, workspace, call.name, call.input);
-          return { status: toLoopResult(result.status), output: result.output };
+          return {
+            status: toLoopResult(result.status),
+            output: result.output,
+            denialReason: result.denialReason,
+          };
         },
       });
     } catch (error) {
@@ -1509,6 +1521,7 @@ export class AgentWorkflow {
   ): Promise<{
     status: 'succeeded' | 'failed' | 'denied' | 'suspended';
     output: Record<string, unknown>;
+    denialReason?: string;
   }> {
     const context: ToolExecutionContext = {
       taskId: snapshot.taskId,
@@ -1551,6 +1564,7 @@ export class AgentWorkflow {
         // The output has already been through the audit redaction filter, and it
         // passes the AI data boundary before it reaches a model.
         output: result.output ?? {},
+        denialReason: result.denialReason,
       };
     } catch (error) {
       if (error instanceof ApprovalRequiredError) {

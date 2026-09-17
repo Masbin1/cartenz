@@ -38,7 +38,21 @@ export interface LoopToolCall {
  */
 export type LoopToolRunner = (
   call: LoopToolCall,
-) => Promise<{ status: LoopToolResult; output: Record<string, unknown> }>;
+) => Promise<{
+  status: LoopToolResult;
+  output: Record<string, unknown>;
+  /**
+   * Why a refused call was refused, in the validator's own words.
+   *
+   * Carried back to the model rather than kept for the audit trail alone. A
+   * denial has two quite different causes - a policy that forbids the tool, and
+   * a request the model can simply correct - and a generic refusal makes them
+   * indistinguishable. A model told only "refused" retries the same malformed
+   * call with a cosmetic variation, exhausts its attempts and reports the
+   * platform as blocking it.
+   */
+  denialReason?: string;
+}>;
 
 export interface ImplementationLoopInput {
   /**
@@ -158,11 +172,16 @@ export class ModelImplementationLoop {
 
       if (outcome.status === 'denied') {
         // Not a halt: a denial is information the model can act on by choosing a
-        // different approach within what it is permitted to do.
+        // different approach within what it is permitted to do. The reason is
+        // included because acting on it requires knowing what was wrong - a
+        // missing required argument and a forbidden capability are both denials,
+        // and only one of them is worth another attempt.
         return {
           result: {
             status: 'denied',
-            message: 'The platform refused this call. Do not retry it or work around it.',
+            message: outcome.denialReason
+              ? `The platform refused this call: ${outcome.denialReason}`
+              : 'The platform refused this call. Do not retry it or work around it.',
             detail: outcome.output,
           },
         };
