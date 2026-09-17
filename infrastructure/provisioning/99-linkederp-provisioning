@@ -51,6 +51,15 @@
 #     and patch are read from a fixed staging directory, never from an argument,
 #     and the git credential arrives on stdin as the pull's does.
 #
+#   - The seventh is the per-client backup (ADR-054):
+#     infrastructure/provisioning/backup-project.sh snapshots one project's
+#     database, filestore and addons repository before a push onto a staging (or
+#     main-named) branch. It takes only `<project-name>`, reads the database name
+#     from the project's own odoo.conf, and writes under /opt/odoo/backups. The
+#     matching restore (restore-project.sh) is deliberately NOT here: it is an
+#     operator's tool, run directly as root, so custody of the backup and custody
+#     of the platform stay separable.
+#
 #   - `sudo -l -U cartenz` on the host shows exactly this rule; there is no
 #     wildcard sudo access anywhere else for this user.
 #
@@ -63,7 +72,8 @@ Cmnd_Alias LINKEDERP_PROVISION = \
     /opt/cartenz/infrastructure/provisioning/grant-addons-write.sh, \
     /opt/cartenz/infrastructure/provisioning/setup-project-https.sh, \
     /opt/cartenz/infrastructure/provisioning/pull-project.sh, \
-    /opt/cartenz/infrastructure/provisioning/preview-project.sh
+    /opt/cartenz/infrastructure/provisioning/preview-project.sh, \
+    /opt/cartenz/infrastructure/provisioning/backup-project.sh
 
 cartenz ALL=(root) NOPASSWD: LINKEDERP_PROVISION
 

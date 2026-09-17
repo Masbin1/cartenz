@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document owner | Lead Software Architect |
-| Last updated | 17 September 2026 |
+| Last updated | 18 September 2026 |
 | Milestone delivered | Phase 5 — Odoo-aware development (Phases 1–4 complete) |
 | Governing documents | `docs/reference/` (Technical Architecture v1.9, Framework and Technology Selection v1.0) |
 
@@ -207,6 +207,10 @@ has been reviewed.
 | Session listing and threaded task history | Complete (ADR-047) |
 | Repo-backed connected projects (`on_premise` with a repository clones) | Complete (ADR-050) |
 | Standard-database catalog, region/edition/version aware | Infrastructure complete (ADR-051); artifacts pending the operator's upload |
+| An approved chat write commits and pushes like a change task | Complete (ADR-053) |
+| Per-client backups: root-run script, retention, restore tool, pre-push hook | Complete (ADR-054); first live run is the operator's step |
+| Per-project "on-host models only" flag, enforced in the resolver | Complete (ADR-055) |
+| Estate monitor: platform units, odoo units, disk, certbot timer, log volume | Complete, runnable without root (`infrastructure/scripts/estate-monitor.sh`) |
 
 ### 3.3 Frontend (Next.js)
 
@@ -237,6 +241,9 @@ has been reviewed.
 | Conversation-grouped workspace history | Complete (ADR-047) |
 | Ephemeral preview instance: routes, lifecycle, reaper, region template clone | Complete (ADR-052); first live instance needs the operator's root/script step |
 | Ephemeral preview panel in the agent workspace | Complete (ADR-052) |
+| Backups panel: recent runs, availability, "Back up now" | Complete (ADR-054) |
+| Data-boundary switch on project settings (on-host models only) | Complete (ADR-055) |
+| Clipboard paste of non-image files through the upload path | Complete (18 Sep) |
 
 ---
 
@@ -864,17 +871,46 @@ one place. The full architecture and the next step for each item are in
 | # | Requested capability | Status | Next step |
 | --- | --- | --- | --- |
 | 1 | Centralised Odoo version repository; full code per version; no AI tokens per creation | **Done** (ADR-045) | Build templates on the host; update the operator's `create_project` scripts |
-| 2 | Server and development architecture per client (GitHub + hosting server) | **Documented; mostly built** | Independent backup/restore; monitoring/dashboard |
-| 3 | Linked on-premise server: security updates, monitoring, server admin | **Not done** | Adopt the runbook in the architecture doc §4.4 |
-| 4 | Backup triggered before a push to staging/main | **Not done** | Build the per-client backup first, then hook the push path |
-| 5 | Fix code changes in Chat / Change code | **`change` works; a `chat` write is diffed but never committed or pushed** | Decide (ADR): let an approved chat write land, or add "turn into a change task" |
-| 6 | Data exposed to outside LLM (data-breach concern) | **Boundary implemented** (ADR-020); source code and image bytes are deliberate exceptions | Document a data-processing posture; add a per-project local-only provider flag |
-| 7 | Paste image/photo/file in the chat | **Images done** (ADR-042); documents are upload-only | Accept non-image clipboard files through the same upload endpoint |
+| 2 | Server and development architecture per client (GitHub + hosting server) | **Built** - backup/restore and a monitoring script landed 18 Sep (ADR-054) | Upload the remaining DB archives + build templates; wire the monitor timer; dashboard/notification |
+| 3 | Linked on-premise server: security updates, monitoring, server admin | **First controls built** (`estate-monitor.sh`, 18 Sep); patching and alerting remain root installs | Adopt the runbook in the architecture doc §4.4 |
+| 4 | Backup triggered before a push to staging/main | **Done** (ADR-054): a per-client backup runs before any staging/main-named push, and a failed backup blocks the push | First live backup + restore drill on the host |
+| 5 | Fix code changes in Chat / Change code | **Done** (ADR-053): an approved chat write commits and pushes like a change task | - |
+| 6 | Data exposed to outside LLM (data-breach concern) | **Boundary implemented** (ADR-020); posture documented (`docs/guides/ai-data-processing-posture.md`); per-project on-host-only flag (ADR-055) | - |
+| 7 | Paste image/photo/file in the chat | **Done** (ADR-042; non-image clipboard files take the upload path, 18 Sep) | - |
 | 8 | UI preview before approving/deploying to Odoo | **Done** (ADR-052) — ephemeral instance rebuilt from the task's retained diff, standard database, token-gated URL, one per project, TTL + reaper | First live instance on a host with the script, sudoers entry, runtimes and a standard template |
 | 9 | **Access Right set on the portal** | **Done and verified** (ADR-043, ADR-044) — grants, requests, approve/reject, region scoping, admin flag, 403 on open, redacted locked list, 24-check smoke test | No further work for the stated scope; notifications remain the shared gap with item 3 |
 
 Item 9 was the one to confirm: it is complete. `infrastructure/scripts/smoke-test-access.sh`
-exercises the whole flow and passes on the development host. Two things remain deliberately
-unbuilt rather than unfinished: notifications for the request queue (the same dashboard gap as
-item 3) and per-project roles (a grant carries access only; depth stays with `users.is_admin`
-and the project's `agentPermissions`).
+exercises the whole flow and passes on the development host - and on 18 September the script
+itself was rewritten for the region model (it still posted the organisation fields ADR-044
+removed, so it failed at step 1), carrying one SQL statement that elevates its fixture owner,
+which is what the first-account rule does on a fresh deployment. Re-run on 18 September:
+23 checks, all passing. Two things remain deliberately unbuilt rather than unfinished:
+notifications for the request queue (the same dashboard gap as item 3) and per-project roles
+(a grant carries access only; depth stays with `users.is_admin` and the project's
+`agentPermissions`).
+
+---
+
+## Operator register closed out (18 September 2026)
+
+Delivered in one pass against the register above, with the platform's own
+verification at each step (744 backend tests across 64 suites; boot tests on the
+built artefact for the new module graph and routes; the access smoke test
+re-run live at 23 checks; the estate monitor run on this host):
+
+| ADR | What landed | Where the truth lives |
+| --- | --- | --- |
+| ADR-053 | An approved chat write commits and pushes like a change task; a chat over a workspace with no clone completes as an answer instead of failing at the diff | `agent-workflow.ts` (`implementChat`), `task-state.ts` |
+| ADR-054 | `backup-project.sh` (seventh sudo shape) + `restore-project.sh`; `project_backups`; the pre-push hook - a failed backup blocks the push, a project with no local instance skips with a reason | `infrastructure/provisioning/`, `project-backup.service.ts`, `agent-workflow.ts` (`backupBeforePush`) |
+| ADR-055 | `projects.local_provider_only`, enforced in `ModelProviderResolver.forProject`; admin-only switch on project settings | `model-provider-resolver.ts`, settings page |
+| register 3 | `infrastructure/scripts/estate-monitor.sh` - platform and `odoo-*` units, disk headroom, certbot timer, log volume; exit 1 on failure | `infrastructure/scripts/` |
+| register 7 | Non-image clipboard files paste through the document upload path | `frontend/.../agent/page.tsx` |
+| register 9 | `smoke-test-access.sh` rewritten for the region model; 23 checks passing | `infrastructure/scripts/` |
+
+The operator's remaining steps are all root-gated and listed in one place: the
+task handover at the end of this session (summary: install the updated
+`create_project` scripts and the backup/preview sudoers entries, restart
+`cartenz-api`, `cartenz-worker` and `cartenz-portal`, fix the `phonenumbers`
+dependency and rebuild the full templates, create the preview runtime layout,
+and remove the renamed-aside root-owned directories).

@@ -158,6 +158,8 @@ export interface ProjectDetail {
   createdAt: string;
   updatedAt: string;
   agentPermissions: Record<string, boolean>;
+  /** Only on-host models for this project's tasks (ADR-055). */
+  localProviderOnly: boolean;
   connections: ProjectConnection[];
   specification: ProjectSpecification | null;
   specificationVersion: number | null;
@@ -165,6 +167,24 @@ export interface ProjectDetail {
   recentTasks: TaskSummary[];
   accessReason: 'admin' | 'creator' | 'grant';
   provisioning: ProjectProvisioningInfo;
+}
+
+/**
+ * One per-client backup (ADR-054): the database, filestore and addons
+ * repository, snapshotted on the host before a staging push or on request.
+ * Restorable by an operator without the platform; `path` names where it lives.
+ */
+export interface BackupSummary {
+  id: string;
+  status: 'running' | 'completed' | 'failed';
+  reason: 'pre_push' | 'manual';
+  backupId: string | null;
+  path: string | null;
+  sizeBytes: number | null;
+  error: string | null;
+  taskId: string | null;
+  createdAt: string;
+  completedAt: string | null;
 }
 
 /**

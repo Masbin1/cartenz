@@ -48,6 +48,8 @@ export default function ProjectSettingsPage() {
 
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [permissions, setPermissions] = useState<Record<string, boolean>>({});
+  const [localOnly, setLocalOnly] = useState(false);
+  const [boundarySaving, setBoundarySaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -64,6 +66,7 @@ export default function ProjectSettingsPage() {
       ]);
       setProject(detail);
       setPermissions(detail.agentPermissions);
+      setLocalOnly(detail.localProviderOnly);
       setEnvironments(environmentList);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The project could not be loaded.');
@@ -232,6 +235,32 @@ export default function ProjectSettingsPage() {
     }
   };
 
+  /**
+   * The data-boundary switch (ADR-055). Saved immediately rather than on a Save
+   * button: it is one boolean, and a half-saved permissions form must not carry
+   * it along.
+   */
+  const saveLocalOnly = async (next: boolean) => {
+    setBoundarySaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await api.projects.update(projectId, { localProviderOnly: next });
+      setLocalOnly(Boolean((updated as { localProviderOnly?: boolean }).localProviderOnly));
+      setNotice(
+        next
+          ? 'This project now uses on-host models only. Nothing about it leaves the server.'
+          : 'The restriction was lifted: tasks may use any configured provider again.',
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError ? caught.message : 'The restriction could not be updated.',
+      );
+    } finally {
+      setBoundarySaving(false);
+    }
+  };
+
   if (loading || !user) return <PageLoading />;
   if (!project) return <PageLoading label="Loading settings" />;
 
@@ -321,6 +350,38 @@ export default function ProjectSettingsPage() {
                 </li>
               ))}
             </ul>
+          </div>
+        </section>
+
+        <section className="panel mt-5">
+          <div className="panel-header">
+            <h2 className="panel-title">Data boundary</h2>
+            <span className="text-2xs text-content-subtle">
+              {canEdit ? 'Saved immediately' : 'Admin role required to change'}
+            </span>
+          </div>
+
+          <div className="px-4 py-4">
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={localOnly}
+                disabled={!canEdit || boundarySaving}
+                onChange={(event) => void saveLocalOnly(event.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 accent-accent"
+              />
+              <span className="min-w-0">
+                <span className="block text-xs font-medium">
+                  On-host models only - no off-host egress
+                </span>
+                <span className="mt-0.5 block text-2xs leading-relaxed text-content-subtle">
+                  Every task on this project uses only providers whose base URL is loopback, so no
+                  source code, document or screenshot reaches an external model. A task is refused
+                  when this deployment has no such provider. Turning it off allows off-host egress
+                  again.
+                </span>
+              </span>
+            </label>
           </div>
         </section>
 

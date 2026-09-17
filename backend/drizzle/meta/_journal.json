@@ -127,6 +127,20 @@
       "when": 1789992000001,
       "tag": "0017_project_previews",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789992000002,
+      "tag": "0018_project_backups",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789992000003,
+      "tag": "0019_project_local_provider_only",
+      "breakpoints": true
     }
   ]
 }

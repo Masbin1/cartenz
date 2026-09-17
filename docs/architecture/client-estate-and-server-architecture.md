@@ -256,9 +256,15 @@ Requirements that shape it:
   client's estate transferable at the end of an engagement.
 - **The restore is periodically exercised**, not assumed.
 
-> **Status: not implemented.** No backup, retention or restore machinery exists in the platform
-> today. The only documented backup is the platform's own (`docs/guides/server-setup-from-scratch.md`
-> §9) and the one-time migration dump. See §6 for the next step.
+> **Status: implemented (ADR-054, 18 September 2026).** `backup-project.sh` takes the three
+> pieces into `/opt/odoo/backups/<project>/<id>/` (a `pg_dump` custom-format archive, the
+> filestore, and a git bundle of the addons repository) with a manifest written last;
+> `restore-project.sh` restores a database and filestore and prints how to restore addons
+> from the bundle or the remote - it is an operator's tool, run directly as root and
+> deliberately not wired to the platform. The pre-change rule holds: the agent workflow
+> takes a backup before any push onto a staging (or main-named) branch, and a push whose
+> backup fails does not proceed (see §6.4). Retention keeps the newest 14 runs per project
+> on the same host; **off-host replication remains an operator concern** and is not built.
 
 ### 4.3 Connection between the platform and a linked hosted server
 
@@ -301,10 +307,10 @@ alone knows, so an administrator sees the estate and the platform's posture in o
 | OS security updates | Stated cadence (e.g. weekly) | `unattended-upgrades` for security pocket; reboot window | Not set up |
 | Odoo security updates | Per Odoo release | Update the shared read-only checkout per version, then restart each instance on that version | Not set up |
 | Certificate renewal | Automatic | `certbot` timer | Depends on `PROJECT_HTTPS_ENABLED`; no timer verified |
-| Disk monitoring | Continuous | Node exporter + alert on the projects root and Postgres volume | Not set up |
-| Service monitoring per instance | Continuous | systemd + a check that each `odoo-*` unit is active and answering | Not set up |
+| Disk monitoring | Continuous | `infrastructure/scripts/estate-monitor.sh` warns at 85% and fails at 92% (18 Sep) | Script written, needs a cron/timer |
+| Service monitoring per instance | Continuous | The same script checks every platform unit and every loaded `odoo-*` unit | Script written, needs a cron/timer |
 | Log retention | Rolling | `logrotate` exists for the platform; per-instance Odoo logs need a rule | Partial |
-| On-call route for failures | Continuous | Alert delivery (email/chat) | Not set up |
+| On-call route for failures | Continuous | Alert delivery (email/chat) on the monitor's non-zero exit | Not set up (root step) |
 | Administration dashboard + notification | Continuous | A portal surface for the estate plus a notification route | Not set up |
 
 **Security baseline for an on-premise host** (already stated in
@@ -396,20 +402,23 @@ The operator's list, item by item, with the honest status as of 17 September 202
 | Certificate issuance per client domain | Implemented | Install the `certbot` timer |
 | **Repo-backed connected projects** (remote on-premise replica) | **Implemented** (ADR-050) | Host that predates the change must update its create scripts by hand |
 | **Standard database catalog** (edition + region + version) | **Implemented** (ADR-051); artifacts pending | Upload the zip archives; build the region templates on the host |
-| **Independent backup and restore** | **Not implemented** | Build the per-client backup/retention/restore in §4.2 |
-| **Backup triggered before a staging/main change** | **Not implemented** | Depends on backup above; hook into `commit()`/push path |
-| **Monitoring, admin dashboard and notification** | **Not implemented** | See §4.4 and §6.3 |
+| **Independent backup and restore** | **Implemented** (ADR-054) | First live backup + restore drill on the host |
+| **Backup triggered before a staging/main change** | **Implemented** (ADR-054) | Hooked into the push path; a failed backup blocks the push |
+| **Monitoring, admin dashboard and notification** | **Monitoring script written**; dashboard/notification still open | Wire the timer (root); the dashboard is the shared gap with §6.3 |
 
 ### 6.3 Linked on-premise server: security updates, monitoring, server admin
 
 > *"For Linked On premise server, need to plan the security update, monitoring tools, and all
 > other server administration task."*
 
-**Status: planned in §4.4; not implemented.**
+**Status: planned in §4.4; the first controls are built.**
 
-What exists: `health/ready`, `health/posture`, the per-project instance panel, and the Deploy
-action. What is missing: OS/Odoo patching cadence, disk and service monitoring, per-instance
-log retention, alerting, and an administration dashboard with notifications.
+What exists: `health/ready`, `health/posture`, the per-project instance panel, the Deploy
+action, and (since 18 Sep) `infrastructure/scripts/estate-monitor.sh`, which checks every
+platform unit, every `odoo-*` unit, disk headroom, the certbot timer and log volume, with a
+non-zero exit a cron job can alert on. What is missing: OS/Odoo patching cadence
+(`unattended-upgrades` is a root install), alert delivery, per-instance log rotation, and an
+administration dashboard with notifications.
 
 **Next step:** adopt the table in §4.4 as the runbook, starting with the cheapest controls
 that give the most signal — `unattended-upgrades` for the security pocket, a disk alert on the
@@ -420,23 +429,23 @@ the same gap named for the access-request queue (ADR-043) and should be built on
 
 > *"Find a way to trigger backup while pushing new changes onto Staging/Main database."*
 
-**Status: Not implemented.** It depends on §4.2.
+**Status: implemented (ADR-054, 18 September 2026).**
 
-The correct hook point is the platform's push path, where the target environment's kind is
-already known: a push that targets a `staging` environment (and any future promotion to a
-production-representing branch) should take a per-client snapshot of database + filestore +
-addons **before** the remote is updated, and record the restore point on the task. A push that
-fails its backup should not proceed.
-
-**Next step:** build §4.2 first, then add one guarded step in `commit()` / `push()` in
-`backend/src/agent/orchestration/agent-workflow.ts` and an audited `backup` event.
+The hook is in the push path, where the target environment's kind is already known: a push
+onto a `staging`-kind environment or a `main`-named branch takes a per-client snapshot of
+database + filestore + addons **before** the remote is updated, narrated with the backup's
+own id, and audited as `project.backup_created`. A push whose backup fails does not proceed:
+the task fails with the reason and nothing is pushed. A project with no provisioned instance,
+or a deployment that has not configured `PROJECT_BACKUP_SCRIPT`, is a *skip* (narrated, push
+proceeds) rather than a failure - failing the push there would blame the person for a fact
+about the project or the host.
 
 ### 6.5 Code changes in Chat / Change code
 
 > *"Fix the functionality to do code changes in the Chat/Change cod of the project in Cartenz."*
 
-**Status: the `change` flow works; a code change made in `chat` is written but never committed
-or pushed.**
+**Status: resolved (ADR-053, 18 September 2026). The `change` flow works, and an approved
+chat write now lands the same way.**
 
 - `change`: plan → approval → implement → validate → commit → push. Correct.
 - `chat`: the model may call a write tool, which pauses the task for the `chat_edit` approval.
@@ -448,13 +457,15 @@ or pushed.**
 ADR-047 fixed how a conversation *reads* (sessions and threads). It did not change this: a chat
 edit is reviewable but not landable.
 
-**Next step (a decision before code):** choose one of
-1. let an approved chat write continue into the normal commit/push path, so a conversational
-   change can land; or
-2. keep chat read-only and add an explicit **"Turn this into a change task"** action that
-   re-runs the described change through the `change` flow.
-Option 2 is the smaller blast radius and preserves the current meaning of `chat`; option 1 is
-what most users will expect. This needs an ADR.
+**The decision, taken:** option 1 - an approved chat write continues into the normal
+commit/push path. `implementChat` transitions `implementing -> committing` when the run wrote
+something (a new edge, ADR-053); everything after that is the existing commit/push machinery,
+so the push follows the environment's own posture exactly as a change task's does. `main` is
+still never worked on directly (a main-targeted clone-backed task commits to a branch of its
+own; the in-place on-premise case refuses the commit and says how to land it), the model
+still never commits or pushes itself, and a chat on a workspace with no clone (odoo_online,
+or an ai_project without a repository) completes as an answer - previously it failed at the
+diff step after the model had already been paid for.
 
 ### 6.6 Data exposed to an outside LLM
 
@@ -487,17 +498,20 @@ Gaps, stated honestly:
    treated as the operator's own input, so a secret in a screenshot is sent. Documented, and the
    retirement condition is recorded in the ADR.
 
-**Next step:** document a one-page data-processing posture per deployment (which provider, in
-which jurisdiction, what is sent), and add an explicit per-project "local provider only" flag
-for clients who will not accept off-host egress. Revisit image handling if the platform gains a
-binary-aware boundary.
+**Both next steps are done (ADR-055, 18 September 2026).** The one-page posture is
+`docs/guides/ai-data-processing-posture.md` (what is sent, what is filtered, the two
+deliberate exceptions, and how to go fully on-host). The per-project flag is
+`projects.local_provider_only`, edited by an admin at Settings -> project -> Data boundary:
+the resolver keeps that project's chain to loopback base URLs only, and refuses a task with a
+reason when the deployment has no such provider rather than quietly using an external one.
+Revisit image handling if the platform gains a binary-aware boundary.
 
 ### 6.7 Paste an image/photo/file in the chat
 
 > *"To also include the feature to paste the image/photo/file instead of doing the upload
 > document in the chat."*
 
-**Status: Implemented for images; documents remain upload-only.**
+**Status: implemented for images and for files (18 September 2026).**
 
 - **Image paste is implemented** (ADR-042). The chat composer handles `onPaste`
   (`frontend/app/projects/[projectId]/agent/page.tsx:350`), stores the image as base64 in
@@ -505,20 +519,19 @@ binary-aware boundary.
   content block to a multimodal model. Caps: 5 MiB per image; `image/png`, `image/jpeg`,
   `image/webp`, `image/gif`.
 - **File upload is implemented** (ADR-030): Markdown, text, PDF and DOCX via the upload button.
-- **Pasting a non-image file** (e.g. a PDF from the clipboard) is not handled; the paste handler
-  looks only for an image item.
-
-**Next step:** extend the paste handler to accept non-image clipboard files through the same
-`POST /projects/:id/documents` path, so the distinction between "paste" and "upload" disappears.
+- **Pasting a non-image file** (e.g. a PDF from the clipboard) now takes the same upload path
+  as the file picker (`POST /projects/:id/documents`), so the distinction between "paste" and
+  "upload" is gone; a paste carrying only text is still left alone.
 
 ### 6.8 UI preview before approving/deploying
 
 > *"To add the preview that include UI presentation to ensure the user get the complete draft
 > before approving and deploying it onto Odoo."*
 
-**Status: Not implemented.**
+**Status: implemented (ADR-052); updated 18 September 2026.** The paragraphs below record
+the problem as it stood before that ADR, and the option chosen.
 
-What exists is a **code** review, not a UI preview: `DiffViewer` shows the per-file patch with
+What existed then was a **code** review, not a UI preview: `DiffViewer` shows the per-file patch with
 line numbers, and `ApprovalPanel` names the action being authorised. There is no rendered
 Odoo screen, no draft instance, and no way to see the change as a user of the Odoo would.
 
@@ -574,12 +587,12 @@ a live workspace.
 | # | Requested capability | Status | Next step |
 | --- | --- | --- | --- |
 | 1 | Centralised Odoo version repo, full code per version, no AI tokens | **Done** (ADR-045) | Build templates; update operator scripts |
-| 2 | Server + development architecture per client (GitHub + hosting) | **Documented; mostly built** | Remote replica + standard DB catalog now implemented (ADR-050, ADR-051); remaining: upload DBs + build templates, backup/restore, monitoring (§6.2) |
-| 3 | On-premise security updates, monitoring, server admin | **Not done** | Adopt §4.4 runbook |
-| 4 | Backup on push to staging/main | **Not done** | Build §4.2, then hook the push path |
-| 5 | Fix code changes in Chat/Change | **`change` done; `chat` writes but never lands** | Choose option 1 or 2 in §6.5 (ADR) |
-| 6 | Data exposure to outside LLM | **Boundary done** (ADR-020); two documented gaps | Data-processing posture; local-only flag |
-| 7 | Paste image/photo/file in chat | **Images done** (ADR-042); files upload-only | Accept non-image paste |
+| 2 | Server + development architecture per client (GitHub + hosting) | **Built** - and, since ADR-054, with independent backup/restore and a monitoring script | Upload the remaining DB archives + build templates; wire the monitor timer; dashboard/notification (§6.2) |
+| 3 | On-premise security updates, monitoring, server admin | **First controls built** (`estate-monitor.sh`); patching/alerting are root installs | Adopt §4.4 runbook |
+| 4 | Backup on push to staging/main | **Done** (ADR-054): a failed backup blocks the push | First live backup + restore drill on the host |
+| 5 | Fix code changes in Chat/Change | **Done** (ADR-053): an approved chat write commits and pushes like a change task | - |
+| 6 | Data exposure to outside LLM | **Boundary done** (ADR-020); posture documented; per-project on-host flag done (ADR-055) | - |
+| 7 | Paste image/photo/file in chat | **Done** (ADR-042; non-image paste, 18 Sep) | - |
 | 8 | UI preview before approve/deploy | **Implemented** (ADR-052) | First live instance on a host with the preview script, its sudoers entry, Odoo runtimes and a standard template |
 | 9 | Access Right on the portal | **Done and verified** (ADR-043/044) | Notifications, shared with §6.3 |
 

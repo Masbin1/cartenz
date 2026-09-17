@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -20,6 +21,8 @@ import {
   AGENT_TASK_KINDS,
   APPROVAL_ACTIONS,
   APPROVAL_STATUSES,
+  BACKUP_REASONS,
+  BACKUP_STATUSES,
   CONNECTION_STATUSES,
   CONNECTION_TYPES,
   ODOO_EDITIONS,
@@ -256,6 +259,14 @@ export const projects = pgTable(
       .$type<Record<string, boolean>>()
       .notNull()
       .default({}),
+    /**
+     * When true, this project's tasks may only use model providers whose base
+     * URL is loopback (ADR-055): nothing leaves the host for this project. A
+     * client who will not accept off-host egress sets this, and the resolver
+     * refuses the deployment's external providers rather than filtering them
+     * silently - a task that cannot run must say why.
+     */
+    localProviderOnly: boolean('local_provider_only').notNull().default(false),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
@@ -627,6 +638,49 @@ export type ProjectMemberRow = typeof projectMembers.$inferSelect;
 export type ProjectAccessRequestRow = typeof projectAccessRequests.$inferSelect;
 export type ProjectPreviewRow = typeof projectPreviews.$inferSelect;
 
+/**
+ * One per-client backup (ADR-054).
+ *
+ * The row is a record of a host action, not the backup itself: the archive
+ * lives under /opt/odoo/backups and is owned by root, restorable without this
+ * platform. `path` and `backupId` name what the root-run script produced so an
+ * operator can find it; `taskId` records which task's push it was taken for,
+ * when it was automatic.
+ */
+export const projectBackups = pgTable(
+  'project_backups',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    /** The task whose pre-push backup this was, when it was automatic. */
+    taskId: uuid('task_id').references(() => agentTasks.id, { onDelete: 'set null' }),
+    status: text('status', { enum: asEnum(BACKUP_STATUSES) }).notNull().default('running'),
+    reason: text('reason', { enum: asEnum(BACKUP_REASONS) }).notNull().default('manual'),
+    /** The script's own id for the run (a UTC timestamp token). */
+    backupId: text('backup_id'),
+    /** The backup directory on the host, for the operator. Never a secret. */
+    path: text('path'),
+    /** Total bytes of the backup directory, as reported by the script. */
+    sizeBytes: bigint('size_bytes', { mode: 'number' }),
+    /** Why it failed, when it did. */
+    error: text('error'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => ({
+    // "the backups of this project, newest first" is the only list query.
+    byProject: index('project_backups_project_idx').on(table.projectId),
+    byTask: index('project_backups_task_idx').on(table.taskId),
+  }),
+);
+
+export type ProjectBackupRow = typeof projectBackups.$inferSelect;
+
 export const agentSessions = pgTable(
   'agent_sessions',
   {
@@ -887,6 +941,15 @@ export const projectPreviewsRelations = relations(projectPreviews, ({ one }) => 
   task: one(agentTasks, { fields: [projectPreviews.taskId], references: [agentTasks.id] }),
   startedBy: one(users, {
     fields: [projectPreviews.startedByUserId],
+    references: [users.id],
+  }),
+}));
+
+export const projectBackupsRelations = relations(projectBackups, ({ one }) => ({
+  project: one(projects, { fields: [projectBackups.projectId], references: [projects.id] }),
+  task: one(agentTasks, { fields: [projectBackups.taskId], references: [agentTasks.id] }),
+  createdBy: one(users, {
+    fields: [projectBackups.createdByUserId],
     references: [users.id],
   }),
 }));

@@ -819,3 +819,62 @@ describe('assertProvisioningInvocation - ephemeral preview (ADR-052)', () => {
     ).toThrow(/not a configured provisioning script/);
   });
 });
+
+/**
+ * The per-client backup invocation guard (ADR-054).
+ *
+ * The same narrowing discipline: `sudo` is a wide grant, and this asserts it is
+ * narrowed to exactly `-n <backup-script> <project-name>` - the same shape as
+ * the grant script, distinguishable only by the configured path.
+ */
+describe('assertProvisioningInvocation - per-client backup (ADR-054)', () => {
+  const createScripts = ['/opt/odoo/scripts/create_project'];
+  const grantScript = '/opt/cartenz/infrastructure/provisioning/grant-addons-write.sh';
+  const backupScript = '/opt/cartenz/infrastructure/provisioning/backup-project.sh';
+
+  const check = (args: string[]) =>
+    assertProvisioningInvocation(args, createScripts, grantScript, null, null, null, backupScript);
+
+  it('permits a well-formed backup', () => {
+    expect(() => check(['-n', backupScript, 'dodolbintangmas'])).not.toThrow();
+  });
+
+  it('refuses an invalid project name', () => {
+    for (const bad of ['', '-x', 'UPPER', '../escape', 'x'.repeat(40)]) {
+      expect(() => check(['-n', backupScript, bad])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a missing or extra argument', () => {
+    expect(() => check(['-n', backupScript])).toThrow(CommandArgumentError);
+    expect(() => check(['-n', backupScript, 'name', 'extra'])).toThrow(CommandArgumentError);
+    // A backup takes no port, no version and no branch; the arguments another
+    // shape would carry are refused rather than ignored.
+    expect(() => check(['-n', backupScript, 'name', '7001'])).toThrow(CommandArgumentError);
+  });
+
+  it('is not fooled by a path that merely starts with the configured script', () => {
+    expect(() => check(['-n', `${backupScript}-evil`, 'name'])).toThrow(CommandArgumentError);
+  });
+
+  it('refuses the backup shape when no backup script is configured', () => {
+    expect(() =>
+      assertProvisioningInvocation(['-n', backupScript, 'name'], createScripts, grantScript),
+    ).toThrow(/not a configured provisioning script/);
+  });
+
+  it('keeps the grant shape working beside it, since the two share a shape', () => {
+    expect(() => check(['-n', grantScript, 'name'])).not.toThrow();
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', grantScript, 'name'],
+        createScripts,
+        grantScript,
+        null,
+        null,
+        null,
+        backupScript,
+      ),
+    ).not.toThrow();
+  });
+});

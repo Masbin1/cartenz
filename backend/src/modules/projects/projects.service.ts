@@ -955,6 +955,13 @@ export class ProjectsService {
     if (dto.environmentConfig !== undefined) {
       patch.environmentConfig = this.sanitiseEnvironmentConfig(dto.environmentConfig);
     }
+    if (dto.localProviderOnly !== undefined) {
+      // A data-governance switch carries the same rank as the agent
+      // permissions it sits beside (ADR-055): an admin's call, not any
+      // member's, because turning it off allows off-host egress.
+      await this.authz.requireProjectAccess(user, projectId, { requireAdmin: true });
+      patch.localProviderOnly = dto.localProviderOnly;
+    }
 
     const [updated] = await this.database.db
       .update(projects)
@@ -1809,6 +1816,7 @@ export class ProjectsService {
     archivedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
+    localProviderOnly?: boolean;
     provisioningStatus?: string;
     provisioningPort?: number | null;
     provisioningUrl?: string | null;
@@ -1833,6 +1841,7 @@ export class ProjectsService {
       archivedAt: project.archivedAt,
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
+      localProviderOnly: project.localProviderOnly ?? false,
       /**
        * The provisioned instance's own connection details (ADR-039, ADR-040).
        * `hasMasterPassword` is a boolean, never the reference itself: the

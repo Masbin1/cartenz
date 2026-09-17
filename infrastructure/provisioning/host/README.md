@@ -70,3 +70,37 @@ Where no standard database exists, build the source-based template as before:
 
 Then a new project of version 19.0 clones `cartenz_tpl_19_0_com` /
 `cartenz_tpl_19_0_ent` in seconds instead of installing every module again.
+
+## Per-client backups (ADR-054)
+
+`infrastructure/provisioning/backup-project.sh` snapshots one project's estate
+(database, filestore, addons bundle) under `/opt/odoo/backups/<project>/`, and
+`restore-project.sh` restores it. It runs from the repository checkout, like the
+preview:
+
+- Add its path to the sudoers `Cmnd_Alias` (already in
+  `infrastructure/provisioning/99-linkederp-provisioning` as the seventh entry).
+- `restore-project.sh` is deliberately NOT in the sudoers rule: an operator runs
+  it directly as root, so custody of the backup and custody of the platform stay
+  separable.
+
+**Install both together with the restart.** With `PROJECT_BACKUP_SCRIPT`
+defaulted (and provisioning on), every staging push takes a backup first; a push
+whose backup fails does not proceed. If the sudoers entry is missing while the
+platform is already running the backup-capable code, a staging push fails with
+`sudo: a password is required` - install the rule, then restart `cartenz-api`
+and `cartenz-worker`, in that order.
+
+Try it once by hand before trusting the automatic path:
+
+    /opt/cartenz/infrastructure/provisioning/backup-project.sh <project>
+    /opt/cartenz/infrastructure/provisioning/restore-project.sh <project> <id>   # prints a plan
+    /opt/cartenz/infrastructure/provisioning/restore-project.sh <project> <id> --yes
+
+## Monitoring (register item 3)
+
+`infrastructure/scripts/estate-monitor.sh` checks the platform units, every
+`odoo-*` unit, disk headroom, the certbot timer and log volume; exit 0 healthy,
+1 unhealthy. It needs no root. Wire it to cron/a systemd timer yourself; the
+root-only pieces (unattended-upgrades, alert delivery) are listed in the
+runbook: `docs/architecture/client-estate-and-server-architecture.md` 4.4.

@@ -344,23 +344,29 @@ export default function AgentWorkspacePage() {
   };
 
   /**
-   * Pasting an image into the prompt uploads and attaches it (ADR-042). A paste
-   * that carries no image is left alone, so ordinary text paste is unaffected.
+   * Pasting into the prompt uploads and attaches what was pasted. An image is
+   * the common case (ADR-042: a screenshot or mock-up the agent can see), and a
+   * non-image FILE (a PDF or a document copied from a file manager) takes the
+   * same path as the upload button (ADR-030) - so the distinction between
+   * "paste" and "upload" disappears. A paste that carries only text is left
+   * alone, so ordinary text paste is unaffected.
    */
   const handlePaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const imageItem = Array.from(event.clipboardData.items).find((item) =>
-      item.type.startsWith('image/'),
-    );
-    if (!imageItem) return;
-    const file = imageItem.getAsFile();
+    const items = Array.from(event.clipboardData.items);
+    const imageItem = items.find((item) => item.type.startsWith('image/'));
+    const fileItem = imageItem ? null : items.find((item) => item.kind === 'file');
+    const item = imageItem ?? fileItem;
+    if (!item) return;
+    const file = item.getAsFile();
     if (!file) return;
     event.preventDefault();
-    // Clipboard images often arrive named "image.png" or unnamed; give it a
+    // Clipboard files often arrive named "image.png" or unnamed; give those a
     // stable, unique name so the attachment list is readable.
+    const extension = file.type.split('/')[1] || 'bin';
     const named =
       file.name && file.name !== 'image.png'
         ? file
-        : new File([file], `pasted-${Date.now()}.${file.type.split('/')[1] || 'png'}`, {
+        : new File([file], `pasted-${Date.now()}.${extension}`, {
             type: file.type,
           });
     await uploadFile(named);

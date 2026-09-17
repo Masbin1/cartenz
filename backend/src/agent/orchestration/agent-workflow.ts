@@ -18,6 +18,7 @@ import { ApprovalService } from '../../modules/approvals/approval.service';
 import { DocumentsService } from '../../modules/documents/documents.service';
 import { OdooSettingsService } from '../../modules/settings/odoo-settings.service';
 import { OdooVersionsService } from '../../modules/settings/odoo-versions.service';
+import { ProjectBackupService } from '../../modules/projects/project-backup.service';
 import { OdooProjectAnalyser } from '../analysis/odoo-project-analyser';
 import { ProjectMemoryService } from '../analysis/project-memory.service';
 import { GitService } from '../git/git.service';
@@ -96,6 +97,7 @@ export class AgentWorkflow {
     private readonly documents: DocumentsService,
     private readonly odooSettings: OdooSettingsService,
     private readonly odooVersions: OdooVersionsService,
+    private readonly backups: ProjectBackupService,
     private readonly audit: AuditService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
@@ -442,6 +444,8 @@ export class AgentWorkflow {
     try {
       outcome = await this.planner.createOdooOnlinePlan({
                 projectId: snapshot.projectId,
+        // ADR-055: a project marked local-only keeps the chain to on-host models.
+        localProviderOnly: snapshot.localProviderOnly,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -529,6 +533,8 @@ export class AgentWorkflow {
     try {
       outcome = await this.implementationLoop.run({
                 projectId: snapshot.projectId,
+        // ADR-055: a project marked local-only keeps the chain to on-host models.
+        localProviderOnly: snapshot.localProviderOnly,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -672,6 +678,8 @@ export class AgentWorkflow {
     try {
       outcome = await this.planner.createPlan({
                 projectId: snapshot.projectId,
+        // ADR-055: a project marked local-only keeps the chain to on-host models.
+        localProviderOnly: snapshot.localProviderOnly,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -780,6 +788,8 @@ export class AgentWorkflow {
     try {
       outcome = await this.implementationLoop.run({
                 projectId: snapshot.projectId,
+        // ADR-055: a project marked local-only keeps the chain to on-host models.
+        localProviderOnly: snapshot.localProviderOnly,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -896,6 +906,8 @@ export class AgentWorkflow {
     try {
       outcome = await this.chatLoop.run({
                 projectId: snapshot.projectId,
+        // ADR-055: a project marked local-only keeps the chain to on-host models.
+        localProviderOnly: snapshot.localProviderOnly,
         prompt: snapshot.prompt,
         projectName: snapshot.projectName,
         taskReference: snapshot.reference,
@@ -950,13 +962,16 @@ export class AgentWorkflow {
       await this.narrate(snapshot, `The agent stopped early: ${outcome.haltReason}.`);
     }
 
-    // A chat task does not commit or push, but an approved write still has to be
-    // reviewable. The workspace is destroyed when the run ends, so the diff is
-    // computed and retained with the task exactly as a change task retains it —
-    // the only difference is that no commit exists and nothing can be pushed.
-    const diff = await this.git.diff(workspace.repositoryPath, workspace.baseCommit ?? 'HEAD');
+    // An approved write has to be reviewable, and - since ADR-053 - landable.
+    // A workspace with no clone (an `ai_project` without a repository, or an
+    // `odoo_online` instance) has no filesystem a write could have produced a
+    // change in, so a diff is only asked for where one can exist. Asking anyway
+    // would fail the task after the model had already been paid for.
+    const diff = workspace.simulated
+      ? null
+      : await this.git.diff(workspace.repositoryPath, workspace.baseCommit ?? 'HEAD');
 
-    if (diff.files.length > 0) {
+    if (diff && diff.files.length > 0) {
       const modified: ModifiedFile[] = diff.files.map((file) => ({
         path: file.path,
         change: file.change === 'renamed' ? 'modified' : file.change,
@@ -976,24 +991,60 @@ export class AgentWorkflow {
       await this.tasks.saveDiffPatch(snapshot.taskId, diff.patch);
     }
 
+    const wrote = diff !== null && diff.files.length > 0;
+
+    // The platform never works or pushes to `main` directly (ADR-021, ADR-028).
+    // A clone-backed task on a main-targeted environment works on a branch of its
+    // own instead (ADR-046), so this only trips where the work happens in place
+    // on the environment's branch - on-premise. An approved write is then kept as
+    // the retained diff and not committed, exactly as before ADR-053, and the
+    // person is told how to land it.
+    if (wrote && workspace.branch === 'main') {
+      await this.narrate(
+        snapshot,
+        'The approved change was written, but it was not committed: this conversation ' +
+          'is on the main branch, and the platform never works or pushes to main directly ' +
+          '(ADR-021, ADR-028). The diff is on the task. Submit the change as a development ' +
+          'request against a development or staging environment to land it.',
+      );
+
+      return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
+        message: 'Answered. The approved change was not committed: main is not worked on directly.',
+      });
+    }
+
+    // An approved write is committed and pushed under exactly the rules a change
+    // task's commit follows (ADR-053): the environment's push posture decides
+    // whether the push needs an approval of its own, and the commit lands on the
+    // branch the task was given. The workspace is destroyed when the run ends,
+    // so without this the change the person approved would survive only as a
+    // patch on the task - reviewable, and usable nowhere.
+    if (wrote) {
+      return this.tasks.transition(snapshot.taskId, 'implementing', 'committing', {
+        message: 'The approved change is committed and pushed like a change task.',
+      });
+    }
+
     // A chat task that answered a question and changed nothing completes
     // successfully. There is no "made no change to the working tree" failure
     // here - that is a change-task rule, and a chat's deliverable is the answer.
     // The state machine has no implementing -> completed edge (ADR-018), so the
     // task passes through `testing`, where the chat branch completes it at once:
-    // a conversation has nothing to validate, commit or push.
+    // a conversation with nothing to land has nothing to validate, commit or push.
     return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
       message: `Answered in ${outcome.steps} step(s) across ${outcome.toolCalls} tool call(s).`,
     });
   }
 
   /**
-   * TESTING, on a chat task. A conversation has nothing to validate, commit or
-   * push, so the task completes the moment its answer is saved. This branch
-   * exists rather than a `implementing -> completed` edge because the state
-   * machine deliberately keeps that edge absent: `odoo_online` must pass
-   * through validation (a real defect it guards), and a chat task passing
-   * through `testing` keeps the machine intact for every kind.
+   * TESTING, on a chat task with no change to land. A conversation has nothing
+   * to validate, commit or push, so the task completes the moment its answer is
+   * saved. (A conversation that wrote, with approval, goes to `committing`
+   * directly - ADR-053.) This branch exists rather than an `implementing ->
+   * completed` edge because the state machine deliberately keeps that edge
+   * absent: `odoo_online` must pass through validation (a real defect it guards),
+   * and a chat task passing through `testing` keeps the machine intact for every
+   * kind.
    */
   private async completeChat(snapshot: TaskExecutionSnapshot): Promise<boolean> {
     return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
@@ -1280,6 +1331,12 @@ export class AgentWorkflow {
 
   /** PUSHING. Real once GIT_PUSH_ENABLED=true; refused at the process layer otherwise. */
   private async push(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    // ADR-054: a push that promotes work into a staging (or main-named) branch
+    // takes a per-client backup first, so a promotion always has an immediately
+    // preceding restore point. A push whose backup fails does not proceed.
+    const backupDecision = await this.backupBeforePush(snapshot);
+    if (backupDecision !== null) return backupDecision;
+
     const workspace = await this.acquireWorkspace(snapshot);
     const result = await this.callTool(snapshot, workspace, 'git_push', {});
 
@@ -1294,6 +1351,65 @@ export class AgentWorkflow {
 
     return this.tasks.transition(snapshot.taskId, 'pushing', 'completed', {
       message: `Branch ${workspace.branch} was pushed to the remote repository.`,
+    });
+  }
+
+  /**
+   * The pre-push restore point (ADR-054).
+   *
+   * Returns null when the push may proceed (a backup was taken, or there was
+   * nothing to back up and the reason is narrated), or the result of failing
+   * the task when the backup itself failed. Three outcomes are deliberately
+   * distinct:
+   *
+   *  - `taken`: narrated with the backup's own id, so the restore point is
+   *    findable from the task record.
+   *  - `skipped` (no provisioned instance, or no script on this deployment):
+   *    narrated and the push proceeds. Failing the push would blame the person
+   *    for a fact about the project or the host, and would break every push on
+   *    a deployment that has not installed the script.
+   *  - `failed`: the task fails and nothing is pushed. A promotion without its
+   *    restore point is the one case the backup exists to prevent.
+   *
+   * Only a staging-kind environment or a main-named branch is guarded: a
+   * development push is routine, and a snapshot per development push would
+   * fill the disk with near-identical backups.
+   */
+  private async backupBeforePush(snapshot: TaskExecutionSnapshot): Promise<boolean | null> {
+    const guarded =
+      snapshot.targetEnvironment?.kind === 'staging' || snapshot.targetBranch === 'main';
+    if (!guarded) return null;
+
+    const outcome = await this.backups.run(snapshot.projectId, {
+      reason: 'pre_push',
+      taskId: snapshot.taskId,
+      userId: null,
+    });
+
+    if (outcome.kind === 'taken') {
+      await this.narrate(
+        snapshot,
+        `Restore point taken before the push: backup ${outcome.backup.backupId ?? outcome.backup.id} ` +
+          (outcome.backup.path ? `at ${outcome.backup.path}.` : 'recorded on the project.'),
+      );
+      return null;
+    }
+
+    if (outcome.kind === 'skipped') {
+      await this.narrate(
+        snapshot,
+        `No backup was taken before this push: ${outcome.message}`,
+      );
+      return null;
+    }
+
+    await this.narrate(
+      snapshot,
+      `The push was not performed: the pre-push backup failed. ${outcome.message}`,
+    );
+
+    return this.tasks.transition(snapshot.taskId, 'pushing', 'failed', {
+      failureReason: `The pre-push backup failed, so nothing was pushed: ${outcome.message}`,
     });
   }
 

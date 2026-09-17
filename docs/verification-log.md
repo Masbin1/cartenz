@@ -1009,3 +1009,46 @@ review keeps finding — decisions committed without their record, and a genuine
 against the region model is a larger task than the documentation pass that found it broken. The
 smoke suites generally remain un-re-run against a real model provider, as recorded in the previous
 entry; that gap is unchanged by this pass.
+
+
+---
+
+## 18 September 2026 — the operator register closed out (ADR-053, ADR-054, ADR-055)
+
+The register's remaining items were taken in one pass. What was verified while
+building them, so the next reader does not have to re-derive it:
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Backend tests, full suite | `npm run test --workspace backend` | **744 passed, 64 suites, 0 failed** |
+| Backend typecheck | `npx tsc -p tsconfig.json --noEmit --incremental false` | exit 0 |
+| Frontend typecheck | `npx tsc --noEmit` (in `frontend/`) | exit 0 |
+| Backend build | `npx tsc -p tsconfig.build.json --noCheck` (the root-owned `dist/` renamed aside first) | emitted; `dist/` owned by `cartenz` |
+| Built artefact contains the new shape | `grep -c localProviderOnly dist/agent/orchestration/agent-workflow.js` and the backup service files | present (5 call sites; service, controller, resolver) |
+| Boot test of the new module graph | `env API_PORT=4011 node backend/dist/main.js` | started clean; `/health/ready` 200; `/projects/:id/backups` 401 (route live); zero DI/circular errors |
+| Access control, live | `infrastructure/scripts/smoke-test-access.sh` (rewritten for the region model) | **23 checks passed**, project and fixture users cleaned up |
+| Estate monitor, live | `infrastructure/scripts/estate-monitor.sh` | all checks passed (the no-`odoo-*`-units warning is honest: nothing is provisioned on this host) |
+| Migration 0018 + 0019 | `npm run db:migrate --workspace backend`; `\d project_backups` | applied; table and column present in `linkederp_ai` |
+| Portal build | `infrastructure/scripts/build-portal.sh` | built and verified (`https://cartenz.masbintang.space` baked in; no `localhost:4000`; `.next` owned by `cartenz`) |
+| Both shell scripts | `bash -n`; `visudo -cf infrastructure/provisioning/99-linkederp-provisioning` | parsed OK |
+
+Two facts found while working that cost time and are worth recording:
+
+1. **A journal entry whose `when` is older than its predecessor is silently skipped.**
+   `0018_project_backups` was first journalled with a fresh `Date.now()` value, which was
+   *smaller* than the hand-set timestamps on `0016`/`0017` (they run ahead of the wall
+   clock); the migrator sorted it before the last applied entry and never ran it. The
+   symptom is `Migrations applied.` followed by a missing table. Give a new entry
+   `previous.when + 1`.
+2. **The running portal and API keep serving the code they started with.** Nothing in this
+   pass is live until `systemctl restart cartenz-api cartenz-worker cartenz-portal` runs as
+   root - and the seventh sudoers entry must be installed in the same session, because the
+   pre-push backup refuses a staging push when its `sudo` call cannot run.
+
+### Not verified here
+
+- The first live backup and a restore drill (needs the new sudoers entry — operator step).
+- The preview's first live instance (already recorded as pending in the ADR-052 entry).
+- `smoke-test.sh` remains in its broken organisation-model state; `smoke-test-access.sh` was
+  the one rewritten. The template rebuild (phonenumbers) and the standard-DB uploads remain
+  operator steps.

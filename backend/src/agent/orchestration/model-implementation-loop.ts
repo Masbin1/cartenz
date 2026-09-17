@@ -61,6 +61,8 @@ export interface ImplementationLoopInput {
    * only thing the caller passes.
    */
   readonly projectId?: string;
+  /** This project may only use on-host models (ADR-055). */
+  readonly localProviderOnly?: boolean;
   readonly prompt: string;
   readonly projectName: string;
   readonly taskReference: string;
@@ -121,7 +123,7 @@ export class ModelImplementationLoop {
   ) {}
 
   async run(input: ImplementationLoopInput): Promise<ImplementationLoopOutcome> {
-    const provider = await this.providers.forProject(input.projectId);
+    const provider = await this.providers.forProject(input.projectId, { localOnly: input.localProviderOnly });
     const tools = this.offeredTools(input.agentPermissions, input.executionMode ?? null);
 
     // An empty tool list means the model is asked to change a repository with no

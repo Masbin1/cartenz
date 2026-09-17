@@ -92,7 +92,9 @@ export class TasksService {
 
   async create(user: AuthenticatedUser, projectId: string, dto: CreateTaskDto) {
     // Which product shape this task is (ADR-029). `change` is the existing
-    // development run; `chat` answers a question and never commits or pushes.
+    // development run; `chat` answers a question. An approved write in a chat is
+    // committed and pushed by the platform afterwards (ADR-053), but the chat
+    // never does either by its own choice.
     const kind: AgentTaskKind = dto.kind ?? 'change';
 
     const context = await this.authz.requireProjectAccess(user, projectId);
@@ -202,8 +204,10 @@ export class TasksService {
      * standing between the agent's commit and `main`, which makes the restriction
      * matter more there than on Odoo.sh, not less.
      *
-     * A `chat` task skips this refusal (ADR-029): it never commits or pushes, so
-     * targeting the branch a person is on is harmless - the agent only reads it.
+     * A `chat` task skips this refusal (ADR-029): a conversation only reads, and
+     * an approved write it may land never goes onto main itself - a main-targeted
+     * clone-backed task works on a branch of its own (ADR-046), and the in-place
+     * (`on_premise`) case refuses the commit outright (ADR-053).
      */
     if (
       kind !== 'chat' &&

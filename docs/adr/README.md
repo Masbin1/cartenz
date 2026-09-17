@@ -52,3 +52,6 @@ with the condition under which it is retired.
 | [ADR-050](ADR-050-repo-backed-connected-projects.md) | Repo-backed connected projects, and the remote deploy target | Accepted |
 | [ADR-051](ADR-051-standard-database-catalog.md) | A standard-database catalog for AI-safe instances | Accepted |
 | [ADR-052](ADR-052-ephemeral-preview-instances.md) | Ephemeral preview instances — see the draft Odoo UI before approving | Accepted |
+| [ADR-053](ADR-053-approved-chat-write-lands.md) | An approved chat write lands — committed and pushed like a change task | Accepted |
+| [ADR-054](ADR-054-per-client-backups.md) | Per-client backups, and the restore point before a staging push | Accepted |
+| [ADR-055](ADR-055-per-project-on-host-models-only.md) | A per-project "on-host models only" flag | Accepted |

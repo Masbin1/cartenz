@@ -182,6 +182,8 @@ export class CommandRunner {
   private readonly pullScript: string;
   /** The ephemeral-preview script sudo may be asked to run (ADR-052). */
   private readonly previewScript: string;
+  /** The per-client backup script sudo may be asked to run (ADR-054). */
+  private readonly backupScript: string;
   /** Settings that enable a guarded subcommand, by setting name. */
   private readonly enabled: Readonly<Record<string, boolean>>;
 
@@ -219,6 +221,12 @@ export class CommandRunner {
     // must hold even when provisioning is on. `config.preview.enabled` also
     // requires the provisioning switch, so this is the single place that decides.
     this.previewScript = config.preview?.enabled ? (config.preview.script ?? '') : '';
+    // ADR-054. Same posture as the pull and preview scripts: empty
+    // PROJECT_BACKUP_SCRIPT is the off switch, and it must hold even when
+    // provisioning is on.
+    this.backupScript = config.provisioning?.enabled
+      ? (config.provisioning.backupScript ?? '')
+      : '';
 
     if (config.validation.enabled) {
       this.logger.warn(
@@ -312,6 +320,7 @@ export class CommandRunner {
         this.httpsScript || null,
         this.pullScript || null,
         this.previewScript || null,
+        this.backupScript || null,
       );
     }
 
@@ -577,6 +586,11 @@ const PREVIEW_REF = /^[a-z0-9]{16}$/;
  *   preview script (ADR-052); the job file and patch are read from a fixed
  *   staging directory, never from an argument.
  *
+ *   `sudo -n <backup-script> <project-name>` — the per-client backup script
+ *   (ADR-054), which snapshots the project's database, filestore and addons
+ *   repository before a staging push. The same shape as the grant script; the
+ *   configured path is the only thing distinguishing them.
+ *
  * The configured scripts are disjoint by construction (distinct configuration
  * keys); a script appearing in none of them is refused. Every check here duplicates a check the scripts themselves
  * make; that is deliberate: the scripts run as root on the strength of a
@@ -596,6 +610,7 @@ export function assertProvisioningInvocation(
   httpsScript: string | null = null,
   pullScript: string | null = null,
   previewScript: string | null = null,
+  backupScript: string | null = null,
 ): void {
   if (args[0] !== '-n') {
     throw new CommandArgumentError(
@@ -615,14 +630,16 @@ export function assertProvisioningInvocation(
   const isHttps = httpsScript !== null && script === httpsScript;
   const isPull = pullScript !== null && script === pullScript;
   const isPreview = previewScript !== null && script === previewScript;
+  const isBackup = backupScript !== null && script === backupScript;
 
-  if (!isCreate && !isGrant && !isHttps && !isPull && !isPreview) {
+  if (!isCreate && !isGrant && !isHttps && !isPull && !isPreview && !isBackup) {
     const configured = [
       ...createScripts,
       ...(grantScript ? [grantScript] : []),
       ...(httpsScript ? [httpsScript] : []),
       ...(pullScript ? [pullScript] : []),
       ...(previewScript ? [previewScript] : []),
+      ...(backupScript ? [backupScript] : []),
     ];
     throw new CommandArgumentError(
       `"${script}" is not a configured provisioning script. Configured: ` +
@@ -679,6 +696,19 @@ export function assertProvisioningInvocation(
     if (args.length !== 3) {
       throw new CommandArgumentError(
         `The addons-ownership script takes exactly "-n <script> <project-name>"; got ` +
+          `${args.length} arguments.`,
+      );
+    }
+    return;
+  }
+
+  // ADR-054. The backup script takes the same shape as the grant script - one
+  // project name and nothing else - and is distinguishable from it only by its
+  // configured path, which is the check that got here.
+  if (isBackup) {
+    if (args.length !== 3) {
+      throw new CommandArgumentError(
+        `The backup script takes exactly "-n <script> <project-name>"; got ` +
           `${args.length} arguments.`,
       );
     }

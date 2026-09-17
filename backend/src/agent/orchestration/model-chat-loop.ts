@@ -40,6 +40,8 @@ export type LoopToolResult = 'succeeded' | 'failed' | 'denied' | 'approval_requi
 export interface ChatLoopInput {
   /** Scopes an agent-backed endpoint's memory to this project, when known. */
   readonly projectId?: string;
+  /** This project may only use on-host models (ADR-055). */
+  readonly localProviderOnly?: boolean;
   readonly prompt: string;
   readonly projectName: string;
   readonly taskReference: string;
@@ -259,6 +261,12 @@ export class ChatLoop {
  * task may read anything, but a write pauses the task for a person. The model is
  * told the truth about that so it answers rather than edits when the question
  * does not ask for a change, and says what it would change when it does.
+ *
+ * Since ADR-053 an approved write does land: the platform commits it and pushes
+ * it under the same rules a change task follows. The model is still told it does
+ * not commit or push itself - it does not; the platform does, after a person has
+ * approved the write - because a model that believes it can push reaches for
+ * something it will be refused.
  */
 const CHAT_INSTRUCTION = [
   '# This conversation',
@@ -275,7 +283,9 @@ const CHAT_INSTRUCTION = [
   '- You may use a write tool (edit_file, update_file, create_file) if a change is',
   '  clearly wanted; the platform will pause for approval before anything is',
   '  written. When in doubt, explain instead of writing.',
-  '- Do not commit or push. A chat never does.',
+  '- You never commit or push yourself. Once a person approves a write, the',
+  '  platform commits it to the task branch and pushes it under the project\'s',
+  '  own push rules.',
   '',
   'Finish with a plain-language answer to the question. If you would change',
   'something, say what and where.',

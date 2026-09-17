@@ -78,7 +78,12 @@ const TRANSITIONS: Readonly<Record<AgentTaskStatus, readonly AgentTaskStatus[]>>
   // file_deletion) suspends the task from implementing into waiting_approval,
   // then resumes back into implementing once decided (ADR-029). The edge is
   // absent from the chapter-6 diagram but required by the approval mechanism.
-  implementing: ['testing', 'waiting_approval', 'failed', 'cancelled'],
+  //
+  // ADR-053 adds implementing -> committing: an approved write in a chat task
+  // goes straight to the commit/push machinery. A conversation has nothing to
+  // validate, so it has no reason to pass through `testing` - that hop remains
+  // only for a chat that answered and changed nothing.
+  implementing: ['testing', 'committing', 'waiting_approval', 'failed', 'cancelled'],
   // Testing may return to implementing so that a failed validation can be
   // repaired within the same task rather than requiring a new one.
   testing: ['implementing', 'committing', 'completed', 'failed', 'cancelled'],

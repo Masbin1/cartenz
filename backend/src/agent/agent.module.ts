@@ -29,6 +29,7 @@ import { OdooSHExecutor } from './executors/odoo-sh.executor';
 import { OdooOnlineExecutor } from './executors/odoo-online.executor';
 import { ApprovalsModule } from '../modules/approvals/approvals.module';
 import { DocumentsModule } from '../modules/documents/documents.module';
+import { ProjectsModule } from '../modules/projects/projects.module';
 
 /**
  * The agent layer: orchestration, tools, git, analysis and the workspace seam
@@ -43,9 +44,18 @@ import { DocumentsModule } from '../modules/documents/documents.module';
  * domain: the workflow requests approvals, and an approval decision resumes the
  * workflow. forwardRef records that rather than hiding it behind an event bus that
  * would make the sequence harder to follow.
+ *
+ * The circular reference to ProjectsModule is the same shape (ADR-054): the
+ * workflow takes a per-client backup before a push onto a staging branch, and a
+ * backup resolves the project's own record through the projects module.
  */
 @Module({
-  imports: [ModelModule, forwardRef(() => ApprovalsModule), DocumentsModule],
+  imports: [
+    ModelModule,
+    forwardRef(() => ApprovalsModule),
+    DocumentsModule,
+    forwardRef(() => ProjectsModule),
+  ],
   providers: [
     TaskRepository,
     GitService,

@@ -13,6 +13,7 @@ import type {
   PendingAccessRequest,
   PendingApprovalSummary,
   ProjectAccessMember,
+  BackupSummary,
   ProjectDetail,
   ProjectDocument,
   ProjectDocumentDetail,
@@ -463,6 +464,22 @@ export const api = {
       request<{ stopped: boolean; message: string }>(`/projects/${projectId}/preview`, {
         method: 'DELETE',
       }),
+
+    /**
+     * The per-client backups (ADR-054): a restorable snapshot of the instance's
+     * database, filestore and addons repository. `backups` reads what exists and
+     * whether this deployment can take one; `runBackup` takes one on request.
+     */
+    backups: (projectId: string) =>
+      request<{ available: boolean; reason: string | null; backups: BackupSummary[] }>(
+        `/projects/${projectId}/backups`,
+      ),
+
+    runBackup: (projectId: string) =>
+      request<{ backup: BackupSummary | null; message: string }>(
+        `/projects/${projectId}/backups`,
+        { method: 'POST' },
+      ),
 
     update: (projectId: string, body: Record<string, unknown>) =>
       request<ProjectDetail>(`/projects/${projectId}`, { method: 'PATCH', body }),

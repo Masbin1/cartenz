@@ -134,6 +134,26 @@ export type ProjectAccessRequestStatus = (typeof PROJECT_ACCESS_REQUEST_STATUSES
 export const PREVIEW_STATUSES = ['creating', 'ready', 'failed', 'stopped'] as const;
 export type PreviewStatus = (typeof PREVIEW_STATUSES)[number];
 
+/**
+ * The lifecycle of one per-client backup (ADR-054).
+ *
+ * The root-run script is synchronous, so `running` is only observable while the
+ * call is in flight or after a crash - it exists so an interrupted run is
+ * visible as such rather than silently absent. `completed` carries the path and
+ * size; `failed` carries the reason. A backup that failed has no partial
+ * directory on disk: the script removes it.
+ */
+export const BACKUP_STATUSES = ['running', 'completed', 'failed'] as const;
+export type BackupStatus = (typeof BACKUP_STATUSES)[number];
+
+/**
+ * Why a backup was taken. `pre_push` is the automatic restore point taken
+ * before a push onto a staging (or main-named) branch; `manual` is a person
+ * asking for one, from the portal or an operator's own call.
+ */
+export const BACKUP_REASONS = ['pre_push', 'manual'] as const;
+export type BackupReason = (typeof BACKUP_REASONS)[number];
+
 /** Agent session lifecycle. */
 export const AGENT_SESSION_STATUSES = ['active', 'ended'] as const;
 export type AgentSessionStatus = (typeof AGENT_SESSION_STATUSES)[number];

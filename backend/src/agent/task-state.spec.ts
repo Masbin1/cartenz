@@ -137,4 +137,11 @@ describe('agent task state machine', () => {
     // the conversational loop instead of planning.
     expect(canTransition('analyzing', 'implementing')).toBe(true);
   });
+
+  it('permits implementing -> committing for an approved chat write (ADR-053)', () => {
+    // A conversation has nothing to validate; an approved write goes straight to
+    // the commit/push machinery. The testing hop remains only for a chat that
+    // answered and changed nothing.
+    expect(canTransition('implementing', 'committing')).toBe(true);
+  });
 });

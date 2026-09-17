@@ -223,6 +223,19 @@ const environmentSchema = z.object({
     .default('/opt/cartenz/infrastructure/provisioning/pull-project.sh'),
 
   /**
+   * Absolute path to the per-client backup script (ADR-054).
+   *
+   * Same shape as PROJECT_PULL_SCRIPT and for the same reason: defaulted, and
+   * empty disables the feature on a deployment that has not installed the
+   * script's sudoers entry. With it enabled, a push onto a staging (or
+   * main-named) branch takes a backup first, and a push whose backup fails does
+   * not proceed.
+   */
+  PROJECT_BACKUP_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/backup-project.sh'),
+
+  /**
    * The email certbot registers a Let's Encrypt account under. Never a
    * secret — passed as a plain argument to certbot, and used only for expiry
    * notifications — but required (not defaulted) once PROJECT_HTTPS_ENABLED is
@@ -515,6 +528,12 @@ export interface AppConfig {
      * guard refuses the invocation and the portal does not offer it.
      */
     readonly pullScript: string | null;
+    /**
+     * The per-client backup script (ADR-054), or null when the deployment has
+     * not configured one. Null disables the pre-push backup: the guard refuses
+     * the invocation and a push proceeds without a restore point.
+     */
+    readonly backupScript: string | null;
     readonly portRangeStart: number;
     readonly portRangeEnd: number;
     readonly baseDomain: string | null;
@@ -706,6 +725,11 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   if (env.PROJECT_PULL_SCRIPT && !isAbsolute(env.PROJECT_PULL_SCRIPT)) {
     throw new ConfigurationError(['PROJECT_PULL_SCRIPT must be an absolute path.']);
   }
+  // ADR-054, the same shape as the pull: empty disables the feature rather than
+  // offering a backup the second gate would refuse every time.
+  if (env.PROJECT_BACKUP_SCRIPT && !isAbsolute(env.PROJECT_BACKUP_SCRIPT)) {
+    throw new ConfigurationError(['PROJECT_BACKUP_SCRIPT must be an absolute path.']);
+  }
   if (!isAbsolute(env.PROJECT_PROVISION_PROJECTS_DIR)) {
     throw new ConfigurationError(['PROJECT_PROVISION_PROJECTS_DIR must be an absolute path.']);
   }
@@ -880,6 +904,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       enterpriseScript: env.PROJECT_PROVISION_SCRIPT_ENTERPRISE,
       grantScript: env.PROJECT_PROVISION_GRANT_SCRIPT,
       pullScript: emptyToUndefined(env.PROJECT_PULL_SCRIPT) ?? null,
+      backupScript: emptyToUndefined(env.PROJECT_BACKUP_SCRIPT) ?? null,
       portRangeStart: env.PROJECT_PORT_RANGE_START,
       portRangeEnd: env.PROJECT_PORT_RANGE_END,
       baseDomain: emptyToUndefined(env.PROJECT_BASE_DOMAIN) ?? null,

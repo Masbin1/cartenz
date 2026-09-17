@@ -91,6 +91,8 @@ export interface TaskExecutionSnapshot {
   readonly odooOnlineUrl: string | null;
   readonly plan: ImplementationPlan | null;
   readonly agentPermissions: Record<AgentPermission, boolean>;
+  /** Only on-host models for this project (ADR-055). */
+  readonly localProviderOnly: boolean;
   readonly grantedApprovals: readonly string[];
   /** Action of the approval still awaiting a decision, if any. */
   readonly pendingApproval: string | null;
@@ -144,6 +146,7 @@ export class TaskRepository {
         defaultBranch: projects.defaultBranch,
         projectType: projects.projectType,
         agentPermissions: projects.agentPermissions,
+        localProviderOnly: projects.localProviderOnly,
         environmentConfig: projects.environmentConfig,
         environmentId: agentTasks.environmentId,
       })
@@ -254,6 +257,7 @@ export class TaskRepository {
       odooOnlineUrl: readOdooOnlineUrl(connection?.metadata),
       plan: (row.plan as ImplementationPlan | null) ?? null,
       agentPermissions: resolveAgentPermissions(row.agentPermissions),
+      localProviderOnly: row.localProviderOnly,
       grantedApprovals: granted.map((entry) => entry.action),
       pendingApproval: pending?.action ?? null,
       lastDecision: lastDecision

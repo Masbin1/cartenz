@@ -93,16 +93,38 @@ export class ModelProviderResolver {
    * do not accumulate into the same memory. Because the built
    * providers then carry different headers, it is part of the cache key.
    */
-  async forProject(projectId?: string): Promise<ModelProvider> {
+  async forProject(
+    projectId?: string,
+    options: { readonly localOnly?: boolean } = {},
+  ): Promise<ModelProvider> {
     const chain = await this.settings.resolveChain();
-    const cacheKey = projectId ?? '-';
+    const localOnly = options.localOnly === true;
+    const cacheKey = `${projectId ?? '-'}|${localOnly ? 'local' : 'any'}`;
 
     const cached = this.cache.get(cacheKey);
     if (cached && cached.revision === chain.revision) return cached.provider;
 
+    /**
+     * ADR-055: a project marked local-only keeps the chain to loopback base
+     * URLs - nothing about that project leaves the host. Refused rather than
+     * degraded when the chain has no such member: quietly using an external
+     * provider would break exactly the promise the flag exists to make.
+     */
+    const eligible = localOnly
+      ? chain.members.filter((member) => isLoopbackUrl(member.baseUrl))
+      : chain.members;
+
+    if (localOnly && eligible.length === 0) {
+      throw new BadRequestException(
+        'This project permits only model providers that do not leave the host (loopback base ' +
+          'URLs), and none of the deployment\'s configured providers is one. Configure a local ' +
+          'provider for this deployment, or turn the restriction off for this project.',
+      );
+    }
+
     // Mock is not a chain: it calls nothing, so there is nothing to fail over
     // from, and wrapping it would suggest otherwise.
-    if (chain.members.length === 1 && chain.members[0].providerId === 'mock') {
+    if (eligible.length === 1 && eligible[0].providerId === 'mock') {
       const provider = new GuardedModelProvider(
         new ScriptedModelProvider(this.config),
         this.boundary,
@@ -112,7 +134,7 @@ export class ModelProviderResolver {
     }
 
     const members: FailoverMember[] = [];
-    for (const settings of chain.members) {
+    for (const settings of eligible) {
       members.push({
         priority: settings.priority,
         label: settings.label,

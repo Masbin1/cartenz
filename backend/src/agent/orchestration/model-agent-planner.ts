@@ -18,6 +18,8 @@ export interface ModelPlanningInput {
    * only thing the caller passes.
    */
   readonly projectId?: string;
+  /** This project may only use on-host models (ADR-055). */
+  readonly localProviderOnly?: boolean;
   readonly prompt: string;
   readonly projectName: string;
   readonly taskReference: string;

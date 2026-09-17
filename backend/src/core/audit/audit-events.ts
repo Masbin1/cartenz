@@ -107,6 +107,14 @@ export const AUDIT_EVENTS = {
   PROJECT_PREVIEW_STOPPED: 'project.preview_stopped',
   PROJECT_PREVIEW_FAILED: 'project.preview_failed',
 
+  /**
+   * A per-client backup was taken or failed (ADR-054). Recorded here rather than
+   * only on the task, because a backup is a host action that outlives the task
+   * that requested it - the restore point is what matters afterwards.
+   */
+  PROJECT_BACKUP_CREATED: 'project.backup_created',
+  PROJECT_BACKUP_FAILED: 'project.backup_failed',
+
   /** The per-version Odoo source catalog was changed (ADR-045). */
   ODOO_VERSION_REPOSITORY_CREATED: 'odoo_version_repository.created',
   ODOO_VERSION_REPOSITORY_UPDATED: 'odoo_version_repository.updated',

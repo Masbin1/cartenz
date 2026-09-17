@@ -245,6 +245,15 @@ export class UpdateProjectDto {
   @IsOptional()
   @IsObject()
   environmentConfig?: Record<string, unknown>;
+
+  /**
+   * Restrict this project's tasks to on-host models (ADR-055). Changed only by
+   * an admin, the same rank that governs agent permissions: turning it off
+   * allows customer material to reach an external provider.
+   */
+  @IsOptional()
+  @IsBoolean()
+  localProviderOnly?: boolean;
 }
 
 /**

@@ -82,3 +82,6 @@ backend/test-provider*.js
 
 # Root-built Next.js output moved aside; never tracked
 frontend/.next.broken-root-*/
+
+# Renamed-aside root-owned trees awaiting a root rm (see docs runbooks)
+*.broken-root-*/

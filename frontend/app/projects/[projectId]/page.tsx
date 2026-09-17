@@ -11,7 +11,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Alert } from '@/components/ui/alert';
 import { PROJECT_TYPE_LABELS, humanise, relativeTime } from '@/lib/format';
-import type { ProjectDetail } from '@/lib/types';
+import type { BackupSummary, ProjectDetail } from '@/lib/types';
 
 export default function ProjectDetailPage() {
   const { loading, user } = useRequireAuth();
@@ -543,6 +543,8 @@ function InstancePanel({
         </div>
       ) : null}
 
+      <BackupsPanel projectId={projectId} provisioned={provisioning.status === 'provisioned'} />
+
       {provisioning.hasMasterPassword ? (
         <div className="border-t border-surface-border px-4 py-3">
           <p className="panel-title mb-2">Master password</p>
@@ -577,5 +579,110 @@ function InstancePanel({
         </div>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * The per-client backups (ADR-054): a restorable snapshot of the database, the
+ * filestore and the addons repository, taken before a push onto a staging (or
+ * main-named) branch and on request here. The snapshot itself lives under
+ * /opt/odoo/backups on the host and is restorable by an operator without this
+ * platform; this panel shows what exists and asks for one more.
+ */
+function BackupsPanel({ projectId, provisioned }: { projectId: string; provisioned: boolean }) {
+  const [backups, setBackups] = useState<BackupSummary[]>([]);
+  const [available, setAvailable] = useState(true);
+  const [availabilityReason, setAvailabilityReason] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const result = await api.projects.backups(projectId);
+      setBackups(result.backups);
+      setAvailable(result.available);
+      setAvailabilityReason(result.reason);
+    } catch {
+      setBackups([]);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!provisioned) return;
+    void load();
+  }, [load, provisioned]);
+
+  if (!provisioned) return null;
+
+  const runBackup = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api.projects.runBackup(projectId);
+      setNotice(result.message);
+      await load();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The backup could not be run.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const latest = backups[0] ?? null;
+
+  return (
+    <div className="space-y-2 border-t border-surface-border px-4 py-3">
+      <p className="panel-title">Backups</p>
+      <p className="text-2xs leading-relaxed text-content-subtle">
+        A restore point of this instance&apos;s database, filestore and addons repository, kept on
+        the host under /opt/odoo/backups. One is taken automatically before a push onto a staging
+        or main branch; this button takes one now.
+      </p>
+
+      {latest ? (
+        <ul className="divide-y divide-surface-border text-2xs">
+          {backups.slice(0, 3).map((row) => (
+            <li key={row.id} className="flex items-center justify-between gap-3 py-1.5">
+              <span className="font-mono">{row.backupId ?? row.createdAt}</span>
+              <span
+                className={
+                  row.status === 'completed'
+                    ? 'text-state-success'
+                    : row.status === 'failed'
+                      ? 'text-state-failure'
+                      : 'text-state-waiting'
+                }
+              >
+                {row.status}
+                {row.reason === 'pre_push' ? ' · before a push' : ''}
+                {row.sizeBytes ? ` · ${Math.round(row.sizeBytes / 1024 / 1024)} MB` : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-2xs text-content-subtle">No backups yet.</p>
+      )}
+
+      {available ? (
+        <button
+          type="button"
+          onClick={() => void runBackup()}
+          disabled={busy}
+          className="btn-secondary text-2xs"
+        >
+          {busy ? 'Backing up…' : 'Back up now'}
+        </button>
+      ) : (
+        <p className="text-2xs leading-relaxed text-content-subtle">
+          {availabilityReason ?? 'Backup is not enabled on this deployment.'}
+        </p>
+      )}
+
+      {notice ? <p className="text-2xs leading-relaxed text-state-success">{notice}</p> : null}
+      {error ? <p className="text-2xs leading-relaxed text-state-failure">{error}</p> : null}
+    </div>
   );
 }
