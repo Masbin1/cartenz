@@ -286,11 +286,11 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
   /**
    * Whether the form asks for a repository.
    *
-   * `on_premise` is included (ADR-049): an on-premise project is pointed at a
-   * directory on this host, and that directory's own repository is what the
-   * platform deploys from — the odoo.sh shape. Leaving the field empty is still
-   * allowed, because ADR-026's case is a directory that is read where it sits
-   * and may not be a checkout of anything.
+   * `on_premise` is included (ADR-049, ADR-050): an on-premise project either
+   * points at a directory on this host, or — when the customer's Odoo is on
+   * another server — at the repository the platform changes and pushes, with the
+   * customer's host pulling for itself. Supplying both is allowed; supplying
+   * neither is not, and is refused at submit.
    */
   const needsRepository =
     form.projectType === 'repository' ||
@@ -303,8 +303,16 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
     setError(null);
     setSubmitting(true);
 
-    if (form.projectType === 'on_premise' && onPremisePath.trim().length === 0) {
-      setError('Select the project folder the agent should operate on.');
+    // An on-premise project needs a local folder OR a repository (ADR-050): a
+    // folder when Cartenz runs beside the Odoo, a repository when it does not.
+    if (
+      form.projectType === 'on_premise' &&
+      onPremisePath.trim().length === 0 &&
+      form.repositoryUrl.trim().length === 0
+    ) {
+      setError(
+        'Select a project folder, or give the repository this project is deployed from.',
+      );
       setSubmitting(false);
       return;
     }
@@ -340,9 +348,13 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
             ? form.repositoryUrl.trim()
             : undefined,
         // The selected on-premise directory, stored in the project's environment
-        // configuration and enforced by the workspace layer at task time.
+        // configuration and enforced by the workspace layer at task time. Absent
+        // when the project is repo-backed instead (ADR-050): the clone supplies
+        // the code and no local directory is involved.
         environmentConfig:
-          form.projectType === 'on_premise' ? { onPremisePath } : undefined,
+          form.projectType === 'on_premise' && onPremisePath.trim().length > 0
+            ? { onPremisePath }
+            : undefined,
         // Sent only where branches mean something. Blank rows are dropped rather
         // than rejected: a half-filled row is a person still typing.
         environments: needsRepository
@@ -627,6 +639,7 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
           <div className="sm:col-span-2">
             <label htmlFor="onPremisePath" className="field-label">
               Project folder
+              {form.repositoryUrl.trim().length > 0 ? ' (optional)' : ''}
             </label>
             {onPremiseRoot === undefined ? (
               <p className="mt-1.5 text-2xs text-content-subtle">Reading available folders…</p>
@@ -645,7 +658,7 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
                 value={onPremisePath}
                 onChange={(event) => setOnPremisePath(event.target.value)}
                 className="field-input font-mono text-xs"
-                required
+                required={form.repositoryUrl.trim().length === 0}
               >
                 {onPremiseFolders.map((folder) => (
                   <option key={folder.path} value={folder.path}>
@@ -656,8 +669,9 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
               </select>
             )}
             <p className="mt-1.5 text-2xs text-content-subtle">
-              The agent operates directly on this directory and never modifies the shared Odoo base
-              or enterprise addons.
+              {form.repositoryUrl.trim().length > 0
+                ? 'A repository is given, so the platform changes the code in an isolated clone and pushes it; the customer’s own server pulls the branch. The folder is optional and used only when Cartenz runs beside the Odoo.'
+                : 'The agent operates directly on this directory and never modifies the shared Odoo base or enterprise addons. Add a repository URL instead when the customer’s Odoo is on another server.'}
             </p>
           </div>
         ) : null}

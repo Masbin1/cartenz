@@ -32,7 +32,7 @@ const MODE_BY_PROJECT_TYPE: Partial<Record<ProjectType, ExecutionMode>> = {
   on_premise: 'on_premise',
 };
 
-/** Facts beyond the project type that can decide an execution mode (ADR-036). */
+/** Facts beyond the project type that can decide an execution mode (ADR-036, ADR-050). */
 export interface ExecutionModeContext {
   /**
    * Whether the project has a local directory selected. For an `ai_project` this
@@ -40,6 +40,17 @@ export interface ExecutionModeContext {
    * ignore it, their mode being fixed by the type.
    */
   readonly hasLocalDirectory?: boolean;
+  /**
+   * Whether a connected (on-premise) project records a repository (ADR-050).
+   *
+   * A connected server whose Odoo is on another host cannot be operated in place
+   * — Cartenz cannot see that host's filesystem. With a repository recorded, the
+   * project runs the same Cartenz-managed Git workspace as `odoo_sh` (a per-task
+   * clone, branch as the source of truth, push to `development`/`staging`); the
+   * customer's own host pulls the branch. Without one, it keeps the in-place
+   * behaviour of ADR-026.
+   */
+  readonly hasRepository?: boolean;
 }
 
 /** The execution mode a task on the given project type runs in, or null. */
@@ -52,6 +63,13 @@ export function executionModeFor(
   // into that directory rather than into a throwaway simulated workspace.
   if (projectType === 'ai_project') {
     return context.hasLocalDirectory ? 'on_premise' : null;
+  }
+
+  // A connected project with a repository is repo-backed (ADR-050). It shares the
+  // Cartenz-managed Git workspace mode rather than the in-place one, so the same
+  // clone, branch policy, tool set and push path apply as for `odoo_sh`.
+  if (projectType === 'on_premise') {
+    return context.hasRepository ? 'odoo_sh' : 'on_premise';
   }
 
   return MODE_BY_PROJECT_TYPE[projectType] ?? null;

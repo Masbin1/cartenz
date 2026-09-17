@@ -20,6 +20,20 @@ describe('executionModeFor', () => {
     expect(executionModeFor('ai_project', { hasLocalDirectory: true })).toBe('on_premise');
   });
 
+  it('runs a connected project with a repository as a clone-backed workspace (ADR-050)', () => {
+    // The customer's Odoo may be on another host; the platform clones the branch
+    // and pushes, and that host pulls for itself.
+    expect(executionModeFor('on_premise', { hasRepository: true })).toBe('odoo_sh');
+  });
+
+  it('keeps a connected project with no repository in place (ADR-026)', () => {
+    expect(executionModeFor('on_premise')).toBe('on_premise');
+    expect(executionModeFor('on_premise', { hasRepository: false })).toBe('on_premise');
+    expect(
+      executionModeFor('on_premise', { hasLocalDirectory: true, hasRepository: false }),
+    ).toBe('on_premise');
+  });
+
   it('ignores the local-directory hint for types whose mode is fixed', () => {
     expect(executionModeFor('odoo_online', { hasLocalDirectory: true })).toBe('odoo_online');
     expect(executionModeFor('odoo_sh', { hasLocalDirectory: true })).toBe('odoo_sh');

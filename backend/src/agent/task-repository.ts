@@ -229,6 +229,9 @@ export class TaskRepository {
       projectType: row.projectType as ProjectType,
       executionMode: executionModeFor(row.projectType as ProjectType, {
         hasLocalDirectory: onPremiseProjectPath !== null,
+        // A connected project with a repository is repo-backed (ADR-050): it
+        // clones the branch rather than operating on the local directory.
+        hasRepository: row.repositoryUrl !== null,
       }),
       prompt: row.prompt,
       attachedDocumentIds: row.attachedDocumentIds ?? [],
