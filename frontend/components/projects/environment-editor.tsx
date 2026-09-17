@@ -73,7 +73,9 @@ export function EnvironmentEditor({ value, onChange, disabled = false, branches 
   const targetable = value.filter((row) => row.kind !== 'production');
 
   return (
-    <div className="space-y-3">
+    // Full width of the form grid: three fields and a remove button squeezed
+    // into a half-width column left every input too narrow to read its value.
+    <div className="space-y-3 sm:col-span-2">
       <div>
         <span className="field-label">Environments</span>
         <p className="mt-1.5 text-2xs text-content-subtle">
@@ -94,63 +96,84 @@ export function EnvironmentEditor({ value, onChange, disabled = false, branches 
 
       <div className="space-y-2">
         {value.map((row, index) => (
-          <div key={index} className="flex items-start gap-2">
-            <input
-              aria-label={`Environment ${index + 1} name`}
-              placeholder="staging"
-              value={row.name}
-              onChange={(event) => set(index, { name: event.target.value })}
-              disabled={disabled}
-              className="field-input flex-1 text-xs"
-            />
-            {branches ? (
-              <select
-                aria-label={`Environment ${index + 1} branch`}
-                value={row.branch}
-                onChange={(event) => set(index, { branch: event.target.value })}
+          // Each environment is a card, and every field carries its own label:
+          // a bare row of three boxes gave no clue which one was the branch.
+          <div
+            key={index}
+            className="rounded-md border border-surface-border bg-surface-overlay/60 p-3
+              grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_11rem_auto] sm:items-end"
+          >
+            <label className="block min-w-0">
+              <span className="mb-1 block text-2xs text-content-subtle">Name</span>
+              <input
+                aria-label={`Environment ${index + 1} name`}
+                placeholder="staging"
+                value={row.name}
+                onChange={(event) => set(index, { name: event.target.value })}
                 disabled={disabled}
-                className="field-input flex-1 font-mono text-xs"
+                className="field-input"
+              />
+            </label>
+
+            <label className="block min-w-0">
+              <span className="mb-1 block text-2xs text-content-subtle">Branch</span>
+              {branches ? (
+                <select
+                  aria-label={`Environment ${index + 1} branch`}
+                  value={row.branch}
+                  onChange={(event) => set(index, { branch: event.target.value })}
+                  disabled={disabled}
+                  className="field-input font-mono text-xs"
+                >
+                  <option value="">Pick a branch</option>
+                  {branches.map((branch) => (
+                    <option key={branch} value={branch}>
+                      {branch}
+                    </option>
+                  ))}
+                  {/* A branch already declared but no longer on the remote would
+                      otherwise vanish from the row without anyone noticing. */}
+                  {row.branch && !branches.includes(row.branch) ? (
+                    <option value={row.branch}>{row.branch} (not on the remote)</option>
+                  ) : null}
+                </select>
+              ) : (
+                <input
+                  aria-label={`Environment ${index + 1} branch`}
+                  placeholder="staging"
+                  value={row.branch}
+                  onChange={(event) => set(index, { branch: event.target.value })}
+                  disabled={disabled}
+                  className="field-input font-mono text-xs"
+                />
+              )}
+            </label>
+
+            <label className="block min-w-0">
+              <span className="mb-1 block text-2xs text-content-subtle">Type</span>
+              <select
+                aria-label={`Environment ${index + 1} kind`}
+                value={row.kind}
+                onChange={(event) => set(index, { kind: event.target.value as EnvironmentKind })}
+                disabled={disabled}
+                className="field-input"
               >
-                <option value="">Pick a branch</option>
-                {branches.map((branch) => (
-                  <option key={branch} value={branch}>
-                    {branch}
+                {KINDS.map((kind) => (
+                  <option key={kind.value} value={kind.value}>
+                    {kind.label}
                   </option>
                 ))}
-                {/* A branch already declared but no longer on the remote would
-                    otherwise vanish from the row without anyone noticing. */}
-                {row.branch && !branches.includes(row.branch) ? (
-                  <option value={row.branch}>{row.branch} (not on the remote)</option>
-                ) : null}
               </select>
-            ) : (
-              <input
-                aria-label={`Environment ${index + 1} branch`}
-                placeholder="staging"
-                value={row.branch}
-                onChange={(event) => set(index, { branch: event.target.value })}
-                disabled={disabled}
-                className="field-input flex-1 font-mono text-xs"
-              />
-            )}
-            <select
-              aria-label={`Environment ${index + 1} kind`}
-              value={row.kind}
-              onChange={(event) => set(index, { kind: event.target.value as EnvironmentKind })}
-              disabled={disabled}
-              className="field-input w-36 text-xs"
-            >
-              {KINDS.map((kind) => (
-                <option key={kind.value} value={kind.value}>
-                  {kind.label}
-                </option>
-              ))}
-            </select>
+            </label>
+
             <button
               type="button"
               onClick={() => remove(index)}
               disabled={disabled || value.length <= 1}
-              className="mt-1 px-2 text-2xs text-content-subtle hover:text-content-muted disabled:opacity-40"
+              className="h-[38px] rounded-md border border-surface-border px-3 text-2xs
+                text-content-subtle hover:border-state-failure/40 hover:text-state-failure
+                disabled:opacity-40 disabled:hover:border-surface-border
+                disabled:hover:text-content-subtle"
               aria-label={`Remove environment ${index + 1}`}
             >
               Remove
@@ -163,9 +186,11 @@ export function EnvironmentEditor({ value, onChange, disabled = false, branches 
         type="button"
         onClick={add}
         disabled={disabled}
-        className="text-2xs font-medium text-accent hover:underline disabled:opacity-40"
+        className="rounded-md border border-dashed border-surface-border px-3 py-2 text-xs
+          font-medium text-content-muted hover:border-accent hover:text-accent
+          disabled:opacity-40"
       >
-        Add environment
+        + Add environment
       </button>
 
       {targetable.length === 0 ? (
