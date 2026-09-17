@@ -530,10 +530,14 @@ Odoo screen, no draft instance, and no way to see the change as a user of the Od
    the honest preview and it is the expensive one; it leans on the same template-database
    machinery as ADR-045 and the validation runner of ADR-027. **ADR-050's connected-server
    replica already produces exactly this** (code from Git + standard database + Odoo source),
-   so building the replica and building the preview are the same work.
+   so building the replica and building the preview are the same work. **ADR-052 (Proposed)
+   specifies it in full.**
 3. **Deploy-to-staging preview** — use the existing `pull-project.sh` against a staging instance
    and present the staging URL as the preview.
 This needs an ADR, because it changes what "approve" means and what resources a draft costs.
+ADR-052 is that ADR, and it turns on one fact: the task workspace is destroyed the moment a run
+suspends for an approval, so a preview is rebuilt from the task's retained diff rather than from
+a live workspace.
 
 ### 6.9 Access Right on the portal
 
@@ -576,7 +580,7 @@ This needs an ADR, because it changes what "approve" means and what resources a 
 | 5 | Fix code changes in Chat/Change | **`change` done; `chat` writes but never lands** | Choose option 1 or 2 in §6.5 (ADR) |
 | 6 | Data exposure to outside LLM | **Boundary done** (ADR-020); two documented gaps | Data-processing posture; local-only flag |
 | 7 | Paste image/photo/file in chat | **Images done** (ADR-042); files upload-only | Accept non-image paste |
-| 8 | UI preview before approve/deploy | **Not done** | Reuse the ADR-050 replica as the preview instance (§6.8 option 2) |
+| 8 | UI preview before approve/deploy | **Proposed** (ADR-052) | Build the ephemeral preview instance (§6.8 option 2); depends on the ADR-050 replica |
 | 9 | Access Right on the portal | **Done and verified** (ADR-043/044) | Notifications, shared with §6.3 |
 
 ---
@@ -593,6 +597,7 @@ This needs an ADR, because it changes what "approve" means and what resources a 
 | Provisioning, HTTPS, deploy | ADR-039, ADR-040, ADR-049 |
 | Connected-server replica and remote deploy target | ADR-050 |
 | Standard database catalog (`database/`) | ADR-051, `database/README.md` |
+| UI preview before approve/deploy | ADR-052 (Proposed) |
 | Access control | ADR-043, ADR-044 |
 | AI data boundary | ADR-020, ADR-042 |
 | Push safety and branches | ADR-021, ADR-041, ADR-046 |
