@@ -14,6 +14,7 @@ import { ActivityTimeline } from '@/components/agent/activity-timeline';
 import { ChatMarkdown } from '@/components/agent/chat-markdown';
 import { PlanView } from '@/components/agent/plan-view';
 import { ApprovalPanel } from '@/components/agent/approval-panel';
+import { PreviewPanel } from '@/components/projects/preview-panel';
 import { TaskInspector } from '@/components/agent/task-inspector';
 import { DiffViewer } from '@/components/diff/diff-viewer';
 import { isActiveStatus, relativeTime } from '@/lib/format';
@@ -735,6 +736,10 @@ export default function AgentWorkspacePage() {
               onDecide={decide}
               canDecide={canDecide}
             />
+          ) : null}
+
+          {task?.hasDiff && selectedTaskId ? (
+            <PreviewPanel projectId={projectId} taskId={selectedTaskId} hasDiff={task.hasDiff} />
           ) : null}
 
           <div className="panel">

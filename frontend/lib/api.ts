@@ -18,7 +18,9 @@ import type {
   ProjectDocumentDetail,
   OdooSettings,
   ProjectEnvironment,
+  ProjectPreviewState,
   ProjectSummary,
+  PreviewSummary,
   TaskDetail,
   TaskDiff,
   TaskEvent,
@@ -441,6 +443,26 @@ export const api = {
         message: string;
         durationMs: number;
       }>(`/projects/${projectId}/pull`, { method: 'POST' }),
+
+    /**
+     * The ephemeral preview instance (ADR-052): a short-lived running Odoo built
+     * from a task's retained draft, so a reviewer sees the real UI before
+     * approving. `preview` reads the live one, `startPreview` builds it,
+     * `stopPreview` tears it down early.
+     */
+    preview: (projectId: string) =>
+      request<ProjectPreviewState>(`/projects/${projectId}/preview`),
+
+    startPreview: (projectId: string, taskId: string) =>
+      request<{ preview: PreviewSummary | null; message: string }>(
+        `/projects/${projectId}/preview`,
+        { method: 'POST', body: { taskId } },
+      ),
+
+    stopPreview: (projectId: string) =>
+      request<{ stopped: boolean; message: string }>(`/projects/${projectId}/preview`, {
+        method: 'DELETE',
+      }),
 
     update: (projectId: string, body: Record<string, unknown>) =>
       request<ProjectDetail>(`/projects/${projectId}`, { method: 'PATCH', body }),

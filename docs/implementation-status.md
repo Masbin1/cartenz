@@ -235,6 +235,8 @@ has been reviewed.
 | Locked project cards, request-access button, owner grant panel | Complete (ADR-043) |
 | User administration: region, admin flag, reset password | Complete (ADR-044) |
 | Conversation-grouped workspace history | Complete (ADR-047) |
+| Ephemeral preview instance: routes, lifecycle, reaper, region template clone | Complete (ADR-052); first live instance needs the operator's root/script step |
+| Ephemeral preview panel in the agent workspace | Complete (ADR-052) |
 
 ---
 
@@ -868,7 +870,7 @@ one place. The full architecture and the next step for each item are in
 | 5 | Fix code changes in Chat / Change code | **`change` works; a `chat` write is diffed but never committed or pushed** | Decide (ADR): let an approved chat write land, or add "turn into a change task" |
 | 6 | Data exposed to outside LLM (data-breach concern) | **Boundary implemented** (ADR-020); source code and image bytes are deliberate exceptions | Document a data-processing posture; add a per-project local-only provider flag |
 | 7 | Paste image/photo/file in the chat | **Images done** (ADR-042); documents are upload-only | Accept non-image clipboard files through the same upload endpoint |
-| 8 | UI preview before approving/deploying to Odoo | **Not done** | Decide (ADR): static render, ephemeral preview instance, or deploy-to-staging preview |
+| 8 | UI preview before approving/deploying to Odoo | **Done** (ADR-052) — ephemeral instance rebuilt from the task's retained diff, standard database, token-gated URL, one per project, TTL + reaper | First live instance on a host with the script, sudoers entry, runtimes and a standard template |
 | 9 | **Access Right set on the portal** | **Done and verified** (ADR-043, ADR-044) — grants, requests, approve/reject, region scoping, admin flag, 403 on open, redacted locked list, 24-check smoke test | No further work for the stated scope; notifications remain the shared gap with item 3 |
 
 Item 9 was the one to confirm: it is complete. `infrastructure/scripts/smoke-test-access.sh`

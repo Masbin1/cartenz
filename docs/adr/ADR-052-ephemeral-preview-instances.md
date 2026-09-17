@@ -1,8 +1,8 @@
 # ADR-052: Ephemeral preview instances — see the draft Odoo UI before approving
 
-- Status: Proposed
+- Status: Accepted
 - Date: 17 September 2026
-- Milestone: Phase 5 (review), target a later phase
+- Milestone: Phase 5 (review)
 
 Builds on ADR-021 (the approval gate), ADR-027 (running Odoo for validation),
 ADR-039 (root-run provisioning scripts), ADR-045/051 (template databases),
@@ -125,6 +125,27 @@ Preview is available where the platform holds the draft's code: `odoo_sh`,
 `repository`, and `on_premise` with a repository (ADR-050). It is **not** available
 for `odoo_online`, which has no filesystem.
 
+### 9. The open questions, settled
+
+The product brief (`docs/prd/PRD-preview-instance-before-approval.md` §8) left four
+questions to settle before accepting this ADR. They are decided here as built:
+
+1. **Which point offers Preview.** Wherever a task has a retained, non-truncated
+   diff — in practice, at the pre-push approval, and any task whose draft has been
+   saved (including a chat write once it retains a diff). The route names the task
+   explicitly (`POST /projects/:id/preview { taskId }`), so the portal offers it
+   beside whatever draft is on screen rather than at one hard-coded approval.
+2. **How many at once, and the ceiling.** One live preview per project; a new
+   request tears the previous one down first. Across projects, the preview port
+   range is the ceiling — `allocatePort` returns null and the request is refused
+   with a reason rather than over-subscribing the host.
+3. **Frame or new tab.** A **new tab**. Odoo sends `X-Frame-Options`, and a
+   token-bearing URL in a new tab is simpler and safer than re-hosting a framed
+   Odoo inside the portal.
+4. **The diff-patch cap.** The preview **refuses** a truncated draft with that
+   reason (`decidePreview`), rather than showing a partial one. Raising the cap for
+   review remains a possible follow-up.
+
 ## Consequences
 
 - A reviewer sees the draft's real UI before approving, which is the whole point.
@@ -166,17 +187,36 @@ which case the patch-reconstruction step is the piece to revisit.
 
 ## Verification
 
-Not implemented. When it is, the checks are:
+Implemented 17 September 2026. Verified in this repository:
 
-- Requesting a preview on a task with a draft produces a running instance whose
-  `addons_path` includes the reconstructed draft; a request on a task with no or a
-  truncated diff is refused with that reason.
+- The decision is a pure function (`preview-plan.ts`) asserted by refusal: a
+  disabled deployment, an `odoo_online` or mode-less project, a task with no diff,
+  a truncated diff, and a project with no version are each refused with a specific
+  reason; only a fully-formed case is allowed.
+- `changedPathsFromPatch` / `previewModules` map a patch's files to Odoo modules,
+  skipping a leading `addons/` (ADR-034).
+- `assertProvisioningInvocation` has a preview branch asserted by refusal:
+  subcommand not start/stop, bad project name, bad ref, missing/extra argument, a
+  path that merely prefixes the configured script, and the shape when no preview
+  script is configured.
+- `0017_project_previews.sql` applies to PostgreSQL; the table and its indexes and
+  foreign keys exist.
+- Backend: 730 tests pass, `tsc --noEmit` clean, ESLint clean. Frontend:
+  `tsc --noEmit` clean, `next lint` clean. `bash -n` passes on
+  `preview-project.sh`; the sudoers rule parses under `visudo -cf` (the working
+  tree's CRLF must be stripped for `visudo` on this host, as for every script).
+
+**Not run on this host, and the honest gap:** the preview script has not built a
+real instance here. Starting it needs root, the sudoers entry, Odoo runtimes and a
+standard template database, which this development host does not have configured.
+The first real preview is an operator step away, exactly as ADR-049's first pull
+was. What that first run should confirm:
+
+- A preview whose `addons_path` includes the reconstructed draft comes up; a task
+  with no or a truncated diff is refused with that reason (already unit-tested).
 - The preview database is the standard artifact for the project's version, edition
-  and region, and its `database.uuid` is fresh.
-- `stop`, the TTL and the reaper each leave no unit, no database and no clone behind.
-- The preview URL refuses an unauthenticated request and is not reachable after the
+  and region, with a fresh `database.uuid`.
+- `stop`, the TTL and the reaper each leave no unit, no database and no clone
+  behind.
+- The preview URL refuses a request without the token, and is unreachable after the
   TTL.
-- A `odoo_online` project is not offered a preview.
-- The `preview-project` branch of `assertProvisioningInvocation` is tested by
-  refusal: a malformed project name, preview ref or branch, an extra argument, and a
-  missing patch.

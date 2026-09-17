@@ -98,6 +98,15 @@ export const AUDIT_EVENTS = {
   /** The organisation's Odoo paths were configured in the portal (ADR-033). */
   ODOO_SETTINGS_UPDATED: 'odoo_settings.updated',
 
+  /**
+   * An ephemeral preview instance was started, stopped, or failed to build
+   * (ADR-052). Recorded separately from the task's own events because a preview
+   * is a host action with its own lifecycle.
+   */
+  PROJECT_PREVIEW_STARTED: 'project.preview_started',
+  PROJECT_PREVIEW_STOPPED: 'project.preview_stopped',
+  PROJECT_PREVIEW_FAILED: 'project.preview_failed',
+
   /** The per-version Odoo source catalog was changed (ADR-045). */
   ODOO_VERSION_REPOSITORY_CREATED: 'odoo_version_repository.created',
   ODOO_VERSION_REPOSITORY_UPDATED: 'odoo_version_repository.updated',

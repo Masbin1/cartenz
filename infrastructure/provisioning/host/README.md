@@ -43,6 +43,24 @@ archive's filestore for `create-project-db.sh` to copy into each clone, and seal
 the template. A new project of that version, edition and region then clones it in
 seconds.
 
+## Ephemeral preview (ADR-052)
+
+The preview script runs from the repository checkout, not from `/opt/odoo/scripts`:
+
+- `preview-project.sh` at `/opt/cartenz/infrastructure/provisioning/preview-project.sh`
+  (the platform's default `PROJECT_PREVIEW_SCRIPT`).
+- Its line in the sudoers `Cmnd_Alias` (already in
+  `infrastructure/provisioning/99-linkederp-provisioning`).
+- The staging directory `/opt/cartenz/preview-staging`, mode 700 owned by `cartenz`
+  (the installer creates it; create it by hand otherwise).
+
+It needs the Odoo runtimes under `/opt/odoo/versions/<ver>/` (with a matching
+`venv<major>`), `python3`, `openssl`, and the standard template databases above.
+The script builds a preview by cloning the task's branch, applying its retained
+patch, cloning the version/edition/region template, updating the changed modules
+and starting a temporary systemd unit. `PROJECT_PROVISIONING_ENABLED` must be true,
+because the preview shares the same `sudo` grant.
+
 ## Fallback: source-built full installation (ADR-045)
 
 Where no standard database exists, build the source-based template as before:

@@ -23,6 +23,7 @@ import {
   CONNECTION_STATUSES,
   CONNECTION_TYPES,
   ODOO_EDITIONS,
+  PREVIEW_STATUSES,
   PROJECT_ACCESS_REQUEST_STATUSES,
   PROJECT_PROVISIONING_STATUSES,
   PROJECT_TYPES,
@@ -566,8 +567,65 @@ export const projectAccessRequests = pgTable(
   }),
 );
 
+/**
+ * An ephemeral preview instance (ADR-052).
+ *
+ * One row per preview, the most recent per project being the live one. It
+ * records what the root-run script built so the portal can show a link and a
+ * remaining time, and so a crashed worker's preview can be found and torn down.
+ * No column here holds a secret: the preview's database is the standard
+ * baseline, and the draft is a patch on disk only for the life of the build.
+ */
+export const projectPreviews = pgTable(
+  'project_previews',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    /** The task whose retained draft is being previewed. */
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => agentTasks.id, { onDelete: 'cascade' }),
+    /**
+     * A short opaque token naming this preview on the host: it is part of the
+     * database name, the systemd unit name and the preview directory, so it is
+     * validated as a plain lowercase token by both the script and the guard.
+     */
+    ref: text('ref').notNull(),
+    status: text('status', { enum: asEnum(PREVIEW_STATUSES) }).notNull().default('creating'),
+    branch: text('branch').notNull(),
+    baseCommit: text('base_commit'),
+    odooVersion: text('odoo_version'),
+    odooEdition: text('odoo_edition'),
+    region: text('region'),
+    port: integer('port'),
+    /** The URL a reviewer opens. Null until the instance is up. */
+    url: text('url'),
+    /** The scratch database and directory, recorded so a stop can be exact. */
+    databaseName: text('database_name'),
+    /** Why the build failed, when it did. */
+    error: text('error'),
+    /** When the instance is torn down, however it was started. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    startedByUserId: uuid('started_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    ...timestamps,
+  },
+  (table) => ({
+    refUnique: uniqueIndex('project_previews_ref_unique').on(table.ref),
+    // "the live preview for this project" is the query on every status read and
+    // every start's replacement check.
+    byProject: index('project_previews_project_idx').on(table.projectId),
+    byStatus: index('project_previews_status_idx').on(table.status),
+    byExpiry: index('project_previews_expires_idx').on(table.expiresAt),
+  }),
+);
+
 export type ProjectMemberRow = typeof projectMembers.$inferSelect;
 export type ProjectAccessRequestRow = typeof projectAccessRequests.$inferSelect;
+export type ProjectPreviewRow = typeof projectPreviews.$inferSelect;
 
 export const agentSessions = pgTable(
   'agent_sessions',
@@ -822,6 +880,15 @@ export const projectAccessRequestsRelations = relations(projectAccessRequests, (
     references: [projects.id],
   }),
   user: one(users, { fields: [projectAccessRequests.userId], references: [users.id] }),
+}));
+
+export const projectPreviewsRelations = relations(projectPreviews, ({ one }) => ({
+  project: one(projects, { fields: [projectPreviews.projectId], references: [projects.id] }),
+  task: one(agentTasks, { fields: [projectPreviews.taskId], references: [agentTasks.id] }),
+  startedBy: one(users, {
+    fields: [projectPreviews.startedByUserId],
+    references: [users.id],
+  }),
 }));
 
 export const agentTasksRelations = relations(agentTasks, ({ one, many }) => ({

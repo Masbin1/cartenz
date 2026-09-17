@@ -244,6 +244,36 @@ const environmentSchema = z.object({
   PROJECT_PROVISION_PROJECTS_DIR: z.string().default('/opt/odoo/projects'),
 
   /**
+   * The ephemeral Odoo preview (ADR-052).
+   *
+   * A preview instance is built for a task's retained draft, so a reviewer sees
+   * the real Odoo UI before approving. It runs behind the same provisioning
+   * switch and sudo grant as the other root-run scripts; a deployment with no
+   * script installed leaves the feature off rather than offering an action whose
+   * every press is refused (the same posture as the pull script above).
+   */
+  PROJECT_PREVIEW_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/preview-project.sh'),
+
+  /**
+   * Where the platform writes a preview's job file and patch for the root-run
+   * script to read. The script reads a fixed directory rather than a path from
+   * its argument vector, so no caller can point it at an arbitrary file.
+   */
+  PROJECT_PREVIEW_STAGING_DIR: z.string().default('/opt/cartenz/preview-staging'),
+
+  /** How long a preview instance lives before it is torn down. */
+  PROJECT_PREVIEW_TTL_MS: z.coerce.number().int().min(60_000).default(1_800_000),
+
+  /** The port range a preview instance's Odoo is allocated from. */
+  PROJECT_PREVIEW_PORT_RANGE_START: z.coerce.number().int().min(1024).max(65000).default(8100),
+  PROJECT_PREVIEW_PORT_RANGE_END: z.coerce.number().int().min(1024).max(65534).default(8199),
+
+  /** The domain a preview is served under: preview-<ref>.<this>. */
+  PROJECT_PREVIEW_BASE_DOMAIN: z.string().default(''),
+
+  /**
    * The Odoo source the agent reads as a reference on every Odoo project
    * (ADR-031), not only on-premise ones.
    *
@@ -490,6 +520,20 @@ export interface AppConfig {
     readonly baseDomain: string | null;
     readonly projectsDir: string;
   };
+  /**
+   * The ephemeral Odoo preview (ADR-052). `enabled` is true only when both
+   * provisioning is on (the preview shares its sudo grant) and a script is
+   * configured.
+   */
+  readonly preview: {
+    readonly enabled: boolean;
+    readonly script: string | null;
+    readonly stagingDir: string;
+    readonly ttlMs: number;
+    readonly portRangeStart: number;
+    readonly portRangeEnd: number;
+    readonly baseDomain: string | null;
+  };
   /** HTTPS issuance for a provisioned instance (ADR-040). */
   readonly https: {
     readonly enabled: boolean;
@@ -671,6 +715,21 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     ]);
   }
 
+  // The ephemeral preview (ADR-052). Staging dir and ports must be sane; a
+  // preview with no domain is allowed and simply reports a loopback URL, which
+  // an operator can reach through an SSH tunnel.
+  if (env.PROJECT_PREVIEW_SCRIPT && !isAbsolute(env.PROJECT_PREVIEW_SCRIPT)) {
+    throw new ConfigurationError(['PROJECT_PREVIEW_SCRIPT must be an absolute path.']);
+  }
+  if (!isAbsolute(env.PROJECT_PREVIEW_STAGING_DIR)) {
+    throw new ConfigurationError(['PROJECT_PREVIEW_STAGING_DIR must be an absolute path.']);
+  }
+  if (env.PROJECT_PREVIEW_PORT_RANGE_END <= env.PROJECT_PREVIEW_PORT_RANGE_START) {
+    throw new ConfigurationError([
+      'PROJECT_PREVIEW_PORT_RANGE_END must be greater than PROJECT_PREVIEW_PORT_RANGE_START.',
+    ]);
+  }
+
   /**
    * HTTPS issuance (ADR-040). Same boot-time validation posture as
    * provisioning above: an operator's misconfiguration should fail loudly
@@ -825,6 +884,23 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       portRangeEnd: env.PROJECT_PORT_RANGE_END,
       baseDomain: emptyToUndefined(env.PROJECT_BASE_DOMAIN) ?? null,
       projectsDir: env.PROJECT_PROVISION_PROJECTS_DIR,
+    },
+    preview: {
+      // Shares the provisioning switch, because the preview runs through the
+      // same sudo grant (ADR-052): a deployment with provisioning off cannot
+      // start one, and saying so up front is better than a refused button.
+      enabled:
+        env.PROJECT_PROVISIONING_ENABLED &&
+        Boolean(emptyToUndefined(env.PROJECT_PREVIEW_SCRIPT)),
+      script: emptyToUndefined(env.PROJECT_PREVIEW_SCRIPT) ?? null,
+      stagingDir: env.PROJECT_PREVIEW_STAGING_DIR,
+      ttlMs: env.PROJECT_PREVIEW_TTL_MS,
+      portRangeStart: env.PROJECT_PREVIEW_PORT_RANGE_START,
+      portRangeEnd: env.PROJECT_PREVIEW_PORT_RANGE_END,
+      baseDomain:
+        emptyToUndefined(env.PROJECT_PREVIEW_BASE_DOMAIN) ??
+        emptyToUndefined(env.PROJECT_BASE_DOMAIN) ??
+        null,
     },
     https: {
       // Requires provisioning itself to be on: HTTPS is issued for an instance

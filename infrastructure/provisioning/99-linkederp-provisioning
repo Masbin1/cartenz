@@ -10,7 +10,7 @@
 # What this grants, and nothing more:
 #
 #   - The "cartenz" user (the one the LinkedERP API and worker run as) may run
-#     exactly five commands as root, with NO password prompt (NOPASSWD) and
+#     exactly six commands as root, with NO password prompt (NOPASSWD) and
 #     no other privilege.
 #   - Two are the operator's own project-creation scripts, called with no
 #     wildcard in their arguments: the platform's own CommandRunner
@@ -36,13 +36,20 @@
 #     any domain that is not already the server_name in that project's own
 #     Nginx site.
 #
-#   - The fifth is the project pull (ADR-047):
+#   - The fifth is the project pull (ADR-049):
 #     infrastructure/provisioning/pull-project.sh brings a project's instance
 #     up to date with its own repository — the thing ADR-041 left one-way, where
 #     the platform could push to a project's GitHub repository but nothing ever
 #     pulled. It calls `sudo -u odoo` internally so the checkout stays owned by
 #     the user Odoo runs as, and takes an optional credential on stdin so no
 #     token ever appears in argv.
+#
+#   - The sixth is the ephemeral preview (ADR-052):
+#     infrastructure/provisioning/preview-project.sh builds a short-lived Odoo
+#     from a task's retained draft so a reviewer sees the real UI before
+#     approving. It takes only `start|stop <project-name> <ref>`; the job file
+#     and patch are read from a fixed staging directory, never from an argument,
+#     and the git credential arrives on stdin as the pull's does.
 #
 #   - `sudo -l -U cartenz` on the host shows exactly this rule; there is no
 #     wildcard sudo access anywhere else for this user.
@@ -55,7 +62,8 @@ Cmnd_Alias LINKEDERP_PROVISION = \
     /opt/odoo/scripts/create_project_enterprise, \
     /opt/cartenz/infrastructure/provisioning/grant-addons-write.sh, \
     /opt/cartenz/infrastructure/provisioning/setup-project-https.sh, \
-    /opt/cartenz/infrastructure/provisioning/pull-project.sh
+    /opt/cartenz/infrastructure/provisioning/pull-project.sh, \
+    /opt/cartenz/infrastructure/provisioning/preview-project.sh
 
 cartenz ALL=(root) NOPASSWD: LINKEDERP_PROVISION
 

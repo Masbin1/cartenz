@@ -33,7 +33,7 @@ step "provisioning: operator scripts"
 
 run mkdir -p "$PROVISIONING_SCRIPTS_DIR"
 
-for script in create_project create_project_enterprise create-project-db.sh grant-addons-write.sh setup-project-https.sh; do
+for script in create_project create_project_enterprise create-project-db.sh grant-addons-write.sh setup-project-https.sh pull-project.sh preview-project.sh; do
   SRC="$INSTALLER_ROOT/infrastructure/provisioning/$script"
   if [ ! -f "$SRC" ]; then
     warn "$script not in the repository — skipped"
@@ -66,6 +66,18 @@ step "provisioning: projects directory"
 run mkdir -p "$PROJECTS_DIR"
 run chown "$ODOO_GROUP:$ODOO_GROUP" "$PROJECTS_DIR"
 ok "$PROJECTS_DIR (owned by $ODOO_GROUP)"
+
+step "provisioning: preview staging directory"
+
+# Where the platform writes a preview's job file and patch for the root-run
+# preview-project.sh to read (ADR-052). Owned by the service user, mode 700: the
+# draft patch is customer source for the life of the build. Must match
+# PROJECT_PREVIEW_STAGING_DIR in .env.
+PREVIEW_STAGING_DIR="${PROJECT_PREVIEW_STAGING_DIR:-/opt/cartenz/preview-staging}"
+run mkdir -p "$PREVIEW_STAGING_DIR"
+run chown "$SERVICE_USER:$SERVICE_USER" "$PREVIEW_STAGING_DIR"
+run chmod 700 "$PREVIEW_STAGING_DIR"
+ok "$PREVIEW_STAGING_DIR (owned by $SERVICE_USER)"
 
 step "provisioning: Odoo paths in .env"
 

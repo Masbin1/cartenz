@@ -761,3 +761,61 @@ describe('assertProvisioningInvocation - project pull (ADR-049)', () => {
     ).not.toThrow();
   });
 });
+
+/**
+ * The ephemeral-preview invocation guard (ADR-052).
+ *
+ * The same narrowing discipline: `sudo` is a wide grant, and this asserts it is
+ * narrowed to exactly
+ * `-n <preview-script> <start|stop> <project-name> <ref>`.
+ */
+describe('assertProvisioningInvocation - ephemeral preview (ADR-052)', () => {
+  const createScripts = ['/opt/odoo/scripts/create_project'];
+  const previewScript = '/opt/cartenz/infrastructure/provisioning/preview-project.sh';
+  const ref = 'abcdef0123456789';
+
+  const check = (args: string[]) =>
+    assertProvisioningInvocation(args, createScripts, null, null, null, previewScript);
+
+  it('permits a well-formed start and stop', () => {
+    expect(() => check(['-n', previewScript, 'start', 'dodolbintangmas', ref])).not.toThrow();
+    expect(() => check(['-n', previewScript, 'stop', 'dodolbintangmas', ref])).not.toThrow();
+  });
+
+  it('refuses a subcommand that is neither start nor stop', () => {
+    for (const bad of ['run', 'START', '', 'start;rm']) {
+      expect(() => check(['-n', previewScript, bad, 'name', ref])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses an invalid project name', () => {
+    for (const bad of ['', '-x', 'UPPER', '../escape']) {
+      expect(() => check(['-n', previewScript, 'start', bad, ref])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a ref that is not a 16-character lowercase token', () => {
+    for (const bad of ['', 'short', 'ABCDEF0123456789', 'abcdef01234567-9', 'abcdef0123456789a']) {
+      expect(() => check(['-n', previewScript, 'start', 'name', bad])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a missing or extra argument', () => {
+    expect(() => check(['-n', previewScript, 'start', 'name'])).toThrow(CommandArgumentError);
+    expect(() => check(['-n', previewScript, 'start', 'name', ref, 'extra'])).toThrow(
+      CommandArgumentError,
+    );
+  });
+
+  it('is not fooled by a path that merely starts with the configured script', () => {
+    expect(() => check(['-n', `${previewScript}-evil`, 'start', 'name', ref])).toThrow(
+      CommandArgumentError,
+    );
+  });
+
+  it('refuses the preview shape when no preview script is configured', () => {
+    expect(() =>
+      assertProvisioningInvocation(['-n', previewScript, 'start', 'name', ref], createScripts),
+    ).toThrow(/not a configured provisioning script/);
+  });
+});

@@ -120,6 +120,13 @@
       "when": 1789992000000,
       "tag": "0016_odoo_version_repositories",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789992000001,
+      "tag": "0017_project_previews",
+      "breakpoints": true
     }
   ]
 }

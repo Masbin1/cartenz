@@ -51,4 +51,4 @@ with the condition under which it is retired.
 | [ADR-049](ADR-049-on-premise-instance-pulls-its-repository.md) | An instance pulls its own repository (the odoo.sh half ADR-041 left out) | Accepted |
 | [ADR-050](ADR-050-repo-backed-connected-projects.md) | Repo-backed connected projects, and the remote deploy target | Accepted |
 | [ADR-051](ADR-051-standard-database-catalog.md) | A standard-database catalog for AI-safe instances | Accepted |
-| [ADR-052](ADR-052-ephemeral-preview-instances.md) | Ephemeral preview instances — see the draft Odoo UI before approving | Proposed |
+| [ADR-052](ADR-052-ephemeral-preview-instances.md) | Ephemeral preview instances — see the draft Odoo UI before approving | Accepted |

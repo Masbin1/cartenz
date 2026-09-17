@@ -591,3 +591,22 @@ export interface AuditLogEntry {
   metadata: Record<string, unknown>;
   createdAt: string;
 }
+
+/** The lifecycle of an ephemeral preview instance (ADR-052). */
+export type PreviewStatus = 'creating' | 'ready' | 'failed' | 'stopped';
+
+export interface PreviewSummary {
+  ref: string;
+  status: PreviewStatus;
+  url: string | null;
+  branch: string;
+  error: string | null;
+  expiresAt: string;
+  ttlRemainingMs: number;
+}
+
+export interface ProjectPreviewState {
+  available: boolean;
+  reason: string | null;
+  preview: PreviewSummary | null;
+}

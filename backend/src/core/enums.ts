@@ -122,6 +122,18 @@ export const PROJECT_ACCESS_REQUEST_STATUSES = [
 ] as const;
 export type ProjectAccessRequestStatus = (typeof PROJECT_ACCESS_REQUEST_STATUSES)[number];
 
+/**
+ * The lifecycle of an ephemeral preview instance (ADR-052).
+ *
+ * `creating` — the root-run script has been asked to build it and has not yet
+ * reported. `ready` — the instance is up and the URL is usable. `failed` — the
+ * script or the build refused; `error` carries the reason. `stopped` — it was
+ * torn down, by the reviewer, a TTL expiry, or a replacing preview. A stopped or
+ * failed preview holds no database and no process.
+ */
+export const PREVIEW_STATUSES = ['creating', 'ready', 'failed', 'stopped'] as const;
+export type PreviewStatus = (typeof PREVIEW_STATUSES)[number];
+
 /** Agent session lifecycle. */
 export const AGENT_SESSION_STATUSES = ['active', 'ended'] as const;
 export type AgentSessionStatus = (typeof AGENT_SESSION_STATUSES)[number];
