@@ -106,9 +106,21 @@ export class ProjectProvisioningQueue implements OnApplicationShutdown {
    * `QueueAgentOrchestrator`'s derived job ids.
    */
   async enqueue(data: SelectiveProvisionJobData): Promise<void> {
-    await this.queue.add(PROJECT_PROVISIONING_JOB, data, {
-      jobId: `provision-${data.technicalName}`,
-    });
+    const jobId = `provision-${data.technicalName}`;
+
+    // See enqueueRestart's comment on the same shape of check: a finished job
+    // occupying this id is not re-run by add(), it is handed back unchanged,
+    // so a retry after a failed provisioning attempt would otherwise be a
+    // silent no-op for up to an hour.
+    const existing = await this.queue.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === 'completed' || state === 'failed') {
+        await existing.remove();
+      }
+    }
+
+    await this.queue.add(PROJECT_PROVISIONING_JOB, data, { jobId });
     this.logger.log(
       `Queued selective provisioning for "${data.technicalName}" (${data.modules.length} module(s))`,
     );
@@ -121,9 +133,34 @@ export class ProjectProvisioningQueue implements OnApplicationShutdown {
    * `-u all` runs against the same database.
    */
   async enqueueRestart(data: ProjectRestartJobData): Promise<void> {
-    await this.restartQueue.add(PROJECT_RESTART_JOB, data, {
-      jobId: `restart-${data.technicalName}`,
-    });
+    const jobId = `restart-${data.technicalName}`;
+
+    /**
+     * A *finished* job with this id has to be cleared first, and this is not an
+     * optimisation — it is the difference between a retry working and silently
+     * doing nothing.
+     *
+     * BullMQ answers `add()` with the existing job when the id is taken and does
+     * not re-queue it. Our jobs are `removeOnComplete: { age: 3600 }`, so for an
+     * hour after a restart the id belongs to a row in the completed set. Every
+     * retry inside that window was handed back the old job, the worker was never
+     * called, and the project row sat on `restartStatus: 'pending'` with nothing
+     * running — a button that looked stuck rather than a failure that could be
+     * read. The first restart attempt failing made every later attempt a no-op.
+     *
+     * Only the terminal states are removed. `active`/`waiting` keeps its id, so
+     * the de-duplication this id exists for still holds: two simultaneous
+     * restarts of one project cannot both run.
+     */
+    const existing = await this.restartQueue.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === 'completed' || state === 'failed') {
+        await existing.remove();
+      }
+    }
+
+    await this.restartQueue.add(PROJECT_RESTART_JOB, data, { jobId });
     this.logger.log(`Queued restart for "${data.technicalName}" (${data.branch})`);
   }
 
