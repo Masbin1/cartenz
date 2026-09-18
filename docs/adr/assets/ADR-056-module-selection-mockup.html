@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Mockup — Module selection at project creation (ADR-056)</title>
+<style>
+  :root{
+    --surface:#0d1117; --surface-raised:#151b23; --surface-overlay:#1c232c; --surface-border:#2a323d;
+    --content:#e6edf3; --content-muted:#9aa7b4; --content-subtle:#6b7684;
+    --accent:#c8102e; --accent-hover:#a50d26; --accent-subtle:rgba(200,16,46,0.12);
+    --running:#3b82f6; --waiting:#d97706; --success:#16a34a; --failure:#dc2626; --idle:#6b7684;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--surface); color:var(--content);
+    font-family:"Segoe UI", system-ui, sans-serif; font-size:14px;
+  }
+  .wrap{max-width:820px;margin:0 auto;padding:32px 20px 80px;}
+  h1{font-size:17px;font-weight:600;letter-spacing:-0.01em;margin:0;}
+  .sub{color:var(--content-muted);font-size:12px;margin:4px 0 24px;}
+  .panel{
+    background:var(--surface-raised);border:1px solid var(--surface-border);
+    border-radius:10px;padding:24px;
+  }
+  .panel + .note{margin-top:10px;}
+  h2{font-size:13px;font-weight:600;margin:0 0 4px;}
+  .desc{color:var(--content-muted);font-size:12px;line-height:1.5;margin:0 0 20px;}
+  .grid3{display:grid;grid-template-columns:2fr 1fr 1fr;gap:16px;margin-bottom:20px;}
+  .field-label{display:block;font-size:11px;font-weight:500;color:var(--content-muted);margin-bottom:6px;}
+  .field-input{
+    width:100%;background:var(--surface);border:1px solid var(--surface-border);
+    border-radius:6px;padding:8px 10px;color:var(--content);font-size:13px;
+  }
+  .section-title{
+    font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;
+    color:var(--content-subtle);border-bottom:1px solid var(--surface-border);
+    padding-bottom:8px;margin:28px 0 16px;
+  }
+  .radio-card{
+    display:flex;gap:12px;align-items:flex-start;border:1px solid var(--surface-border);
+    border-radius:8px;padding:14px;margin-bottom:10px;cursor:pointer;background:var(--surface);
+  }
+  .radio-card.selected{border-color:var(--accent);background:var(--accent-subtle);}
+  .radio-card input{margin-top:3px;accent-color:var(--accent);}
+  .radio-card .rt{font-size:13px;font-weight:600;}
+  .radio-card .rd{font-size:11.5px;color:var(--content-muted);margin-top:3px;line-height:1.5;}
+  .badge{
+    display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:0.04em;
+    padding:1px 6px;border-radius:4px;margin-left:8px;vertical-align:middle;
+  }
+  .badge-default{background:var(--surface-overlay);color:var(--content-muted);}
+  .badge-slow{background:rgba(217,119,6,0.15);color:var(--waiting);}
+
+  .picker{
+    border:1px solid var(--surface-border);border-radius:8px;overflow:hidden;
+    margin-top:6px;background:var(--surface);
+  }
+  .picker-toolbar{
+    display:flex;gap:8px;align-items:center;padding:10px;border-bottom:1px solid var(--surface-border);
+    background:var(--surface-overlay);
+  }
+  .picker-toolbar input[type=text]{flex:1;}
+  .picker-toolbar select{width:auto;}
+  .chip-toggle{
+    display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--content-muted);
+    white-space:nowrap;
+  }
+  .picker-list{max-height:260px;overflow-y:auto;}
+  .mod-row{
+    display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--surface-border);
+  }
+  .mod-row:last-child{border-bottom:none;}
+  .mod-row:hover{background:var(--surface-overlay);}
+  .mod-row input{accent-color:var(--accent);}
+  .mod-name{font-size:12.5px;font-weight:500;flex:0 0 190px;}
+  .mod-tech{font-family:"Consolas","Cascadia Mono",monospace;font-size:11px;color:var(--content-subtle);flex:0 0 170px;}
+  .mod-cat{font-size:11px;color:var(--content-muted);flex:1;}
+  .app-badge{
+    font-size:9px;font-weight:700;letter-spacing:0.03em;color:var(--accent);
+    border:1px solid var(--accent);border-radius:4px;padding:1px 5px;
+  }
+  .picker-footer{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:8px 12px;border-top:1px solid var(--surface-border);background:var(--surface-overlay);
+    font-size:11.5px;color:var(--content-muted);
+  }
+  .picker-footer b{color:var(--content);}
+
+  .dep-box{
+    margin-top:14px;border:1px dashed var(--surface-border);border-radius:6px;
+    padding:10px 12px;font-size:11.5px;color:var(--content-muted);line-height:1.6;
+  }
+  .dep-box b{color:var(--content);}
+  .dep-mono{font-family:"Consolas","Cascadia Mono",monospace;color:var(--content-muted);}
+
+  textarea.field-input{resize:none;}
+  .btn-row{display:flex;justify-content:flex-end;border-top:1px solid var(--surface-border);
+    padding-top:16px;margin-top:24px;}
+  .btn-primary{
+    background:var(--accent);color:#fff;border:none;border-radius:6px;
+    padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;
+  }
+  .btn-primary:hover{background:var(--accent-hover);}
+
+  .note{
+    font-size:11.5px;color:var(--content-subtle);background:var(--surface-raised);
+    border:1px solid var(--surface-border);border-radius:8px;padding:10px 14px;
+  }
+
+  /* ---- Second screen: provisioning status ---- */
+  .status-panel{margin-top:40px;}
+  .status-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:12.5px;}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none;}
+  .dot-done{background:var(--success);}
+  .dot-active{background:var(--running);box-shadow:0 0 0 3px rgba(59,130,246,0.2);}
+  .dot-pending{background:var(--idle);}
+  .status-text-done{color:var(--content-muted);}
+  .status-text-active{color:var(--content);font-weight:500;}
+  .status-text-pending{color:var(--content-subtle);}
+  .progress-track{height:5px;border-radius:3px;background:var(--surface-overlay);overflow:hidden;margin:16px 0 4px;}
+  .progress-fill{height:100%;width:38%;background:var(--running);}
+  .caption{font-size:11px;color:var(--content-subtle);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>New project</h1>
+  <p class="sub">Creating in Indonesia</p>
+
+  <div class="panel">
+    <h2>Create a new project with AI</h2>
+    <p class="desc">These inputs become a structured project specification, held as a versioned record so that project context does not depend on conversation history.</p>
+
+    <div class="grid3">
+      <div>
+        <label class="field-label">Project name</label>
+        <input class="field-input" value="Equipment Management" />
+      </div>
+      <div>
+        <label class="field-label">Odoo version</label>
+        <select class="field-input"><option>19.0</option></select>
+      </div>
+      <div>
+        <label class="field-label">Odoo edition</label>
+        <select class="field-input"><option>Enterprise</option></select>
+      </div>
+    </div>
+
+    <div class="section-title">Modules</div>
+
+    <label class="radio-card">
+      <input type="radio" name="modmode" checked />
+      <div>
+        <div class="rt">Install everything <span class="badge badge-default">DEFAULT</span></div>
+        <div class="rd">Clones the standard Enterprise template with every app already installed. Ready in seconds.</div>
+      </div>
+    </label>
+
+    <label class="radio-card selected">
+      <input type="radio" name="modmode" checked />
+      <div>
+        <div class="rt">Choose what to install <span class="badge badge-slow">TAKES MINUTES</span></div>
+        <div class="rd">Installs only the apps you pick, the way a new Odoo Online database works. Provisioning runs in the background — the project shows a running status until it finishes.</div>
+      </div>
+    </label>
+
+    <!-- Picker shown only when "Choose what to install" is selected -->
+    <div class="picker">
+      <div class="picker-toolbar">
+        <input type="text" class="field-input" placeholder="Search modules… (e.g. sale, inventory, accounting)" style="background:var(--surface);" />
+        <select class="field-input" style="max-width:150px;">
+          <option>All categories</option>
+          <option>Sales</option>
+          <option>Inventory</option>
+          <option>Accounting</option>
+          <option>Manufacturing</option>
+        </select>
+        <label class="chip-toggle"><input type="checkbox" checked /> Apps only</label>
+      </div>
+      <div class="picker-list">
+        <div class="mod-row">
+          <input type="checkbox" checked />
+          <div class="mod-name">Sales</div>
+          <div class="mod-tech">sale_management</div>
+          <div class="mod-cat">Sales</div>
+          <span class="app-badge">APP</span>
+        </div>
+        <div class="mod-row">
+          <input type="checkbox" checked />
+          <div class="mod-name">Inventory</div>
+          <div class="mod-tech">stock</div>
+          <div class="mod-cat">Inventory / Logistics</div>
+          <span class="app-badge">APP</span>
+        </div>
+        <div class="mod-row">
+          <input type="checkbox" checked />
+          <div class="mod-name">Accounting</div>
+          <div class="mod-tech">account</div>
+          <div class="mod-cat">Finance</div>
+          <span class="app-badge">APP</span>
+        </div>
+        <div class="mod-row">
+          <input type="checkbox" />
+          <div class="mod-name">Manufacturing</div>
+          <div class="mod-tech">mrp</div>
+          <div class="mod-cat">Manufacturing</div>
+          <span class="app-badge">APP</span>
+        </div>
+        <div class="mod-row">
+          <input type="checkbox" />
+          <div class="mod-name">Purchase</div>
+          <div class="mod-tech">purchase</div>
+          <div class="mod-cat">Purchase</div>
+          <span class="app-badge">APP</span>
+        </div>
+        <div class="mod-row">
+          <input type="checkbox" />
+          <div class="mod-name">Project</div>
+          <div class="mod-tech">project</div>
+          <div class="mod-cat">Services</div>
+          <span class="app-badge">APP</span>
+        </div>
+        <div class="mod-row">
+          <input type="checkbox" />
+          <div class="mod-name">Human Resources</div>
+          <div class="mod-tech">hr</div>
+          <div class="mod-cat">Human Resources</div>
+          <span class="app-badge">APP</span>
+        </div>
+      </div>
+      <div class="picker-footer">
+        <span>Showing 7 of 736 modules (Enterprise, 19.0)</span>
+        <span>Selected: <b>3 modules</b></span>
+      </div>
+    </div>
+
+    <div class="dep-box">
+      <b>Also installed automatically (dependencies):</b><br/>
+      <span class="dep-mono">base, web, mail, uom, analytic, product, sales_team, account_payment, portal, ...</span>
+      <div style="margin-top:6px;">Resolved from each selected module's own manifest — you don't need to find these yourself.</div>
+    </div>
+
+    <div class="section-title" style="margin-top:28px;">Specification</div>
+
+    <div style="margin-bottom:16px;">
+      <label class="field-label">What must the project do?</label>
+      <textarea class="field-input" rows="3">Manage employee equipment: issue, track and return company assets.</textarea>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-primary">Create project and specification</button>
+    </div>
+  </div>
+
+  <p class="note" style="margin-top:16px;">
+    Note (mockup only): choosing "Install everything" submits and lands on the project page immediately, exactly as
+    today. Choosing "Choose what to install" submits, then the project page shows the provisioning screen below
+    until the install finishes.
+  </p>
+
+  <!-- ============ SECOND SCREEN: provisioning in progress ============ -->
+  <div class="status-panel">
+    <h1 style="font-size:15px;">Equipment Management</h1>
+    <p class="sub">Provisioning — installing selected modules</p>
+
+    <div class="panel">
+      <div class="status-row">
+        <span class="dot dot-done"></span>
+        <span class="status-text-done">Project directory and database created</span>
+      </div>
+      <div class="status-row">
+        <span class="dot dot-active"></span>
+        <span class="status-text-active">Installing modules: sale_management, stock, account (+ 24 dependencies)</span>
+      </div>
+      <div class="status-row">
+        <span class="dot dot-pending"></span>
+        <span class="status-text-pending">Starting Odoo service and issuing HTTPS</span>
+      </div>
+
+      <div class="progress-track"><div class="progress-fill"></div></div>
+      <p class="caption">This can take a few minutes. You can leave this page — the project will show as Ready when it's done.</p>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

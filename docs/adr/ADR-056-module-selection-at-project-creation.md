@@ -103,6 +103,103 @@ shows the caller the resolved set (so "you also get X, Y" is visible) rather
 than passing only the boxes literally checked and letting Odoo's own installer
 error out mid-run.
 
+### 6. The creation form gains one section, after version/edition/region
+
+The module picker is a new **Modules** section in `CreateWithAiForm`
+(`frontend/app/projects/new/page.tsx`), placed directly below the
+version / edition / region row because the catalog it reads is scoped by
+version and edition — changing either refetches the list, and the section
+stays collapsed to its two radio options until a choice is made.
+
+```
+┌─ Create a new project with AI ─────────────────────────────┐
+│  Project name        [ Equipment Management            ]    │
+│  Odoo version [19.0 ▾] Edition [Enterprise ▾] Region (…)    │
+│                                                             │
+│  ── MODULES ─────────────────────────────────────────────   │
+│   (•) Install everything                        DEFAULT     │
+│       Clones the standard Enterprise template with every    │
+│       app already installed. Ready in seconds.              │
+│                                                             │
+│   ( ) Choose what to install                 TAKES MINUTES  │
+│       Installs only the apps you pick, the way a new Odoo   │
+│       Online database works. Provisioning runs in the       │
+│       background.                                           │
+│                                                             │
+│  ── when "Choose what to install" is selected ───────────   │
+│                                                             │
+│   [ 🔍 search modules…        ] Category [All ▾] [x] Apps   │
+│  ┌───────────────────────────────────────────────────────┐ │
+│  │ [x] Sales          sale_management  Sales      [APP]  │ │
+│  │ [x] Inventory      stock            Logistics  [APP]  │ │
+│  │ [x] Accounting     account          Finance    [APP]  │ │
+│  │ [ ] Manufacturing  mrp              Manufact.  [APP]  │ │
+│  │ …                              (scroll, 736 modules)  │ │
+│  ├───────────────────────────────────────────────────────┤ │
+│  │ Showing 7 of 736 (Enterprise, 19.0)  Selected: 3 mods │ │
+│  └───────────────────────────────────────────────────────┘ │
+│                                                             │
+│   ℹ Also installed automatically (dependencies):            │
+│     base, web, mail, uom, analytic, product, sales_team …   │
+│                                                             │
+│  ── SPECIFICATION ───────────────────────────────────────   │
+│  What must the project do?  [ … ]                           │
+│  Initial requirements  REQ-001 …                            │
+└─────────────────────────────────────────────────────────────┘
+                    [ Create project and specification ]
+```
+
+Behaviour the mockup fixes, so the implementation does not have to guess:
+
+- **Two radios, not a checkbox grid alone.** "Install everything" is the
+  default and is the *absence* of a selection on the wire — the picker is a
+  disclosure of the second option, so a user who ignores the section gets
+  today's behaviour and today's speed.
+- **The picker is search-first.** 638 Community / 736 Enterprise modules
+  cannot be a flat checkbox list; the toolbar carries a search box, a category
+  filter, and an "Apps only" toggle driven by the manifest's `application`
+  flag. Each row shows display name, technical name (mono), category, and the
+  APP badge.
+- **The dependency closure is visible before submit, not after failure.**
+  Checking `sale_management` renders the resolved set from its `depends`
+  (`product`, `sales_team`, …) in a read-only panel, because a person choosing
+  modules should see what "also installed" means without reading manifests.
+- **A selection is not a per-row checkbox state.** The radio, the count in the
+  list footer, and the dependency panel all derive from one selected set, so
+  the submitted `modules` array is exactly what the footer reports.
+
+### 7. The project page shows provisioning, and then what was installed
+
+Because the selective path is asynchronous (§4), the project detail page gains
+two states it does not have today:
+
+1. **Provisioning.** While the job runs, the page shows a three-step status
+   list — *directory and database created* (done), *installing modules:
+   `<names>` (+ N dependencies)* (active), *starting Odoo and issuing HTTPS*
+   (pending) — with a progress track and a note that the page can be left.
+   This mirrors the existing task-progress affordance rather than introducing
+   a new one.
+2. **Installed modules.** A panel listing the modules the project actually has
+   installed, read back from the instance's own `ir_module_module` (state
+   `installed`). This is the read-back that makes §1's promise checkable: the
+   operator can compare the list against what was selected, and a selective
+   install that silently dropped a module shows up here rather than only on
+   the Odoo apps screen.
+
+A selective provision that fails (a broken manifest, a missing system package
+— the normal failure modes of any `-i` install) sets the project's status to
+`failed` with the reason, rather than leaving the page showing a progress bar
+that never completes.
+
+### 8. A static mockup ships with this ADR
+
+`docs/adr/assets/ADR-056-module-selection-mockup.html` is a standalone,
+dependency-free rendering of both screens described above, built against the
+portal's actual palette (`frontend/tailwind.config.ts`) rather than an
+invented one. It is the review artifact for this decision, not production
+code — the implementation still lives in `CreateWithAiForm` and the project
+page.
+
 ## Consequences
 
 - The default project-creation path (no selection) is unaffected: same
@@ -118,7 +215,8 @@ error out mid-run.
 - Provisioning gains a genuine async state for the first time on the
   project-creation path (task execution already has one); the portal's
   project-status UI needs the same "in progress" affordance it already has for
-  tasks.
+  tasks, per §7's two new states (provisioning steps, installed-modules
+  read-back).
 - The install path exercises Odoo's own dependency resolution and can fail
   the way any manual `-i` install can (a missing system package, a broken
   manifest); provisioning must surface that failure onto the project row
