@@ -216,6 +216,45 @@ run_git() {
         "$@"
 }
 
+# --- The checkout has to be writable by the user about to run git ------------
+#
+# Before the first git call, not after the last one. The fix-up at the end of
+# this script re-establishes odoo:cartenz ownership over addons/ *after* a
+# successful pull — which is correct for the files a pull writes, and useless
+# for the first pull that needs to write them. .git/ is created by whoever
+# initialises the repository, and on this host that can be a user other than
+# odoo: the platform's own agent commits as "cartenz" (ADR-032), and an operator
+# working as root leaves root-owned HEAD/index behind. `git fetch` writes
+# FETCH_HEAD inside .git/, so a checkout whose .git/ is owned by either of those
+# fails at the very first network-free step with
+#
+#     cannot open .git/FETCH_HEAD: Permission denied
+#
+# which reads like a remote or credential problem and is neither: the remote is
+# never contacted. Worse, the ownership fix-up that would have allowed it only
+# runs once the pull it is blocking has already succeeded. Normalising here
+# makes the script self-healing for a checkout handed to it in any state, which
+# matters because the operator cannot be expected to know that a manual `git
+# checkout` as root renders a project un-restartable.
+#
+# Deliberately the same mode grant-addons-write.sh applies, so a repository
+# this script repairs and one that script prepared are indistinguishable: group
+# ownership cartenz (the platform user, so the agent can still commit into
+# addons/), group rwx, nothing for other, setgid on directories so files written
+# from here on inherit the group rather than re-introducing this bug on every
+# pull.
+normalise_git_ownership() {
+    if [[ ! -d "${ADDONS_DIR}/.git" ]]; then
+        return 0
+    fi
+
+    chown -R "${ODOO_USER}:${PLATFORM_GROUP}" "${ADDONS_DIR}/.git"
+    chmod -R u+rwX,g+rwX,o-rwx "${ADDONS_DIR}/.git"
+    find "${ADDONS_DIR}/.git" -type d -exec chmod g+s {} +
+}
+
+normalise_git_ownership
+
 if [[ -d "${ADDONS_DIR}/.git" ]]; then
     EXISTING_REMOTE="$(run_git remote get-url origin 2>/dev/null || true)"
 

@@ -205,10 +205,32 @@ systemctl stop "$SERVICE_NAME"
 # unchanged when called this way.
 
 echo "Pulling ${PROJECT_NAME} @ ${BRANCH}..."
+# Not `set -e` alone: a pull failure here must still reach the "leave the
+# instance serving something" guarantee this script promises (see the usage
+# comment above). Left to `set -e`, a non-zero pull-project.sh would kill this
+# script immediately after step 2 stopped the unit, and only step 5's rollback
+# path restarts it — a path a plain pull failure never reaches. That is
+# exactly what happened in production: FETCH_HEAD permission errors (fixed
+# separately, in pull-project.sh) stopped the instance and never started it
+# back up, because the failure happened before this guard existed.
+PULL_OK=1
 if [[ -n "$CREDENTIAL" ]]; then
-    printf '%s' "$CREDENTIAL" | "$PULL_SCRIPT" "$PROJECT_NAME" "$REPOSITORY_URL" "$BRANCH"
+    printf '%s' "$CREDENTIAL" | "$PULL_SCRIPT" "$PROJECT_NAME" "$REPOSITORY_URL" "$BRANCH" || PULL_OK=0
 else
-    "$PULL_SCRIPT" "$PROJECT_NAME" "$REPOSITORY_URL" "$BRANCH"
+    "$PULL_SCRIPT" "$PROJECT_NAME" "$REPOSITORY_URL" "$BRANCH" || PULL_OK=0
+fi
+
+if [[ "$PULL_OK" -ne 1 ]]; then
+    echo "ERROR: Pull failed; nothing was upgraded. Restarting on the previous code." >&2
+
+    systemctl start "$SERVICE_NAME" || true
+
+    if ! wait_for_active; then
+        echo "ERROR: pull failed, and ${SERVICE_NAME} did not become active on the previous code." >&2
+        echo "       Check: systemctl status ${SERVICE_NAME}" >&2
+    fi
+
+    exit 1
 fi
 
 # --- 4. Upgrade every installed module against the instance's database ------
