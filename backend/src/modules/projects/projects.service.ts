@@ -44,6 +44,7 @@ import { redactMetadata } from '../../core/audit/redact';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import { buildProjectSpecification } from './project-specification';
 import { resolveSelectionOrThrow } from './module-selection-sanitiser';
+import { effectiveRepositoryUrl } from './repository-url';
 import {
   buildProvisionedAddonFiles,
   buildScaffoldFiles,
@@ -238,7 +239,20 @@ export class ProjectsService {
       );
     }
 
-    if (!project.repositoryUrl) {
+    // ADR-041's lesson: a project the platform created a repository for holds
+    // it as a connection, and its own column stays null on purpose. Reading
+    // only the column refused restart on exactly the projects created through
+    // the portal — the common case, not the exception.
+    const connections = await this.database.db
+      .select({
+        connectionType: projectConnections.connectionType,
+        metadata: projectConnections.metadata,
+      })
+      .from(projectConnections)
+      .where(eq(projectConnections.projectId, projectId));
+    const repositoryUrl = effectiveRepositoryUrl(project.repositoryUrl, connections);
+
+    if (!repositoryUrl) {
       throw new BadRequestException(
         'This project has no repository, so there is nothing to restart onto. Connect one first.',
       );
@@ -267,7 +281,7 @@ export class ProjectsService {
     await this.provisioningQueue.enqueueRestart({
       projectId,
       technicalName,
-      repositoryUrl: project.repositoryUrl,
+      repositoryUrl,
       branch,
       userId: user.userId,
     });
@@ -421,7 +435,18 @@ export class ProjectsService {
 
     if (!project) throw new NotFoundException('Project not found');
 
-    if (project.projectType === 'on_premise' && !project.repositoryUrl) {
+    // ADR-041's lesson, same as pull/merge/restart: a platform-created
+    // repository lives as a connection, not in the project's own column.
+    const connections = await this.database.db
+      .select({
+        connectionType: projectConnections.connectionType,
+        metadata: projectConnections.metadata,
+      })
+      .from(projectConnections)
+      .where(eq(projectConnections.projectId, projectId));
+    const repositoryUrl = effectiveRepositoryUrl(project.repositoryUrl, connections);
+
+    if (project.projectType === 'on_premise' && !repositoryUrl) {
       const path = readOnPremisePath(project.environmentConfig);
       if (!path) {
         throw new BadRequestException(
@@ -431,11 +456,11 @@ export class ProjectsService {
       return { branches: await this.git.listBranches(path) };
     }
 
-    if (!project.repositoryUrl) {
+    if (!repositoryUrl) {
       throw new BadRequestException('This project has no repository to read branches from.');
     }
 
-    return { branches: await this.readRemoteBranches(project.repositoryUrl) };
+    return { branches: await this.readRemoteBranches(repositoryUrl) };
   }
 
   /**
@@ -1072,6 +1097,13 @@ export class ProjectsService {
 
     return {
       ...this.present(project),
+      // ADR-057: a project the platform created a repository for (ADR-041)
+      // never gets `repository_url` set on its own row — the connection is
+      // what carries the credential. Resolved here, from the connections just
+      // read, so the portal's Deploy/Ship-to-production actions are offered on
+      // exactly the projects that actually have a repository, not only the
+      // ones where a person typed the URL by hand.
+      repositoryUrl: effectiveRepositoryUrl(project.repositoryUrl, connections),
       agentPermissions: context.agentPermissions,
       connections,
       environments,

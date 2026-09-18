@@ -10,6 +10,7 @@ import { projectConnections, projectEnvironments, projects } from '../../core/da
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
 import { GIT_CONNECTION_TYPES } from '../../core/enums';
 import { GitService } from '../../agent/git/git.service';
+import { effectiveRepositoryUrl } from './repository-url';
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 
@@ -96,7 +97,13 @@ export class ProjectMergeService {
       return this.refuse(projectId, userId, 'Project not found.', startedAt);
     }
 
-    if (!project.repositoryUrl) {
+    // ADR-041's lesson, applied here: a project the platform created a
+    // repository for holds it as a connection, not as `projects.repository_url`.
+    // Asking only the column refused every such project with "connect one
+    // first" — naming an action the person had no reason to take.
+    const repositoryUrl = await this.resolveRepositoryUrl(projectId, project.repositoryUrl);
+
+    if (!repositoryUrl) {
       return this.refuse(
         projectId,
         userId,
@@ -148,7 +155,7 @@ export class ProjectMergeService {
 
     this.logger.log(
       `Merging "${project.name}" from ${sourceBranch} into ${targetBranch} ` +
-        `(${project.repositoryUrl})`,
+        `(${repositoryUrl})`,
     );
 
     try {
@@ -160,7 +167,7 @@ export class ProjectMergeService {
       // ancestor with the branch fetched beside it, and the merge would refuse
       // with "unrelated histories" instead of merging.
       await this.git.clone({
-        remoteUrl: project.repositoryUrl,
+        remoteUrl: repositoryUrl,
         branch: targetBranch,
         destination: workspace,
         credentialDirectory,
@@ -168,7 +175,7 @@ export class ProjectMergeService {
         full: true,
       });
 
-      await this.git.fetchBranch(workspace, project.repositoryUrl, sourceBranch, {
+      await this.git.fetchBranch(workspace, repositoryUrl, sourceBranch, {
         credentialDirectory,
         credential: tokenCredential,
       });
@@ -181,7 +188,7 @@ export class ProjectMergeService {
 
       await this.git.push({
         repositoryPath: workspace,
-        remoteUrl: project.repositoryUrl,
+        remoteUrl: repositoryUrl,
         branch: targetBranch,
         credentialDirectory,
         credential: tokenCredential,
@@ -197,7 +204,7 @@ export class ProjectMergeService {
           sourceBranch,
           targetBranch,
           commit,
-          repositoryUrl: project.repositoryUrl,
+          repositoryUrl,
         },
       });
 
@@ -253,6 +260,30 @@ export class ProjectMergeService {
       );
       return null;
     }
+  }
+
+  /**
+   * Where this project's repository actually is (ADR-041's lesson).
+   *
+   * `projects.repository_url` is only one of the two places a repository can be
+   * recorded. A project the platform created a repository for holds it as a
+   * connection, and its own column stays null on purpose. Reading only the
+   * column refused those projects with "connect one first" — a merge offered to
+   * nobody is the same defect as a merge refused to everybody.
+   */
+  private async resolveRepositoryUrl(
+    projectId: string,
+    projectUrl: string | null,
+  ): Promise<string | null> {
+    const connections = await this.database.db
+      .select({
+        connectionType: projectConnections.connectionType,
+        metadata: projectConnections.metadata,
+      })
+      .from(projectConnections)
+      .where(eq(projectConnections.projectId, projectId));
+
+    return effectiveRepositoryUrl(projectUrl, connections);
   }
 
   private async refuse(

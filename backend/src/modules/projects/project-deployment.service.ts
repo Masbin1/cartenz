@@ -7,6 +7,7 @@ import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
 import { GIT_CONNECTION_TYPES } from '../../core/enums';
+import { effectiveRepositoryUrl } from './repository-url';
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 
@@ -129,7 +130,13 @@ export class ProjectDeploymentService {
       return this.refuse(projectId, userId, 'Project not found.', startedAt);
     }
 
-    if (!project.repositoryUrl) {
+    // ADR-041's lesson: a project the platform created a repository for holds it
+    // as a connection, and its own column stays null on purpose (the connection
+    // carries the credential). Reading only the column refused those projects —
+    // which is the common case for a project created through the portal.
+    const repositoryUrl = await this.resolveRepositoryUrl(projectId, project.repositoryUrl);
+
+    if (!repositoryUrl) {
       return this.refuse(
         projectId,
         userId,
@@ -160,14 +167,14 @@ export class ProjectDeploymentService {
     const branch = project.defaultBranch;
 
     this.logger.log(
-      `Pulling "${technicalName}" from ${project.repositoryUrl} (${branch}) via ` +
+      `Pulling "${technicalName}" from ${repositoryUrl} (${branch}) via ` +
         `${this.config.provisioning?.pullScript}`,
     );
 
     try {
       const result = await this.commands.run(
         'sudo',
-        ['-n', this.config.provisioning!.pullScript!, technicalName, project.repositoryUrl, branch],
+        ['-n', this.config.provisioning!.pullScript!, technicalName, repositoryUrl, branch],
         {
           cwd: '/',
           timeoutMs: this.config.process.maxTimeoutMs,
@@ -186,7 +193,7 @@ export class ProjectDeploymentService {
           event: AUDIT_EVENTS.PROJECT_PULL_FAILED,
           projectId,
           userId,
-          metadata: { branch, repositoryUrl: project.repositoryUrl, error: detail },
+          metadata: { branch, repositoryUrl, error: detail },
         });
         this.logger.error(`Pull of "${technicalName}" failed: ${detail}`);
         return {
@@ -208,7 +215,7 @@ export class ProjectDeploymentService {
         event: AUDIT_EVENTS.PROJECT_PULLED,
         projectId,
         userId,
-        metadata: { branch, commit, repositoryUrl: project.repositoryUrl },
+        metadata: { branch, commit, repositoryUrl },
       });
 
       return {
@@ -398,6 +405,31 @@ export class ProjectDeploymentService {
       );
       return null;
     }
+  }
+
+  /**
+   * Where this project's repository actually is (ADR-041's lesson).
+   *
+   * `projects.repository_url` is one of the two places a repository can be
+   * recorded, and not the common one: a project the platform created a
+   * repository for holds it as a connection, with its own column left null on
+   * purpose because the connection carries the credential. Reading only the
+   * column hid Deploy — and now Ship to production — on exactly the projects
+   * that have a repository.
+   */
+  private async resolveRepositoryUrl(
+    projectId: string,
+    projectUrl: string | null,
+  ): Promise<string | null> {
+    const connections = await this.database.db
+      .select({
+        connectionType: projectConnections.connectionType,
+        metadata: projectConnections.metadata,
+      })
+      .from(projectConnections)
+      .where(eq(projectConnections.projectId, projectId));
+
+    return effectiveRepositoryUrl(projectUrl, connections);
   }
 
   private async refuse(
