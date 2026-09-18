@@ -235,14 +235,17 @@ if [[ -n "$MODULES_CSV" ]]; then
         exit 1
     fi
 
-    INSTALL_CONF="$(mktemp)"
-    trap 'rm -f "$INSTALL_CONF"' EXIT
+    INSTALL_DIR="$(mktemp -d)"
+    trap 'rm -rf "$INSTALL_DIR"' EXIT
+    chown odoo:odoo "$INSTALL_DIR"
+    INSTALL_CONF="${INSTALL_DIR}/odoo.conf"
     {
         echo "[options]"
         echo "addons_path = ${ADDONS}"
         echo "db_user = ${ODOO_USER}"
         echo "without_demo = all"
     } > "$INSTALL_CONF"
+    chown odoo:odoo "$INSTALL_CONF"
 
     echo "Installing requested modules: ${MODULES_CSV}"
 
@@ -254,7 +257,7 @@ if [[ -n "$MODULES_CSV" ]]; then
         --stop-after-init \
         --no-http
 
-    rm -f "$INSTALL_CONF"
+    rm -rf "$INSTALL_DIR"
     trap - EXIT
 
     echo "OK: requested modules installed."
