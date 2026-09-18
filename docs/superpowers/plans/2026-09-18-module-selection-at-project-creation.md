@@ -505,16 +505,16 @@ pending status, and the real work happens off the request thread.
   small ADR addendum if no such read path exists yet. Flag this to the
   operator as a design question rather than guessing a shape.
 
-- [ ] **Step 1: Confirm the data-access shape** for the installed-modules
+- [x] **Step 1: Confirm the data-access shape** for the installed-modules
   read-back with the operator before writing code — this is the one part of
   the ADR not fully pinned down (see the note in ADR §7.2 about reading back
   from the instance).
 - [x] **Step 2: Implement the provisioning status view**, polling the existing
   project-status endpoint at whatever interval the task-progress UI already
   uses (reuse, don't invent a new poll interval).
-- [ ] **Step 3: Implement the installed-modules panel** once Step 1's shape is
+- [x] **Step 3: Implement the installed-modules panel** once Step 1's shape is
   settled.
-- [ ] **Step 4: `npx tsc --noEmit`**, then build and visually verify against
+- [x] **Step 4: `npx tsc --noEmit`**, then build and visually verify against
   the mockup's second screen.
 
 ---
@@ -602,3 +602,26 @@ as what was intended and this reads as what happened.
    progress uses an SSE stream (`lib/use-task-stream.ts`). A new 3-second
    `setInterval` was added to the project detail page, active only while the
    status is `pending`.
+
+## Task 11 Step 1 — resolved (previously open)
+
+The operator chose option A: a fourth root-run script, mirroring
+grant-addons-write.sh / backup-project.sh in every respect —
+`infrastructure/provisioning/list-installed-modules.sh` takes one project name,
+reads the database name from that project's own `odoo.conf` (not derived from
+the name), and runs exactly one fixed query, `SELECT name, state FROM
+ir_module_module ORDER BY name`, against exactly that database. No argument
+can select a different table, database, or turn the read into a write.
+
+Reached the platform through the same two independent gates as every other
+privileged script: the sudoers `Cmnd_Alias` in
+`infrastructure/provisioning/99-linkederp-provisioning` (root action, not run
+by this session — see below) and a new branch in `assertProvisioningInvocation`
+(`command-runner.service.ts`), with its own TDD test group, following Task 8's
+floor exactly. `ProjectModulesService` wraps it the way `ProjectBackupService`
+wraps the backup script, except read-only: no table, no audit event, no cache
+— a stale list after an install would be worse than a slower read.
+
+The option not taken (B, reusing `OdooOnlineClient`'s JSON-RPC pattern) would
+have needed a place to store an admin login per on-premise project, which does
+not exist today; A reuses infrastructure that was already there.

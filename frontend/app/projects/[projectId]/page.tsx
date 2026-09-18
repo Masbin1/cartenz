@@ -570,6 +570,7 @@ function InstancePanel({
       ) : null}
 
       <BackupsPanel projectId={projectId} provisioned={provisioning.status === 'provisioned'} />
+      <ModulesPanel projectId={projectId} provisioned={provisioning.status === 'provisioned'} />
 
       {provisioning.hasMasterPassword ? (
         <div className="border-t border-surface-border px-4 py-3">
@@ -708,6 +709,81 @@ function BackupsPanel({ projectId, provisioned }: { projectId: string; provision
       )}
 
       {notice ? <p className="text-2xs leading-relaxed text-state-success">{notice}</p> : null}
+      {error ? <p className="text-2xs leading-relaxed text-state-failure">{error}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * What is actually installed in the instance (ADR-056) — as opposed to what
+ * the module picker asked for at creation, which is only ever a request. Reads
+ * fresh on mount, once (no polling: unlike provisioning status this does not
+ * change on its own between visits, and the button is right there to ask
+ * again after installing something new).
+ */
+function ModulesPanel({ projectId, provisioned }: { projectId: string; provisioned: boolean }) {
+  const [modules, setModules] = useState<{ name: string; state: string }[]>([]);
+  const [available, setAvailable] = useState(true);
+  const [reason, setReason] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.projects.installedModules(projectId);
+      setModules(result.modules);
+      setAvailable(result.available);
+      setReason(result.reason);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'Could not read installed modules.');
+    } finally {
+      setLoading(false);
+      setLoaded(true);
+    }
+  }, [projectId]);
+
+  if (!provisioned) return null;
+
+  const installed = modules.filter((module) => module.state === 'installed');
+
+  return (
+    <div className="space-y-2 border-t border-surface-border px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="panel-title">Installed modules</p>
+        <button
+          type="button"
+          onClick={() => void load()}
+          disabled={loading}
+          className="btn-secondary text-2xs"
+        >
+          {loading ? 'Reading…' : loaded ? 'Refresh' : 'Show'}
+        </button>
+      </div>
+
+      {!loaded ? (
+        <p className="text-2xs leading-relaxed text-content-subtle">
+          Read fresh from the instance&apos;s own database on request — not cached.
+        </p>
+      ) : !available ? (
+        <p className="text-2xs leading-relaxed text-content-subtle">
+          {reason ?? 'Reading installed modules is not enabled on this deployment.'}
+        </p>
+      ) : reason ? (
+        <p className="text-2xs leading-relaxed text-state-failure">{reason}</p>
+      ) : installed.length === 0 ? (
+        <p className="text-2xs text-content-subtle">No modules reported.</p>
+      ) : (
+        <p className="text-2xs leading-relaxed text-content-subtle">
+          {installed.length} module{installed.length === 1 ? '' : 's'} installed:{' '}
+          <span className="font-mono text-content-default">
+            {installed.map((module) => module.name).join(', ')}
+          </span>
+        </p>
+      )}
+
       {error ? <p className="text-2xs leading-relaxed text-state-failure">{error}</p> : null}
     </div>
   );

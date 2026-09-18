@@ -60,6 +60,16 @@
 #     operator's tool, run directly as root, so custody of the backup and custody
 #     of the platform stay separable.
 #
+#   - The eighth is the installed-modules read (ADR-056):
+#     infrastructure/provisioning/list-installed-modules.sh returns what is
+#     actually installed in one project's own database — `SELECT name, state
+#     FROM ir_module_module`, a single fixed query, against exactly the database
+#     that project's own odoo.conf names. The platform has no database
+#     connection of its own (verified: the "cartenz" role gets `permission
+#     denied for table ir_module_module`), and this is the narrow alternative to
+#     granting one. It takes only `<project-name>`; nothing in the argument
+#     vector can choose a database, a table or a write.
+#
 #   - `sudo -l -U cartenz` on the host shows exactly this rule; there is no
 #     wildcard sudo access anywhere else for this user.
 #
@@ -73,7 +83,8 @@ Cmnd_Alias LINKEDERP_PROVISION = \
     /opt/cartenz/infrastructure/provisioning/setup-project-https.sh, \
     /opt/cartenz/infrastructure/provisioning/pull-project.sh, \
     /opt/cartenz/infrastructure/provisioning/preview-project.sh, \
-    /opt/cartenz/infrastructure/provisioning/backup-project.sh
+    /opt/cartenz/infrastructure/provisioning/backup-project.sh, \
+    /opt/cartenz/infrastructure/provisioning/list-installed-modules.sh
 
 cartenz ALL=(root) NOPASSWD: LINKEDERP_PROVISION
 

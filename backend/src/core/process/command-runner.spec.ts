@@ -923,3 +923,55 @@ describe('assertProvisioningInvocation - per-client backup (ADR-054)', () => {
     ).not.toThrow();
   });
 });
+
+describe('assertProvisioningInvocation - installed-modules read (ADR-056)', () => {
+  const createScripts = ['/opt/odoo/scripts/create_project'];
+  const grantScript = '/opt/cartenz/infrastructure/provisioning/grant-addons-write.sh';
+  const backupScript = '/opt/cartenz/infrastructure/provisioning/backup-project.sh';
+  const modulesListScript = '/opt/cartenz/infrastructure/provisioning/list-installed-modules.sh';
+
+  const check = (args: string[]) =>
+    assertProvisioningInvocation(
+      args,
+      createScripts,
+      grantScript,
+      null,
+      null,
+      null,
+      backupScript,
+      modulesListScript,
+    );
+
+  it('permits a well-formed installed-modules read', () => {
+    expect(() => check(['-n', modulesListScript, 'dodolbintangmas'])).not.toThrow();
+  });
+
+  it('refuses an invalid project name', () => {
+    for (const bad of ['', '-x', 'UPPER', '../escape', 'x'.repeat(40), 'a;rm -rf /']) {
+      expect(() => check(['-n', modulesListScript, bad])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a missing or extra argument', () => {
+    expect(() => check(['-n', modulesListScript])).toThrow(CommandArgumentError);
+    expect(() => check(['-n', modulesListScript, 'name', 'extra'])).toThrow(CommandArgumentError);
+    // No port, no version, no table name: the read is fixed in the script, and
+    // nothing in the argument vector may choose what it queries.
+    expect(() => check(['-n', modulesListScript, 'name', '7001'])).toThrow(CommandArgumentError);
+  });
+
+  it('is not fooled by a path that merely starts with the configured script', () => {
+    expect(() => check(['-n', `${modulesListScript}-evil`, 'name'])).toThrow(CommandArgumentError);
+  });
+
+  it('refuses the modules-read shape when no such script is configured', () => {
+    expect(() =>
+      assertProvisioningInvocation(['-n', modulesListScript, 'name'], createScripts, grantScript),
+    ).toThrow(/not a configured provisioning script/);
+  });
+
+  it('keeps the backup and grant shapes working beside it, since all three share a shape', () => {
+    expect(() => check(['-n', backupScript, 'name'])).not.toThrow();
+    expect(() => check(['-n', grantScript, 'name'])).not.toThrow();
+  });
+});

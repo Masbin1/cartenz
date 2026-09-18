@@ -184,6 +184,8 @@ export class CommandRunner {
   private readonly previewScript: string;
   /** The per-client backup script sudo may be asked to run (ADR-054). */
   private readonly backupScript: string;
+  /** The installed-modules read script sudo may be asked to run (ADR-056). */
+  private readonly modulesListScript: string;
   /** Settings that enable a guarded subcommand, by setting name. */
   private readonly enabled: Readonly<Record<string, boolean>>;
 
@@ -226,6 +228,12 @@ export class CommandRunner {
     // provisioning is on.
     this.backupScript = config.provisioning?.enabled
       ? (config.provisioning.backupScript ?? '')
+      : '';
+    // ADR-056. Same posture as the pull, preview and backup scripts: empty
+    // PROJECT_MODULES_LIST_SCRIPT is the off switch, and it must hold even when
+    // provisioning is on.
+    this.modulesListScript = config.provisioning?.enabled
+      ? (config.provisioning.modulesListScript ?? '')
       : '';
 
     if (config.validation.enabled) {
@@ -321,6 +329,7 @@ export class CommandRunner {
         this.pullScript || null,
         this.previewScript || null,
         this.backupScript || null,
+        this.modulesListScript || null,
       );
     }
 
@@ -618,6 +627,7 @@ export function assertProvisioningInvocation(
   pullScript: string | null = null,
   previewScript: string | null = null,
   backupScript: string | null = null,
+  modulesListScript: string | null = null,
 ): void {
   if (args[0] !== '-n') {
     throw new CommandArgumentError(
@@ -638,8 +648,9 @@ export function assertProvisioningInvocation(
   const isPull = pullScript !== null && script === pullScript;
   const isPreview = previewScript !== null && script === previewScript;
   const isBackup = backupScript !== null && script === backupScript;
+  const isModulesList = modulesListScript !== null && script === modulesListScript;
 
-  if (!isCreate && !isGrant && !isHttps && !isPull && !isPreview && !isBackup) {
+  if (!isCreate && !isGrant && !isHttps && !isPull && !isPreview && !isBackup && !isModulesList) {
     const configured = [
       ...createScripts,
       ...(grantScript ? [grantScript] : []),
@@ -647,6 +658,7 @@ export function assertProvisioningInvocation(
       ...(pullScript ? [pullScript] : []),
       ...(previewScript ? [previewScript] : []),
       ...(backupScript ? [backupScript] : []),
+      ...(modulesListScript ? [modulesListScript] : []),
     ];
     throw new CommandArgumentError(
       `"${script}" is not a configured provisioning script. Configured: ` +
@@ -716,6 +728,21 @@ export function assertProvisioningInvocation(
     if (args.length !== 3) {
       throw new CommandArgumentError(
         `The backup script takes exactly "-n <script> <project-name>"; got ` +
+          `${args.length} arguments.`,
+      );
+    }
+    return;
+  }
+
+  // ADR-056. The installed-modules read takes the same shape as the grant and
+  // backup scripts - one project name and nothing else - and is distinguishable
+  // from them only by its configured path, which is the check that got here.
+  // What it reads is fixed inside the script; an argument that could steer the
+  // query would make this a general database read, which it is not.
+  if (isModulesList) {
+    if (args.length !== 3) {
+      throw new CommandArgumentError(
+        `The installed-modules script takes exactly "-n <script> <project-name>"; got ` +
           `${args.length} arguments.`,
       );
     }

@@ -236,6 +236,20 @@ const environmentSchema = z.object({
     .default('/opt/cartenz/infrastructure/provisioning/backup-project.sh'),
 
   /**
+   * Absolute path to the installed-modules read script (ADR-056).
+   *
+   * Same shape as PROJECT_PULL_SCRIPT and PROJECT_BACKUP_SCRIPT: defaulted,
+   * and empty disables the feature on a deployment that has not installed the
+   * script's sudoers entry. It runs one fixed, whitelisted read — `SELECT
+   * name, state FROM ir_module_module` against exactly the one project it is
+   * asked about — nothing this platform grants gets it a general database
+   * connection.
+   */
+  PROJECT_MODULES_LIST_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/list-installed-modules.sh'),
+
+  /**
    * The email certbot registers a Let's Encrypt account under. Never a
    * secret — passed as a plain argument to certbot, and used only for expiry
    * notifications — but required (not defaulted) once PROJECT_HTTPS_ENABLED is
@@ -534,6 +548,12 @@ export interface AppConfig {
      * the invocation and a push proceeds without a restore point.
      */
     readonly backupScript: string | null;
+    /**
+     * The installed-modules read script (ADR-056), or null when the deployment
+     * has not configured one. Null disables the panel rather than offering one
+     * whose every read is refused by the guard.
+     */
+    readonly modulesListScript: string | null;
     readonly portRangeStart: number;
     readonly portRangeEnd: number;
     readonly baseDomain: string | null;
@@ -905,6 +925,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       grantScript: env.PROJECT_PROVISION_GRANT_SCRIPT,
       pullScript: emptyToUndefined(env.PROJECT_PULL_SCRIPT) ?? null,
       backupScript: emptyToUndefined(env.PROJECT_BACKUP_SCRIPT) ?? null,
+      modulesListScript: emptyToUndefined(env.PROJECT_MODULES_LIST_SCRIPT) ?? null,
       portRangeStart: env.PROJECT_PORT_RANGE_START,
       portRangeEnd: env.PROJECT_PORT_RANGE_END,
       baseDomain: emptyToUndefined(env.PROJECT_BASE_DOMAIN) ?? null,

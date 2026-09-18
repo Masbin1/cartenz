@@ -9,6 +9,8 @@ import { ProjectPreviewController } from './project-preview.controller';
 import { ProjectProvisioningQueue } from './project-provisioning.queue';
 import { ProjectBackupService } from './project-backup.service';
 import { ProjectBackupController } from './project-backup.controller';
+import { ProjectModulesService } from './project-modules.service';
+import { ProjectModulesController } from './project-modules.controller';
 import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
 
@@ -24,7 +26,12 @@ import { ProjectsService } from './projects.service';
  */
 @Module({
   imports: [forwardRef(() => AgentModule)],
-  controllers: [ProjectsController, ProjectPreviewController, ProjectBackupController],
+  controllers: [
+    ProjectsController,
+    ProjectPreviewController,
+    ProjectBackupController,
+    ProjectModulesController,
+  ],
   providers: [
     ProjectsService,
     ProjectEnvironmentsService,
@@ -33,6 +40,7 @@ import { ProjectsService } from './projects.service';
     ProjectDeploymentService,
     ProjectPreviewService,
     ProjectBackupService,
+    ProjectModulesService,
     GitHubRepositoryService,
   ],
   exports: [
@@ -43,6 +51,7 @@ import { ProjectsService } from './projects.service';
     ProjectDeploymentService,
     ProjectPreviewService,
     ProjectBackupService,
+    ProjectModulesService,
     GitHubRepositoryService,
   ],
 })

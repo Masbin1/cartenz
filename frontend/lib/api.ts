@@ -500,6 +500,18 @@ export const api = {
         { method: 'POST' },
       ),
 
+    /**
+     * What is actually installed in the project's own provisioned instance
+     * (ADR-056). Read fresh on every call — no cache — so a list fetched right
+     * after an install is not stale.
+     */
+    installedModules: (projectId: string) =>
+      request<{
+        available: boolean;
+        reason: string | null;
+        modules: { name: string; state: string }[];
+      }>(`/projects/${projectId}/installed-modules`),
+
     update: (projectId: string, body: Record<string, unknown>) =>
       request<ProjectDetail>(`/projects/${projectId}`, { method: 'PATCH', body }),
 
