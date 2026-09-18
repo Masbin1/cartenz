@@ -7,6 +7,7 @@ import { projects } from '../../core/database/schema';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
 import type { OdooEdition, UserRegion } from '../../core/enums';
+import type { SelectiveProvisionJobData } from './project-provisioning.queue';
 
 /**
  * Turns a scaffolded "Create with AI" / on-premise project directory into a
@@ -55,10 +56,25 @@ export interface ProvisionProjectInput {
    * version is present, because the region is part of how the template is chosen.
    */
   readonly region: UserRegion;
+  /**
+   * A resolved, sanitised module selection (ADR-056), already validated
+   * against the catalog by `resolveSelectionOrThrow` before this is called.
+   * Empty or absent means "install everything" — today's default, untouched.
+   * Only sent when a version is present, because the selective path clones a
+   * base-only template that exists per version.
+   */
+  readonly modules?: readonly string[];
 }
 
 export interface ProvisionProjectResult {
   readonly provisioned: boolean;
+  /**
+   * ADR-056: true when a selective install was queued rather than run — the
+   * caller writes `provisioningStatus: 'pending'` onto the project row and
+   * must not treat `provisioned: false` here as a failure. Always false on
+   * every other branch, including every path that existed before this field.
+   */
+  readonly pending?: boolean;
   readonly port: number | null;
   readonly url: string | null;
   /** The plaintext Odoo master password create_project printed, or null. Never
@@ -76,6 +92,12 @@ export interface ProvisionProjectResult {
     readonly error: string | null;
   };
 }
+
+/**
+ * ADR-056 job payload. Identifiers only, matching the agent queue's convention
+ * (`AgentJobData`): the worker re-reads everything from the database, so a job
+ * carries no state and survives a Redis flush.
+ */
 
 @Injectable()
 export class ProjectProvisioningService {
@@ -98,6 +120,16 @@ export class ProjectProvisioningService {
    * caller writes onto the project row, because a provisioning failure is not
    * a reason to fail project creation: the scaffold and the specification
    * already exist and are useful on their own.
+   *
+   * ADR-056: when `input.modules` is non-empty, this method does NOT run the
+   * script. It allocates a port, enqueues the real work, and returns
+   * immediately with `status: 'pending'` — the caller writes that status onto
+   * the project row and the response tells the requester provisioning is
+   * running, not finished. `enqueueSelective` below is what a worker later
+   * calls to do the actual `sudo` invocation and, on completion, updates the
+   * row itself (this class owns that update for the async path, unlike the
+   * synchronous path where ProjectsService writes the row after this method
+   * returns).
    */
   async provision(input: ProvisionProjectInput): Promise<ProvisionProjectResult> {
     const noHttps = { status: 'none' as const, error: null };
@@ -137,6 +169,43 @@ export class ProjectProvisioningService {
       };
     }
 
+    const modules = input.modules ?? [];
+    if (modules.length > 0) {
+      // Not enqueued here: `input.projectId` is empty at this point (the
+      // project row does not exist until ProjectsService inserts it after
+      // this call returns), and the job payload needs the real id so the
+      // worker can update the right row. ProjectsService enqueues once it has
+      // one, via `ProjectProvisioningQueue` directly.
+      return {
+        provisioned: false,
+        pending: true,
+        port,
+        url: null,
+        masterPassword: null,
+        databaseName: input.technicalName,
+        error: null,
+        stdout: '',
+        stderr: '',
+        https: noHttps,
+      };
+    }
+
+    return this.runProvisioningScript(input, port);
+  }
+
+  /**
+   * The actual `sudo create_project...` call and everything that follows a
+   * successful run (the addons/ ownership fix-up, master password parsing,
+   * HTTPS issuance). Shared by the synchronous path (`provision`, called
+   * directly from a request) and the asynchronous path (`runSelective`,
+   * called from the worker) so a change to how the script's output is parsed
+   * only has to be made once.
+   */
+  private async runProvisioningScript(
+    input: ProvisionProjectInput,
+    port: number,
+  ): Promise<ProvisionProjectResult> {
+    const noHttps = { status: 'none' as const, error: null };
     const script =
       input.odooEdition === 'enterprise'
         ? this.config.provisioning.enterpriseScript
@@ -154,6 +223,17 @@ export class ProjectProvisioningService {
         // database for the version, edition and region. Omitting it (no version)
         // keeps the pre-ADR-051 shape.
         args.push(input.region);
+
+        // ADR-056: a module selection is a further optional argument. Only
+        // appended when it is non-empty, so a project that selected nothing
+        // sends exactly the vector it sent before this feature existed — the
+        // scripts' arg-count check would otherwise see a meaningless empty
+        // seventh argument. Computed by the caller and empty here means the
+        // same as absent.
+        const modules = input.modules ?? [];
+        if (modules.length > 0) {
+          args.push([...modules].sort().join(','));
+        }
       }
       const result = await this.commands.run('sudo', args, {
         cwd: '/',
@@ -284,6 +364,34 @@ export class ProjectProvisioningService {
   /** True when this deployment is configured to issue HTTPS certificates. */
   private get httpsAvailable(): boolean {
     return this.config.https?.enabled === true && !!this.config.https.email;
+  }
+
+  /**
+   * ADR-056: the worker-side half of a selective provisioning — runs the same
+   * script the synchronous path runs, with no database write of its own.
+   *
+   * Deliberately thin: git-init of `addons/` and the GitHub repository
+   * connection that follow a successful script run live on `ProjectsService`
+   * (it already owns that logic for the synchronous path), not here. The
+   * worker calls `ProjectsService.completeSelectiveProvisioning`, which calls
+   * this, then does the git/GitHub/row work, then writes the final status.
+   * Keeping that logic in one place, rather than duplicated for the async
+   * path, is worth the cross-service call.
+   */
+  async runSelectiveScript(data: SelectiveProvisionJobData): Promise<ProvisionProjectResult> {
+    return this.runProvisioningScript(
+      {
+        projectId: data.projectId,
+        technicalName: data.technicalName,
+        odooEdition: data.odooEdition,
+        odooVersion: data.odooVersion,
+        region: data.region,
+        modules: data.modules,
+      },
+      // Already allocated when this was queued, and already recorded on the
+      // pending project row — see the field's note on the job payload.
+      data.port,
+    );
   }
 
   /**

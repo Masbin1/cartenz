@@ -59,6 +59,8 @@ import {
 import { OdooSettingsService } from '../settings/odoo-settings.service';
 import { OdooVersionsService } from '../settings/odoo-versions.service';
 import { ProjectProvisioningService } from './project-provisioning.service';
+import { ProjectProvisioningQueue } from './project-provisioning.queue';
+import type { SelectiveProvisionJobData } from './project-provisioning.queue';
 import { ProjectDeploymentService } from './project-deployment.service';
 import {
   GitHubRepositoryService,
@@ -152,6 +154,7 @@ export class ProjectsService {
     private readonly odooVersions: OdooVersionsService,
     private readonly odooOnline: OdooOnlineClient,
     private readonly provisioning: ProjectProvisioningService,
+    private readonly provisioningQueue: ProjectProvisioningQueue,
     private readonly githubRepositories: GitHubRepositoryService,
     private readonly deployment: ProjectDeploymentService,
   ) {}
@@ -615,6 +618,7 @@ export class ProjectsService {
           region: dto.region,
           defaultBranch: 'main',
           environmentBranches: scaffoldEnvironments.map((environment) => environment.branch),
+          modules: resolvedModules,
         })
       : await this.scaffoldCustomAddon({
           projectName: dto.name,
@@ -732,6 +736,42 @@ export class ProjectsService {
       userId: user.userId,
       metadata: { version: 1 },
     });
+
+    /**
+     * ADR-056: a selective install is queued now, after the row exists.
+     *
+     * It is enqueued here rather than inside `provisionAiProject` because the
+     * job payload carries `projectId`, and that id does not exist until the
+     * transaction above commits. Enqueuing earlier would hand the worker an
+     * empty id and a row it could never find to update.
+     *
+     * The GitHub step below is deliberately skipped on this path: it pushes
+     * the local `addons/` repository, and on a queued provisioning there is no
+     * directory yet — the worker creates it and then does the same work in
+     * `completeSelectiveProvisioning` once it actually exists.
+     */
+    if (scaffolded.provisioning?.status === 'pending') {
+      await this.provisioningQueue.enqueue({
+        projectId: result.project.id,
+        technicalName: scaffolded.technicalName,
+        odooEdition,
+        odooVersion: dto.odooVersion ?? null,
+        region: dto.region,
+        modules: resolvedModules ?? [],
+        // The port the pending row already carries, so the worker's completion
+        // update writes the port the row claims rather than a fresh allocation.
+        port: scaffolded.provisioning.port as number,
+      });
+      this.logger.log(
+        `Project "${result.project.name}" created; provisioning its ` +
+          `${(resolvedModules ?? []).length} selected module(s) in the background`,
+      );
+      return {
+        ...this.present(result.project),
+        specification: result.spec.specification,
+        github: null,
+      };
+    }
 
     /**
      * The repository, if this deployment creates one (ADR-041). Last, because it is
@@ -1644,6 +1684,11 @@ export class ProjectsService {
     region: UserRegion;
     defaultBranch: string;
     environmentBranches?: readonly string[];
+    /**
+     * A resolved module selection (ADR-056), or undefined for the default
+     * install-everything path. Forwarded to `ProjectProvisioningService.provision`.
+     */
+    modules?: readonly string[];
   }): Promise<{
     technicalName: string;
     repositoryPath: string;
@@ -1673,7 +1718,40 @@ export class ProjectsService {
       odooEdition: input.odooEdition,
       odooVersion: input.odooVersion,
       region: input.region,
+      modules: input.modules,
     });
+
+    const repositoryPath = join(this.config.provisioning.projectsDir, directoryName);
+    const addonsPath = join(repositoryPath, 'addons');
+
+    /**
+     * ADR-056: the selective path returns a *queued* result. Nothing exists on
+     * disk yet — no directory, no database, no systemd unit — and none of it
+     * will until the worker runs the script. So this branch deliberately skips
+     * everything below (the master password seal, the addons/ existence check,
+     * the git init): there is nothing to seal and no directory to inspect.
+     *
+     * The row is still written, with `pending`, which is what makes the portal
+     * able to show "provisioning" instead of a project that mysteriously has
+     * no instance. ProjectsService enqueues the job once the row exists — see
+     * the call site, because the job needs the row's real id.
+     */
+    if (result.pending) {
+      return {
+        technicalName: directoryName,
+        repositoryPath,
+        addonsPath,
+        gitRootPath: addonsPath,
+        provisioning: {
+          status: 'pending' as const,
+          port: result.port,
+          url: null,
+          databaseName: result.databaseName,
+          masterPasswordRef: null,
+          https: result.https,
+        },
+      };
+    }
 
     if (!result.provisioned) {
       throw new BadRequestException(
@@ -1699,9 +1777,6 @@ export class ProjectsService {
       });
       masterPasswordRef = sealed.ref;
     }
-
-    const repositoryPath = join(this.config.provisioning.projectsDir, directoryName);
-    const addonsPath = join(repositoryPath, 'addons');
 
     const addonsInfo = await stat(addonsPath).catch(() => null);
     if (!addonsInfo?.isDirectory()) {
@@ -1764,6 +1839,171 @@ export class ProjectsService {
         https: result.https,
       },
     };
+  }
+
+  /**
+   * ADR-056: the second half of a selective provisioning, run when the worker's
+   * script call finishes.
+   *
+   * Mirrors the tail of the synchronous `provisionAiProject` — seal the master
+   * password, verify `addons/` exists, git-init it, connect the GitHub
+   * repository — because those steps need a real directory, and until the
+   * worker ran the host script there was none. Duplicating them here rather
+   * than sharing a helper with the synchronous path is deliberate: the
+   * synchronous path runs as part of an HTTP request with a caller to report
+   * to and a transaction to roll back into, this one runs in a worker with
+   * neither. Merging them would mean a boolean threaded through every branch.
+   *
+   * Never throws: there is no request to fail. Every outcome is written onto
+   * the project row, which is what the portal polls.
+   */
+  async completeSelectiveProvisioning(data: SelectiveProvisionJobData): Promise<void> {
+    const result = await this.provisioning.runSelectiveScript(data);
+
+    if (!result.provisioned) {
+      this.logger.error(
+        `Selective provisioning of "${data.technicalName}" failed: ${result.error ?? 'unknown'}`,
+      );
+      await this.recordSelectiveOutcome(data.projectId, {
+        provisioningStatus: 'failed',
+        provisioningError: result.error ?? 'unknown error',
+      });
+      return;
+    }
+
+    let masterPasswordRef: string | null = null;
+    if (result.masterPassword) {
+      try {
+        const sealed = await this.secrets.write({
+          projectId: data.projectId,
+          purpose: 'odoo-master-password',
+          value: result.masterPassword,
+        });
+        masterPasswordRef = sealed.ref;
+      } catch (error) {
+        // The instance is real and running; only the credential reference was
+        // lost. Logged loudly because the password is now recoverable only
+        // from the host's odoo.conf, exactly as the synchronous path warns.
+        this.logger.error(
+          `Provisioned "${data.technicalName}" but could not seal its master password: ` +
+            `${(error as Error).message}. Recover it from ` +
+            `${this.config.provisioning.projectsDir}/${data.technicalName}/config/odoo.conf`,
+        );
+      }
+    }
+
+    const repositoryPath = join(this.config.provisioning.projectsDir, data.technicalName);
+    const addonsPath = join(repositoryPath, 'addons');
+
+    const addonsInfo = await stat(addonsPath).catch(() => null);
+    if (!addonsInfo?.isDirectory()) {
+      await this.recordSelectiveOutcome(data.projectId, {
+        provisioningStatus: 'failed',
+        provisioningError:
+          `Provisioning reported success but "${addonsPath}" does not exist. Check the ` +
+          'provisioning script output on the host.',
+      });
+      return;
+    }
+
+    try {
+      const existingGit = await stat(join(addonsPath, '.git')).catch(() => null);
+      if (!existingGit) {
+        for (const file of buildProvisionedAddonFiles({
+          projectName: data.technicalName,
+          url: result.url,
+        })) {
+          const target = join(addonsPath, file.path);
+          await mkdir(dirname(target), { recursive: true });
+          await writeFile(target, file.content, { encoding: 'utf8', mode: file.mode ?? 0o644 });
+        }
+
+        await this.git.init(addonsPath, 'main');
+        await this.git.commit(addonsPath, `Scaffold ${data.technicalName}`);
+
+        for (const branch of DEFAULT_SCAFFOLD_ENVIRONMENTS.map(
+          (environment) => environment.branch,
+        )) {
+          if (branch === 'main') continue;
+          await this.git.addBranch(addonsPath, branch);
+        }
+      }
+    } catch (error) {
+      // The instance is real; only its addons/ could not be turned into a
+      // repository. Recorded as a failure because a project the agent cannot
+      // commit to is not one the AI flow can use — the same judgement the
+      // synchronous path makes.
+      await this.recordSelectiveOutcome(data.projectId, {
+        provisioningStatus: 'failed',
+        provisioningError:
+          `The Odoo instance at ${result.url} is running, but its addons/ directory could ` +
+          `not be turned into a Git repository: ${(error as Error).message}`,
+      });
+      return;
+    }
+
+    await this.recordSelectiveOutcome(data.projectId, {
+      provisioningStatus: 'provisioned',
+      provisioningPort: result.port,
+      provisioningUrl: result.url,
+      provisionedAt: new Date(),
+      provisioningDatabaseName: result.databaseName,
+      provisioningMasterPasswordRef: masterPasswordRef,
+      provisioningError: null,
+      httpsStatus: result.https.status,
+      httpsError: result.https.error,
+      environmentConfig: {
+        targetEnvironment: 'development',
+        onPremisePath: addonsPath,
+      },
+    });
+
+    this.logger.log(
+      `Selective provisioning of "${data.technicalName}" finished at ${result.url}`,
+    );
+
+    /**
+     * The GitHub repository (ADR-041), last and never fatal — the same ordering
+     * the synchronous path uses, for the same reason: the project is real by
+     * this point and an unreachable GitHub must not undo that.
+     */
+    await this.connectGitHubRepository({
+      projectId: data.projectId,
+      // The row was created by a user whose id is recorded on it; this is the
+      // same attribution the synchronous path passes at request time.
+      userId: await this.ownerOf(data.projectId),
+      projectName: data.technicalName,
+      technicalName: data.technicalName,
+      description: null,
+      gitRootPath: addonsPath,
+      defaultBranch: 'main',
+      branches: DEFAULT_SCAFFOLD_ENVIRONMENTS.map((environment) => environment.branch),
+    });
+  }
+
+  /** The user a project was created by, for worker-side attribution. */
+  private async ownerOf(projectId: string): Promise<string> {
+    const [row] = await this.database.db
+      .select({ userId: projects.createdByUserId })
+      .from(projects)
+      .where(eq(projects.id, projectId));
+    return row?.userId ?? '';
+  }
+
+  /** Writes a selective provisioning outcome onto the project row. */
+  private async recordSelectiveOutcome(
+    projectId: string,
+    values: Partial<typeof projects.$inferInsert>,
+  ): Promise<void> {
+    await this.database.db
+      .update(projects)
+      .set(values)
+      .where(eq(projects.id, projectId))
+      .catch((error: Error) =>
+        this.logger.error(
+          `Could not record provisioning outcome on project ${projectId}: ${error.message}`,
+        ),
+      );
   }
 
   /**

@@ -13,6 +13,7 @@ import {
   EnvironmentEditor,
   type EnvironmentDraft,
 } from '@/components/projects/environment-editor';
+import { ModulePicker } from '@/components/projects/module-picker';
 
 const ODOO_VERSIONS = ['15.0', '16.0', '17.0', '18.0', '19.0'];
 const ODOO_EDITIONS: { value: string; label: string }[] = [
@@ -720,6 +721,13 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
   const [requirements, setRequirements] = useState<{ title: string; detail: string }[]>([
     { title: '', detail: '' },
   ]);
+  /**
+   * ADR-056: which of the two install modes this project uses, and — when the
+   * second is chosen — the modules ticked in the picker. `'all'` is the default
+   * so the pre-ADR-056 behaviour is what an unmodified form submits.
+   */
+  const [installMode, setInstallMode] = useState<'all' | 'choose'>('all');
+  const [selectedModules, setSelectedModules] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -743,6 +751,11 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
       return;
     }
 
+    if (installMode === 'choose' && selectedModules.length === 0) {
+      setError('Choose at least one module, or switch back to "Install everything".');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const project = await api.projects.createWithAi({
@@ -755,6 +768,7 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
           title: entry.title,
           detail: entry.detail.length > 0 ? entry.detail : undefined,
         })),
+        modules: installMode === 'choose' ? selectedModules : undefined,
       });
       router.push(`/projects/${project.id}`);
     } catch (caught) {
@@ -894,6 +908,55 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
           ))}
         </div>
       </div>
+
+      <div>
+        <span className="field-label">Modules to install</span>
+
+        <div className="space-y-2">
+          <label className="flex cursor-pointer items-start gap-3 rounded-md border border-surface-border bg-surface p-3">
+            <input
+              type="radio"
+              name="install-mode"
+              className="mt-0.5"
+              checked={installMode === 'all'}
+              onChange={() => setInstallMode('all')}
+            />
+            <span className="min-w-0">
+              <span className="block text-xs font-medium">Install everything</span>
+              <span className="block text-2xs text-content-subtle">
+                Every module this Odoo edition ships, ready to switch on per user. The fast
+                path: the project is cloned from a pre-built database.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-3 rounded-md border border-surface-border bg-surface p-3">
+            <input
+              type="radio"
+              name="install-mode"
+              className="mt-0.5"
+              checked={installMode === 'choose'}
+              onChange={() => setInstallMode('choose')}
+            />
+            <span className="min-w-0">
+              <span className="block text-xs font-medium">Choose what to install</span>
+              <span className="block text-2xs text-content-subtle">
+                Pick only the apps this project needs. The instance starts small and is built
+                in the background; dependencies are installed automatically.
+              </span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      {installMode === 'choose' ? (
+        <ModulePicker
+          version={odooVersion}
+          edition={odooEdition}
+          value={selectedModules}
+          onChange={setSelectedModules}
+        />
+      ) : null}
 
       <Alert tone="info" title="No repository yet">
         A project created this way has no repository, so the agent can analyse and plan but cannot

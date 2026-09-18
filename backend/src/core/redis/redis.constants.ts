@@ -12,6 +12,20 @@ export const AGENT_JOB_EXECUTE = 'execute-task';
 export const AGENT_JOB_RESUME = 'resume-task';
 
 /**
+ * ADR-056. A selective module install runs `odoo-bin -i <modules>` on the
+ * host, which can take minutes — long enough that it must not run on an HTTP
+ * request thread (PROCESS_MAX_TIMEOUT_MS is a hard 5-minute ceiling on the
+ * platform's own process runner, not a request deadline this queue is
+ * bypassing). A dedicated queue rather than a new job name on
+ * `AGENT_TASK_QUEUE`: this work has nothing to do with agent task execution,
+ * shares no payload shape with it, and giving it its own queue means the
+ * agent worker's concurrency setting cannot accidentally throttle project
+ * provisioning or vice versa.
+ */
+export const PROJECT_PROVISIONING_QUEUE = 'project-provisioning';
+export const PROJECT_PROVISIONING_JOB = 'provision-modules';
+
+/**
  * Pub/sub channel for a single task's event stream, in the form documented in
  * chapter 9: task:{task_id}:events.
  */

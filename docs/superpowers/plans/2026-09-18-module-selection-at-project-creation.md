@@ -247,11 +247,11 @@ Tasks 1–5, 8–11, but Task 7's end-to-end verification needs it to exist.
   it (same triggers as the full templates: a version upgrade, an addon path
   change).
 
-- [ ] **Step 1: Extend the script** with a third `build_template` call:
+- [x] **Step 1: Extend the script** with a third `build_template` call:
   `build_template "community" "cartenz_tpl_${VER_TAG}_com_base" --base-only`
   (thread a flag through `build_template` that swaps the `list_modules`
   call for a literal `"base"`, rather than duplicating the function).
-- [ ] **Step 2: Update the usage/echo text** at the end of the script to
+- [x] **Step 2: Update the usage/echo text** at the end of the script to
   mention the third template.
 - [ ] **Step 3: Hand the operator this exact root step** (do not run it from
   application code — it is a multi-minute Odoo install, same posture as the
@@ -309,11 +309,11 @@ Tasks 1–5, 8–11, but Task 7's end-to-end verification needs it to exist.
   scripts installed at `/opt/odoo/scripts/` are the operator's copies —
   editing the repo copies is not enough; Step 4 below is the reinstall.
 
-- [ ] **Step 1: Read the current script fully** before editing — it already
+- [x] **Step 1: Read the current script fully** before editing — it already
   branches on region-vs-no-region for template selection (ADR-051 §Template
   selection), and the new branch must not disturb that logic, only add a third
   case ahead of it.
-- [ ] **Step 2: Implement the modules-csv branch**, including running
+- [x] **Step 2: Implement the modules-csv branch**, including running
   `odoo-bin` as the `odoo` OS user over the local socket the way
   `build-odoo-templates.sh` already does (peer auth, no `db_password` — copy
   that pattern, don't reinvent it).
@@ -358,12 +358,12 @@ Tasks 1–5, 8–11, but Task 7's end-to-end verification needs it to exist.
   the ADR calls for, so don't skip it because Task 3 already checked; a bug in
   one must not be the only thing standing between a bad string and `sudo`).
 
-- [ ] **Step 1: Extend the spec** with: the five-argument shape (existing) still
+- [x] **Step 1: Extend the spec** with: the five-argument shape (existing) still
   passes; a six-argument shape with a valid module CSV passes; a six-argument
   shape with a shell metacharacter in the CSV is refused; a malformed module
   name (leading digit, uppercase) is refused.
-- [ ] **Step 2: Implement the extended shape check.**
-- [ ] **Step 3: Run `npm test -- command-runner`**
+- [x] **Step 2: Implement the extended shape check.**
+- [x] **Step 3: Run `npm test -- command-runner`**
 
 ---
 
@@ -432,19 +432,19 @@ pending status, and the real work happens off the request thread.
   same as today) or `failed` (with the error captured on the row, same
   `summariseTail` pattern already used).
 
-- [ ] **Step 1: Write `project-provisioning.service.spec.ts` from scratch** —
+- [x] **Step 1: Write `project-provisioning.service.spec.ts` from scratch** —
   assert the unchanged path first (regression guard), then the new path:
   calling `provision` with `modules` set returns immediately with a pending
   marker without waiting for the mocked `sudo`/queue call to resolve; the row
   is updated to `provisioned`/`failed` once the background job settles (use a
   controllable mock/deferred promise or a mocked queue `.add()` to assert both
   the immediate return and the eventual update).
-- [ ] **Step 2: Implement.** Keep the synchronous branch's code path
+- [x] **Step 2: Implement.** Keep the synchronous branch's code path
   textually separate from the async branch (an `if (modules?.length) { ... }
   else { /* existing code, untouched */ }`) rather than threading a boolean
   through the existing function — this is what keeps the regression risk to
   the diff's shape, not just its behaviour.
-- [ ] **Step 3: Run `npm test -- project-provisioning`**
+- [x] **Step 3: Run `npm test -- project-provisioning`**
 
 ---
 
@@ -473,15 +473,15 @@ pending status, and the real work happens off the request thread.
   mockup's inline styles — the mockup is a reference, not a source to copy
   markup from.
 
-- [ ] **Step 1: `npx tsc --noEmit`** clean before starting (baseline).
-- [ ] **Step 2: Build `ModulePicker`** as an isolated component first, with a
+- [x] **Step 1: `npx tsc --noEmit`** clean before starting (baseline).
+- [x] **Step 2: Build `ModulePicker`** as an isolated component first, with a
   hand-written fixture array so it can be eyeballed before wiring the real
   fetch.
-- [ ] **Step 3: Wire it into `CreateWithAiForm`** behind the radio, and wire
+- [x] **Step 3: Wire it into `CreateWithAiForm`** behind the radio, and wire
   `api.odooVersions.modules`.
-- [ ] **Step 4: `npx tsc --noEmit`** again; fix any type errors before moving
+- [x] **Step 4: `npx tsc --noEmit`** again; fix any type errors before moving
   on.
-- [ ] **Step 5: Build the portal** per the skill's documented recipe
+- [x] **Step 5: Build the portal** per the skill's documented recipe
   (`infrastructure/scripts/build-portal.sh`, never by hand) and visually check
   against the mockup on a real page load — this is a UI task, so a clean
   typecheck is not suficient proof it looks right.
@@ -509,7 +509,7 @@ pending status, and the real work happens off the request thread.
   read-back with the operator before writing code — this is the one part of
   the ADR not fully pinned down (see the note in ADR §7.2 about reading back
   from the instance).
-- [ ] **Step 2: Implement the provisioning status view**, polling the existing
+- [x] **Step 2: Implement the provisioning status view**, polling the existing
   project-status endpoint at whatever interval the task-progress UI already
   uses (reuse, don't invent a new poll interval).
 - [ ] **Step 3: Implement the installed-modules panel** once Step 1's shape is
@@ -541,3 +541,64 @@ run after Task 6's template exists on the host.
   readable reason, not stuck on `pending` forever.
 - [ ] Clean up every throwaway project/instance created during this
   verification per the skill's standard teardown checklist.
+
+## Deviations found while executing Tasks 6–11
+
+Recorded here rather than edited into the steps above, so the plan still reads
+as what was intended and this reads as what happened.
+
+1. **Task 6 flag name.** Implemented as a positional `base_only` third argument
+   (`build_template "community" "cartenz_tpl_${VER_TAG}_com_base" true`), not a
+   `--base-only` flag. The function takes positionals throughout; a flag would
+   have been the only option-parsing in the file.
+
+2. **Task 7 Step 4 was based on a wrong premise, then verified.** The plan warns
+   that `/opt/odoo/scripts/` copies are the operator's and that editing the repo
+   is not enough. Confirmed by `diff`: `infrastructure/provisioning/host/create_project`
+   is byte-identical to `/opt/odoo/scripts/create_project`, so the `host/` copies
+   ARE the production scripts. (The top-level
+   `infrastructure/provisioning/create_project` is a separate, older reference
+   implementation, 922 lines different — it is NOT what the host runs and was
+   left untouched.) The reinstall step remains open: it is root-gated.
+
+3. **Task 9's shape changed three times during implementation**, each for a
+   reason the plan could not have known:
+
+   - The queue lived in `ProjectProvisioningService`'s constructor at first.
+     A `new Queue()` there opens a real Redis connection, so the spec could
+     never exit. Extracted to `ProjectProvisioningQueue` (its own injectable),
+     mirroring the existing `QueueAgentOrchestrator` pattern, so the spec
+     injects a stub with no connection. This is why the spec passes now.
+   - The job carries the allocated `port`, not just the modules: `provision()`
+     allocates a port for the pending row, and a worker-side re-allocation would
+     hand out a different one than the row already claims.
+   - **Enqueue moved from `provision()` to `ProjectsService.createAiProject`.**
+     The job payload needs a real `projectId`, and `provision()` is called
+     *before* the row is inserted (its comment says so). Enqueuing there would
+     have handed the worker an empty id. The enqueue now happens after the
+     transaction commits, and the pending path returns early — skipping the
+     GitHub step, which needs a directory that does not exist yet.
+   - Consequently `completeSelectiveProvisioning` (in `ProjectsService`) owns the
+     whole worker-side tail — sealing the master password, git-initting
+     `addons/`, connecting GitHub — because all of it needs a directory that
+     only exists after the worker's script call. The synchronous path's tail is
+     duplicated, deliberately: the two run in different worlds (HTTP request vs
+     worker) and sharing would mean threading a boolean through every branch.
+
+4. **Task 10: `api.projects.createWithAi` already accepted `modules?: string[]`**
+   before this task started, so no `api.ts` change was needed for the POST. The
+   new method is `api.settings.odooVersionModules(version, edition)` — note
+   `api.settings`, not `api.odooVersions`; the portal groups it under settings.
+
+5. **Task 11 Step 1 is still open, and this is the plan working as written.**
+   No read path to a provisioned instance's own database exists anywhere in the
+   platform (verified: zero `ir_module_module` references in `backend/src`).
+   Building one means a new direct-database access boundary, which is a design
+   decision for the operator, not something to guess. The provisioning status
+   view (Step 2) shipped; the installed-modules panel (Step 3) is not built.
+
+6. **Poll interval (Task 11 Step 2).** The plan says to reuse the existing
+   interval; there is no polling interval elsewhere in the portal — task
+   progress uses an SSE stream (`lib/use-task-stream.ts`). A new 3-second
+   `setInterval` was added to the project detail page, active only while the
+   status is `pending`.

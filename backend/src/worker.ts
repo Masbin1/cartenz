@@ -8,8 +8,10 @@ import { APP_CONFIG } from './core/config/config.module';
 import type { AppConfig } from './core/config/configuration';
 import { RedisService } from './core/redis/redis.service';
 import { AgentWorkflow } from './agent/orchestration/agent-workflow';
-import { AGENT_TASK_QUEUE } from './core/redis/redis.constants';
+import { AGENT_TASK_QUEUE, PROJECT_PROVISIONING_QUEUE } from './core/redis/redis.constants';
 import type { AgentJobData } from './agent/orchestration/queue-agent-orchestrator';
+import { ProjectsService } from './modules/projects/projects.service';
+import type { SelectiveProvisionJobData } from './modules/projects/project-provisioning.queue';
 
 /**
  * Agent worker entry point.
@@ -46,6 +48,7 @@ async function bootstrap(): Promise<void> {
   const config = app.get<AppConfig>(APP_CONFIG);
   const redis = app.get(RedisService);
   const workflow = app.get(AgentWorkflow);
+  const projects = app.get(ProjectsService);
 
   const worker = new Worker<AgentJobData>(
     AGENT_TASK_QUEUE,
@@ -65,6 +68,37 @@ async function bootstrap(): Promise<void> {
 
   worker.on('completed', (job) => {
     logger.log(`Job ${job.id} completed`);
+  });
+
+  /**
+   * ADR-056: a second queue for selective project provisioning.
+   *
+   * It is separate from the agent queue because the two have nothing to do with
+   * each other — a module install takes minutes and must not queue behind, or
+   * delay, an agent task. Concurrency of 1 is deliberate: a provisioning run
+   * already saturates a host CPU with an Odoo install, so running two at once
+   * makes both slower and risks the port allocator handing out a port the other
+   * run has not yet bound.
+   */
+  const provisioningWorker = new Worker<SelectiveProvisionJobData>(
+    PROJECT_PROVISIONING_QUEUE,
+    async (job: Job<SelectiveProvisionJobData>) => {
+      logger.log(
+        `Provisioning project ${job.data.technicalName} with ${job.data.modules.length} module(s)`,
+      );
+      await projects.completeSelectiveProvisioning(job.data);
+    },
+    { connection: redis.queueConnection, concurrency: 1 },
+  );
+
+  provisioningWorker.on('failed', (job, error) => {
+    logger.error(
+      `Provisioning job ${job?.id ?? 'unknown'} (${job?.data?.technicalName ?? '?'}) failed: ${error.message}`,
+    );
+  });
+
+  provisioningWorker.on('completed', (job) => {
+    logger.log(`Provisioning job ${job.id} completed`);
   });
 
   let shuttingDown = false;
@@ -93,6 +127,7 @@ async function bootstrap(): Promise<void> {
       // The worker closes first, releasing the blocking read on the queue
       // connection, so that closing the application can then close it cleanly.
       await worker.close();
+      await provisioningWorker.close();
       await app.close();
     } catch (error) {
       logger.error(`Error during shutdown: ${(error as Error).message}`);
@@ -109,6 +144,7 @@ async function bootstrap(): Promise<void> {
   logger.log(
     `Agent worker listening on queue "${AGENT_TASK_QUEUE}" with concurrency ${config.agent.workerConcurrency}`,
   );
+  logger.log(`Provisioning worker listening on queue "${PROJECT_PROVISIONING_QUEUE}"`);
 }
 
 bootstrap().catch((error: unknown) => {

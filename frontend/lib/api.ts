@@ -287,6 +287,25 @@ export const api = {
      */
     odooVersions: () => request<OdooVersionRepository[]>('/settings/odoo-versions'),
 
+    /**
+     * ADR-056: the module picker's catalogue for one version/edition, read
+     * live from the host's manifests. `edition` defaults server-side to
+     * enterprise when omitted; passed explicitly here so a picker refetch on
+     * an edition change always names what it wants.
+     */
+    odooVersionModules: (version: string, edition: string) =>
+      request<{
+        version: string;
+        edition: string;
+        modules: {
+          technicalName: string;
+          name: string;
+          category: string | null;
+          isApplication: boolean;
+          depends: string[];
+        }[];
+      }>(`/settings/odoo-versions/${encodeURIComponent(version)}/modules?edition=${encodeURIComponent(edition)}`),
+
     addOdooVersion: (body: {
       version: string;
       basePath: string;

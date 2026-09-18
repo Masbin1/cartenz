@@ -6,6 +6,7 @@ import { ProjectProvisioningService } from './project-provisioning.service';
 import { ProjectDeploymentService } from './project-deployment.service';
 import { ProjectPreviewService } from './project-preview.service';
 import { ProjectPreviewController } from './project-preview.controller';
+import { ProjectProvisioningQueue } from './project-provisioning.queue';
 import { ProjectBackupService } from './project-backup.service';
 import { ProjectBackupController } from './project-backup.controller';
 import { ProjectsController } from './projects.controller';
@@ -28,6 +29,7 @@ import { ProjectsService } from './projects.service';
     ProjectsService,
     ProjectEnvironmentsService,
     ProjectProvisioningService,
+    ProjectProvisioningQueue,
     ProjectDeploymentService,
     ProjectPreviewService,
     ProjectBackupService,
@@ -37,6 +39,7 @@ import { ProjectsService } from './projects.service';
     ProjectsService,
     ProjectEnvironmentsService,
     ProjectProvisioningService,
+    ProjectProvisioningQueue,
     ProjectDeploymentService,
     ProjectPreviewService,
     ProjectBackupService,

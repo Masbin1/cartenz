@@ -33,6 +33,23 @@ export default function ProjectDetailPage() {
     void load();
   }, [load]);
 
+  /**
+   * ADR-056: a queued selective install is the one project state that changes
+   * without anyone doing anything, so the page watches it.
+   *
+   * Three seconds: fast enough that the transition to `provisioned` reads as
+   * the page having noticed rather than the person having refreshed, slow
+   * enough that a multi-minute install is not thousands of requests. The timer
+   * stops as soon as the status leaves `pending`, because a finished install
+   * never changes again on its own.
+   */
+  useEffect(() => {
+    if (project?.provisioning.status !== 'pending') return;
+
+    const timer = setInterval(() => void load(), 3000);
+    return () => clearInterval(timer);
+  }, [project?.provisioning.status, load]);
+
   if (loading || !user) return <PageLoading />;
 
   if (error) {
@@ -487,6 +504,15 @@ function InstancePanel({
         <div className="border-b border-surface-border px-4 py-3">
           <Alert tone="error" title="Provisioning failed">
             {provisioning.error}
+          </Alert>
+        </div>
+      ) : null}
+
+      {provisioning.status === 'pending' ? (
+        <div className="border-b border-surface-border px-4 py-3">
+          <Alert tone="info" title="Provisioning in progress">
+            The selected modules are being installed in the background. This page updates
+            automatically once the instance is ready.
           </Alert>
         </div>
       ) : null}
