@@ -263,11 +263,20 @@ if [[ -n "$MODULES_CSV" ]]; then
 
     INSTALL_DIR="$(mktemp -d)"
     chown odoo:odoo "$INSTALL_DIR"
+    mkdir -p "${INSTALL_DIR}/data"
+    chown odoo:odoo "${INSTALL_DIR}/data"
     INSTALL_CONF="${INSTALL_DIR}/odoo.conf"
     {
         echo "[options]"
         echo "addons_path = ${ADDONS}"
         echo "db_user = ${ODOO_USER}"
+        # Odoo's data_dir default is under the running user's $HOME
+        # (/opt/odoo for the odoo user), which is root:odoo 0755 — not
+        # writable by odoo itself. Point it at scratch space that is, so a
+        # module needing the filestore during install (attachments, demo
+        # assets even with without_demo) does not fail on that instead of
+        # on anything to do with the modules requested.
+        echo "data_dir = ${INSTALL_DIR}/data"
         echo "without_demo = all"
     } > "$INSTALL_CONF"
     chown odoo:odoo "$INSTALL_CONF"
