@@ -243,7 +243,9 @@ clone was a copy, and it has been diverging since the moment it was made.
 | `source database is being accessed by other users` | `datallowconn` was flipped back to true and something connected | Flip it to false and retry; nothing should hold a template open |
 | New projects are still empty | The operator's scripts were never updated, so the version argument is ignored | Step 4 |
 | Project generated against the wrong Odoo | The version has no active catalog row, so the single base path applied | Register it in Settings → Odoo versions |
-| Full install fails partway | A module in `-i all` has an unmet Python dependency | See the log the script names (`<tmp>/<edition>.log`), install the dependency into that version's venv, rerun |
+| Full install fails partway | A module in `-i all` has an unmet Python dependency | See the log the script names (`<tmp>/<edition>.log`), install the dependency into that version's venv, rerun. On this host `cloud_storage_google` failed the run with `OSError`-style `MissingDependency: External dependency 'google-auth' not installed`; `/opt/odoo/venv/bin/pip install google-auth` clears it |
+| Selective install dies with `the config file '<tmp>' … doesn't exist or is not readable` | The install config was written by root and read by `sudo -u odoo`, which cannot read a root-owned file. Odoo reports the permission failure as a missing file | Fixed in the script; reinstall `create-project-db.sh` onto the host (§4) |
+| Retry after a failed selective install says `database already exists` | The clone was created before `odoo-bin -i` ran and nothing dropped it on failure. Older script versions only | Fixed in the script (it now drops the clone on any non-zero exit); drop the orphan by hand once: `sudo -u postgres dropdb <project>` |
 | Enterprise template skipped | No enterprise path passed to the build script | Pass it as the fourth argument |
 
 ---
