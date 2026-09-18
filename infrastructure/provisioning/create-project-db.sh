@@ -195,6 +195,32 @@ fi
 # Duplicate. This is the whole trick: files are copied, not replayed.
 sudo -u postgres createdb -O "$ODOO_USER" -T "$TEMPLATE" "$PROJECT_NAME"
 
+# ADR-056: for a selective install the database now exists before the modules
+# are, and that install runs as a separate `odoo-bin -i` that can still fail
+# (bad module name that cleared the whitelist, disk full, a manifest with an
+# unmet external dependency). The caller only learns the database exists once
+# this whole script returns — so on the selective path a failure used to leave
+# an orphan database behind that blocked every retry with "database already
+# exists". Own the rollback here, where the database is actually created.
+CREATED_DB=true
+INSTALL_DIR=""
+
+on_exit() {
+    local exit_code=$?
+
+    if [[ -n "$INSTALL_DIR" ]]; then
+        rm -rf "$INSTALL_DIR"
+    fi
+
+    if (( exit_code != 0 )) && [[ "$CREATED_DB" == true ]]; then
+        echo "ERROR: provisioning failed; dropping the partially built database '${PROJECT_NAME}'." >&2
+        sudo -u postgres dropdb --if-exists "$PROJECT_NAME" 2>/dev/null || true
+    fi
+
+    exit "$exit_code"
+}
+trap on_exit EXIT
+
 # The clone — unlike the sealed template it was copied from — must accept
 # connections: templates are built with datallowconn = false.
 sudo -u postgres psql -v ON_ERROR_STOP=1 \
@@ -236,7 +262,6 @@ if [[ -n "$MODULES_CSV" ]]; then
     fi
 
     INSTALL_DIR="$(mktemp -d)"
-    trap 'rm -rf "$INSTALL_DIR"' EXIT
     chown odoo:odoo "$INSTALL_DIR"
     INSTALL_CONF="${INSTALL_DIR}/odoo.conf"
     {
@@ -258,7 +283,7 @@ if [[ -n "$MODULES_CSV" ]]; then
         --no-http
 
     rm -rf "$INSTALL_DIR"
-    trap - EXIT
+    INSTALL_DIR=""
 
     echo "OK: requested modules installed."
 fi
