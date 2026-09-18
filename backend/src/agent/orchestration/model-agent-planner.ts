@@ -67,6 +67,8 @@ export interface OdooFieldSummary {
 export interface OdooOnlinePlanningInput {
   /** Scopes an agent-backed endpoint's memory to this project, when known. */
   readonly projectId?: string;
+  /** This project may only use on-host models (ADR-055). */
+  readonly localProviderOnly?: boolean;
   readonly prompt: string;
   readonly projectName: string;
   readonly taskReference: string;
