@@ -975,3 +975,141 @@ describe('assertProvisioningInvocation - installed-modules read (ADR-056)', () =
     expect(() => check(['-n', grantScript, 'name'])).not.toThrow();
   });
 });
+
+/**
+ * ADR-057. The restart script accepts exactly the pull shape - project name,
+ * repository URL, branch - and is reachable through a sixth configured-script
+ * slot rather than through the pull one, so a caller cannot point a pull
+ * invocation's arguments at the restart script (or vice versa) by naming the
+ * wrong path: `assertProvisioningInvocation` only recognises a script at the
+ * exact path passed to it for that slot.
+ */
+describe('assertProvisioningInvocation - project restart (ADR-057)', () => {
+  const createScripts = ['/opt/odoo/scripts/create_project', '/opt/odoo/scripts/create_project_enterprise'];
+  const grantScript = '/opt/cartenz/infrastructure/provisioning/grant-addons-write.sh';
+  const httpsScript = '/opt/cartenz/infrastructure/provisioning/setup-project-https.sh';
+  const pullScript = '/opt/cartenz/infrastructure/provisioning/pull-project.sh';
+  const restartScript = '/opt/cartenz/infrastructure/provisioning/restart-project.sh';
+
+  const call = (args: readonly string[]) =>
+    assertProvisioningInvocation(
+      args,
+      createScripts,
+      grantScript,
+      httpsScript,
+      pullScript,
+      null,
+      null,
+      null,
+      restartScript,
+    );
+
+  it('permits a well-formed restart from an https remote', () => {
+    expect(() =>
+      call(['-n', restartScript, 'ggroma', 'https://github.com/BintangLinked/ggroma.git', 'main']),
+    ).not.toThrow();
+  });
+
+  it('permits a well-formed restart from an scp-style remote', () => {
+    expect(() =>
+      call(['-n', restartScript, 'linkederp-internal', 'git@github.com:LinkedERP/Odoo.git', 'staging']),
+    ).not.toThrow();
+  });
+
+  it('refuses a branch that would be read as an option', () => {
+    for (const branch of ['--upload-pack=/bin/sh', '-x', '--all']) {
+      expect(() =>
+        call(['-n', restartScript, 'name', 'https://github.com/o/r.git', branch]),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a remote that is not https or scp-style', () => {
+    for (const url of ['', 'file:///opt/odoo/projects/other/addons', 'http://github.com/o/r.git']) {
+      expect(() => call(['-n', restartScript, 'name', url, 'main'])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a remote carrying shell metacharacters', () => {
+    for (const url of [
+      'https://github.com/o/r.git; rm -rf /',
+      'https://github.com/o/r.git`id`',
+      'https://github.com/o/r.git$(id)',
+    ]) {
+      expect(() => call(['-n', restartScript, 'name', url, 'main'])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses an invalid project name', () => {
+    for (const bad of ['', 'A', 'has space', 'has/slash', '-leading']) {
+      expect(() =>
+        call(['-n', restartScript, bad, 'https://github.com/o/r.git', 'main']),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses extra arguments smuggled after the branch', () => {
+    expect(() =>
+      call(['-n', restartScript, 'name', 'https://github.com/o/r.git', 'main', '; rm -rf /']),
+    ).toThrow(CommandArgumentError);
+  });
+
+  it('refuses a restart missing its branch', () => {
+    expect(() => call(['-n', restartScript, 'name', 'https://github.com/o/r.git'])).toThrow(
+      CommandArgumentError,
+    );
+  });
+
+  /** The off switch, same posture as every other optional provisioning script. */
+  it('refuses the restart script when it is not configured', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', restartScript, 'name', 'https://github.com/o/r.git', 'main'],
+        createScripts,
+        grantScript,
+        httpsScript,
+        pullScript,
+        null,
+        null,
+        null,
+        null,
+      ),
+    ).toThrow(/not a configured provisioning script/);
+  });
+
+  it('does not let the restart shape reach the pull script through its own entry', () => {
+    // Naming the pull script's own path with restart's argument count (5 args,
+    // same shape) still passes — pull and restart accept an identical vector by
+    // design (ADR-057). What must NOT happen is the restart script being
+    // reachable via the pull slot, or vice versa, when only one is configured.
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', restartScript, 'name', 'https://github.com/o/r.git', 'main'],
+        createScripts,
+        grantScript,
+        httpsScript,
+        pullScript, // restartScript itself is not passed as the pull slot
+        null,
+        null,
+        null,
+        null, // and restart is not configured either
+      ),
+    ).toThrow(/not a configured provisioning script/);
+  });
+
+  it('still permits the pull shape once restartScript is configured beside it', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', pullScript, 'name', 'https://github.com/o/r.git', 'main'],
+        createScripts,
+        grantScript,
+        httpsScript,
+        pullScript,
+        null,
+        null,
+        null,
+        restartScript,
+      ),
+    ).not.toThrow();
+  });
+});

@@ -8,10 +8,13 @@ import { APP_CONFIG } from './core/config/config.module';
 import type { AppConfig } from './core/config/configuration';
 import { RedisService } from './core/redis/redis.service';
 import { AgentWorkflow } from './agent/orchestration/agent-workflow';
-import { AGENT_TASK_QUEUE, PROJECT_PROVISIONING_QUEUE } from './core/redis/redis.constants';
+import { AGENT_TASK_QUEUE, PROJECT_PROVISIONING_QUEUE, PROJECT_RESTART_JOB } from './core/redis/redis.constants';
 import type { AgentJobData } from './agent/orchestration/queue-agent-orchestrator';
 import { ProjectsService } from './modules/projects/projects.service';
-import type { SelectiveProvisionJobData } from './modules/projects/project-provisioning.queue';
+import type {
+  ProjectRestartJobData,
+  SelectiveProvisionJobData,
+} from './modules/projects/project-provisioning.queue';
 
 /**
  * Agent worker entry point.
@@ -80,20 +83,30 @@ async function bootstrap(): Promise<void> {
    * makes both slower and risks the port allocator handing out a port the other
    * run has not yet bound.
    */
-  const provisioningWorker = new Worker<SelectiveProvisionJobData>(
+  const provisioningWorker = new Worker<
+    SelectiveProvisionJobData | ProjectRestartJobData
+  >(
     PROJECT_PROVISIONING_QUEUE,
-    async (job: Job<SelectiveProvisionJobData>) => {
+    async (job: Job<SelectiveProvisionJobData | ProjectRestartJobData>) => {
+      if (job.name === PROJECT_RESTART_JOB) {
+        const data = job.data as ProjectRestartJobData;
+        logger.log(`Restarting project ${data.technicalName} (${data.branch})`);
+        await projects.completeRestart(data);
+        return;
+      }
+
+      const data = job.data as SelectiveProvisionJobData;
       logger.log(
-        `Provisioning project ${job.data.technicalName} with ${job.data.modules.length} module(s)`,
+        `Provisioning project ${data.technicalName} with ${data.modules.length} module(s)`,
       );
-      await projects.completeSelectiveProvisioning(job.data);
+      await projects.completeSelectiveProvisioning(data);
     },
     { connection: redis.queueConnection, concurrency: 1 },
   );
 
   provisioningWorker.on('failed', (job, error) => {
     logger.error(
-      `Provisioning job ${job?.id ?? 'unknown'} (${job?.data?.technicalName ?? '?'}) failed: ${error.message}`,
+      `Provisioning job ${job?.id ?? 'unknown'} (${(job?.data as { technicalName?: string })?.technicalName ?? '?'}) failed: ${error.message}`,
     );
   });
 

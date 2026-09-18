@@ -465,6 +465,33 @@ export const api = {
       }>(`/projects/${projectId}/pull`, { method: 'POST' }),
 
     /**
+     * Promotes the project's `staging` branch onto `main` (ADR-057 §1): the
+     * reviewed state becomes the promoted state. On a conflict `staging` wins
+     * (`-X theirs`), so this always produces a commit rather than stopping for
+     * a human there is nobody to ask.
+     */
+    mergeToMain: (projectId: string) =>
+      request<{
+        ok: boolean;
+        commit: string | null;
+        sourceBranch: string | null;
+        message: string;
+        durationMs: number;
+      }>(`/projects/${projectId}/merge-to-main`, { method: 'POST' }),
+
+    /**
+     * Brings the instance onto `branch`'s tip *and serves it* (ADR-057 §2):
+     * pull, `-u all` against the instance's database, restart the unit. Queued
+     * — the request returns once the job is on the queue, and the project's
+     * own `restart` block is what a caller polls for the outcome.
+     */
+    restart: (projectId: string, branch: string) =>
+      request<{ queued: boolean; technicalName: string; branch: string }>(
+        `/projects/${projectId}/restart`,
+        { method: 'POST', body: { branch } },
+      ),
+
+    /**
      * The ephemeral preview instance (ADR-052): a short-lived running Odoo built
      * from a task's retained draft, so a reviewer sees the real UI before
      * approving. `preview` reads the live one, `startPreview` builds it,

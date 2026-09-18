@@ -26,6 +26,19 @@ export const PROJECT_PROVISIONING_QUEUE = 'project-provisioning';
 export const PROJECT_PROVISIONING_JOB = 'provision-modules';
 
 /**
+ * ADR-057: restarting a project's instance after a merge.
+ *
+ * A restart runs `odoo-bin -u all` against the instance's own database before
+ * bouncing its unit, which is the same order of magnitude of work as a
+ * selective install and for the same reason must not run on an HTTP request
+ * thread. It shares `PROJECT_PROVISIONING_QUEUE` rather than getting a queue of
+ * its own: it is the same class of host action, on the same projects, with the
+ * same "one at a time, the host is busy" property — a second queue would only
+ * let a restart and a provisioning run fight over the same CPU.
+ */
+export const PROJECT_RESTART_JOB = 'restart-project';
+
+/**
  * Pub/sub channel for a single task's event stream, in the form documented in
  * chapter 9: task:{task_id}:events.
  */

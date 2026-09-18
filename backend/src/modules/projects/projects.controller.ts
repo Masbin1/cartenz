@@ -20,6 +20,7 @@ import {
   EnvironmentDto,
   ListProjectsQueryDto,
   RemoteBranchesDto,
+  RestartProjectDto,
   UpdateAgentPermissionsDto,
   UpdateProjectDto,
 } from './dto/project.dto';
@@ -248,5 +249,40 @@ export class ProjectsController {
     @Param('projectId', ParseUUIDPipe) projectId: string,
   ) {
     return this.projects.pull(user, projectId);
+  }
+
+  /**
+   * Promotes the project's `staging` branch onto `main` on GitHub (ADR-057 §1).
+   *
+   * The one route in the platform that writes to `main`, and deliberately a
+   * named action rather than something a task can trigger: ADR-021 §2 refuses
+   * the *task* path onto `main`, and this does not reopen it — it is an
+   * explicit, admin-gated operator action, audited as its own event.
+   */
+  @Post(':projectId/merge-to-main')
+  @HttpCode(HttpStatus.OK)
+  mergeToMain(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ) {
+    return this.projects.mergeToMain(user, projectId);
+  }
+
+  /**
+   * Brings the instance onto `branch`'s tip and serves it: pull, `-u all`,
+   * restart the unit (ADR-057 §2/§3).
+   *
+   * Queued rather than inline: the upgrade can outlast a request, so this
+   * returns a job reference and the portal polls the project row's
+   * `restartStatus` — the same shape selective provisioning already uses.
+   */
+  @Post(':projectId/restart')
+  @HttpCode(HttpStatus.ACCEPTED)
+  restart(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() dto: RestartProjectDto,
+  ) {
+    return this.projects.restart(user, projectId, dto.branch);
   }
 }

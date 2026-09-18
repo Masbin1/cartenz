@@ -4,6 +4,7 @@ import { GitHubRepositoryService } from './github-repository.service';
 import { ProjectEnvironmentsService } from './project-environments.service';
 import { ProjectProvisioningService } from './project-provisioning.service';
 import { ProjectDeploymentService } from './project-deployment.service';
+import { ProjectMergeService } from './project-merge.service';
 import { ProjectPreviewService } from './project-preview.service';
 import { ProjectPreviewController } from './project-preview.controller';
 import { ProjectProvisioningQueue } from './project-provisioning.queue';
@@ -38,6 +39,7 @@ import { ProjectsService } from './projects.service';
     ProjectProvisioningService,
     ProjectProvisioningQueue,
     ProjectDeploymentService,
+    ProjectMergeService,
     ProjectPreviewService,
     ProjectBackupService,
     ProjectModulesService,
@@ -49,6 +51,7 @@ import { ProjectsService } from './projects.service';
     ProjectProvisioningService,
     ProjectProvisioningQueue,
     ProjectDeploymentService,
+    ProjectMergeService,
     ProjectPreviewService,
     ProjectBackupService,
     ProjectModulesService,

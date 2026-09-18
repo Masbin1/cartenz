@@ -267,6 +267,25 @@ export const projects = pgTable(
      * silently - a task that cannot run must say why.
      */
     localProviderOnly: boolean('local_provider_only').notNull().default(false),
+    /**
+     * Restart status for a project's instance (ADR-057): 'none' (never
+     * restarted through the platform), 'pending' (queued, the worker is
+     * running the upgrade), 'restarted' (the unit came back up on the new
+     * code), 'failed' (the upgrade failed and the code was rolled back to
+     * what the instance was serving before).
+     */
+    restartStatus: text('restart_status', {
+      enum: ['none', 'pending', 'restarted', 'failed'],
+    })
+      .notNull()
+      .default('none'),
+    /** The last error message from a failed restart, for the portal to show. */
+    restartError: text('restart_error'),
+    /** The commit the instance was serving as of its last successful restart. */
+    restartCommit: text('restart_commit'),
+    /** The branch that commit came from. */
+    restartBranch: text('restart_branch'),
+    restartedAt: timestamp('restarted_at', { withTimezone: true }),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),

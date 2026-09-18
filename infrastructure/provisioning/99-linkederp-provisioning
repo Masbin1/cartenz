@@ -10,7 +10,7 @@
 # What this grants, and nothing more:
 #
 #   - The "cartenz" user (the one the LinkedERP API and worker run as) may run
-#     exactly six commands as root, with NO password prompt (NOPASSWD) and
+#     exactly nine commands as root, with NO password prompt (NOPASSWD) and
 #     no other privilege.
 #   - Two are the operator's own project-creation scripts, called with no
 #     wildcard in their arguments: the platform's own CommandRunner
@@ -70,6 +70,19 @@
 #     granting one. It takes only `<project-name>`; nothing in the argument
 #     vector can choose a database, a table or a write.
 #
+#   - The ninth is the project restart (ADR-057):
+#     infrastructure/provisioning/restart-project.sh brings a project's instance
+#     onto a branch's tip AND serves it: it stops the unit, calls
+#     pull-project.sh unchanged as a subprocess, runs
+#     `odoo-bin -u all --stop-after-init` against the instance's own database,
+#     and starts the unit again — rolling the code back to the commit it was
+#     serving if the upgrade fails. Same three-argument shape and the same
+#     stdin-credential convention as the pull. It is deliberately its own script
+#     and not a mode bolted onto pull-project.sh: it is a strictly larger
+#     privilege (it runs Odoo against the instance's database and controls its
+#     systemd unit), and the platform's CommandRunner distinguishes the two only
+#     by which configured path was passed.
+#
 #   - `sudo -l -U cartenz` on the host shows exactly this rule; there is no
 #     wildcard sudo access anywhere else for this user.
 #
@@ -84,7 +97,8 @@ Cmnd_Alias LINKEDERP_PROVISION = \
     /opt/cartenz/infrastructure/provisioning/pull-project.sh, \
     /opt/cartenz/infrastructure/provisioning/preview-project.sh, \
     /opt/cartenz/infrastructure/provisioning/backup-project.sh, \
-    /opt/cartenz/infrastructure/provisioning/list-installed-modules.sh
+    /opt/cartenz/infrastructure/provisioning/list-installed-modules.sh, \
+    /opt/cartenz/infrastructure/provisioning/restart-project.sh
 
 cartenz ALL=(root) NOPASSWD: LINKEDERP_PROVISION
 

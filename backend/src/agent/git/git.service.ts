@@ -71,6 +71,15 @@ export interface GitCloneOptions {
   /** A token for HTTPS or an SSH key, or null for a public remote (ADR-021). */
   readonly credential: GitCredential | null;
   readonly depth?: number;
+  /**
+   * Fetch full history instead of a shallow tip (ADR-057).
+   *
+   * A shallow clone has no common ancestor with a branch fetched alongside it,
+   * so `git merge` against that branch fails outright ("refusing to merge
+   * unrelated histories") rather than merging. A task needs only the tip and
+   * stays shallow; the merge path needs the history, and passes this.
+   */
+  readonly full?: boolean;
 }
 
 export interface GitCloneResult {
@@ -184,7 +193,7 @@ export class GitService {
           '--single-branch',
           '--no-recurse-submodules',
           '--no-tags',
-          `--depth=${depth}`,
+          ...(options.full ? [] : [`--depth=${depth}`]),
           `--branch=${branch}`,
           // Everything after `--` is an operand, so neither the URL nor the
           // destination can be read as an option even if validation is bypassed.
@@ -583,6 +592,100 @@ export class GitService {
       // Always: a failed push must not leave a credential helper on disk.
       await lease.release();
     }
+  }
+
+  /**
+   * Fetches one branch from a remote into a local repository, without checking
+   * it out. Used ahead of a merge (ADR-057): the workspace is cloned at the
+   * *target* branch's tip, and the *source* branch is fetched into it so the
+   * merge has both tips to work with, without a second clone.
+   */
+  async fetchBranch(
+    repositoryPath: string,
+    remoteUrl: string,
+    branch: string,
+    options: {
+      readonly credentialDirectory: string;
+      readonly credential: GitCredential | null;
+    },
+  ): Promise<void> {
+    const remote = assertSafeRemoteUrl(remoteUrl, {
+      allowLocal: this.config.git.allowLocalRemotes,
+    });
+    const safeBranch = assertSafeRefName(branch);
+
+    const lease = await leaseGitCredential({
+      directory: options.credentialDirectory,
+      credential: options.credential,
+      hostKeyPolicy: this.config.git.sshHostKeyPolicy,
+    });
+
+    const fetchUrl =
+      remote.scheme === 'https' && options.credential?.kind === 'token'
+        ? `https://${tokenUsernameFor(remote.host)}@${remote.host}/${remote.path}`
+        : remote.url;
+
+    try {
+      const result = await this.commands.run(
+        'git',
+        [
+          ...HARDENING_ARGS,
+          'fetch',
+          '--quiet',
+          // No --depth here: a fetch that deepens an already-shallow clone in
+          // one step needs --unshallow or --depth=<bigger>, and silently
+          // fetching another shallow tip is exactly how a merge ends up with
+          // no common ancestor. The clone that precedes this is full (see
+          // GitCloneOptions.full), so this fetch inherits that history.
+          '--',
+          fetchUrl,
+          `${safeBranch}:refs/remotes/origin/${safeBranch}`,
+        ],
+        { cwd: repositoryPath, env: lease.env, timeoutMs: this.config.process.maxTimeoutMs },
+      );
+
+      if (result.exitCode !== 0) {
+        throw new GitCommandError('fetch', result.exitCode, summariseFailure(result));
+      }
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /**
+   * Merges an already-fetched ref into the currently checked-out branch
+   * (ADR-057).
+   *
+   * `strategy: 'theirs'` resolves every conflicting hunk in favour of the ref
+   * being merged in, so this never stops to ask for manual resolution - there
+   * is no human in this loop to ask. `--no-ff` always produces a merge commit,
+   * even when a fast-forward was possible, so the promotion is visible as its
+   * own commit in the target branch's history rather than silently rewriting
+   * it to match the source.
+   */
+  async merge(
+    repositoryPath: string,
+    ref: string,
+    message: string,
+  ): Promise<{ commit: string }> {
+    const result = await this.run(repositoryPath, [
+      '-c', `user.name=${this.config.git.authorName}`,
+      '-c', `user.email=${this.config.git.authorEmail}`,
+      'merge',
+      '--no-ff',
+      '-X', 'theirs',
+      '--no-gpg-sign',
+      '-m', message,
+      '--',
+      ref,
+    ]);
+
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('merge', result.exitCode, summariseFailure(result));
+    }
+
+    const commit = await this.revParse(repositoryPath, 'HEAD');
+    return { commit };
   }
 
   /**

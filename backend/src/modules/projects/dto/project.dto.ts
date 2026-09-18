@@ -7,6 +7,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   ValidateNested,
 } from 'class-validator';
@@ -345,4 +346,23 @@ export class DeleteProjectDto {
   @IsNotEmpty({ message: 'confirmName is required: type the project name to confirm' })
   @MaxLength(200)
   confirmName!: string;
+}
+
+/**
+ * ADR-057: which branch a restart should pull and serve.
+ *
+ * Not implied from the project's `defaultBranch` — the caller states it
+ * because restarting a staging instance onto `staging` (re-syncing a preview
+ * or staging instance with the latest staging commit) is exactly as
+ * legitimate a call as restarting onto `main` after a merge, and this route
+ * must not assume which one a person means.
+ */
+export class RestartProjectDto {
+  @IsString()
+  @IsNotEmpty({ message: 'branch is required' })
+  @MaxLength(128)
+  @Matches(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/, {
+    message: 'branch must be a valid git branch name',
+  })
+  branch!: string;
 }

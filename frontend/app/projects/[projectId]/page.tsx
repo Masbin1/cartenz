@@ -279,7 +279,13 @@ export default function ProjectDetailPage() {
 
           <div className="space-y-5">
             {project.provisioning.status !== 'none' ? (
-              <InstancePanel projectId={project.id} provisioning={project.provisioning} isAdmin={user.isAdmin} />
+              <InstancePanel
+                projectId={project.id}
+                provisioning={project.provisioning}
+                restart={project.restart}
+                repositoryUrl={project.repositoryUrl}
+                isAdmin={user.isAdmin}
+              />
             ) : null}
 
             <section className="panel">
@@ -427,10 +433,14 @@ function DetailRow({
 function InstancePanel({
   projectId,
   provisioning,
+  restart,
+  repositoryUrl,
   isAdmin,
 }: {
   projectId: string;
   provisioning: import('@/lib/types').ProjectProvisioningInfo;
+  restart: import('@/lib/types').ProjectRestartInfo;
+  repositoryUrl: string | null;
   isAdmin: boolean;
 }) {
   const canReveal = isAdmin;
@@ -492,6 +502,52 @@ function InstancePanel({
       setDeploying(false);
     }
   }, [projectId]);
+
+  /**
+   * Ship to production (ADR-057): promote staging onto main, then bring the
+   * instance onto main and serve it.
+   *
+   * Two separate routes, sequenced here because that is the common case the ADR
+   * calls out: "get what I just promted on staging actually live". Merge first
+   * and only restart if it landed — restarting onto main after a merge that
+   * failed would deploy whatever main already held, which is not what pressing
+   * this button means.
+   */
+  const [shipping, setShipping] = useState(false);
+  const [shipError, setShipError] = useState<string | null>(null);
+  const [shipStage, setShipStage] = useState<'idle' | 'merging' | 'restarting' | 'queued'>('idle');
+  const [merged, setMerged] = useState<string | null>(null);
+
+  const shipToProduction = useCallback(async () => {
+    setShipping(true);
+    setShipError(null);
+    setMerged(null);
+    try {
+      setShipStage('merging');
+      const merge = await api.projects.mergeToMain(projectId);
+      if (!merge.ok) {
+        setShipError(merge.message);
+        setShipStage('idle');
+        return;
+      }
+      setMerged(merge.commit);
+
+      // Queued, not awaited: the upgrade can outlast a request. The restart
+      // status the page already polls reports the outcome.
+      setShipStage('restarting');
+      await api.projects.restart(projectId, 'main');
+      setShipStage('queued');
+    } catch (caught) {
+      setShipError(caught instanceof ApiError ? caught.message : 'The change could not be shipped.');
+      setShipStage('idle');
+    } finally {
+      setShipping(false);
+    }
+  }, [projectId]);
+
+  // A restart runs on the worker, so "in flight" is the project row's own
+  // status plus the moment between the merge landing and the job being queued.
+  const restarting = restart.status === 'pending' || shipStage === 'queued';
 
   return (
     <section className="panel">
@@ -565,6 +621,51 @@ function InstancePanel({
           ) : null}
           {deployError ? (
             <p className="text-2xs leading-relaxed text-state-failure">{deployError}</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {canReveal && repositoryUrl && provisioning.status === 'provisioned' ? (
+        <div className="space-y-2 border-t border-surface-border px-4 py-3">
+          <p className="panel-title">Ship to production</p>
+          <p className="text-2xs leading-relaxed text-content-subtle">
+            Merges this project&apos;s staging branch onto main (conflicts resolve in
+            staging&apos;s favour), then upgrades and restarts the instance onto it. The
+            instance is briefly stopped while the upgrade runs.
+          </p>
+          <button
+            type="button"
+            onClick={() => void shipToProduction()}
+            disabled={shipping || restarting}
+            className="btn-primary text-2xs"
+          >
+            {shipStage === 'merging'
+              ? 'Merging staging into main…'
+              : shipStage === 'restarting' || restarting
+                ? 'Upgrading and restarting…'
+                : 'Ship staging to production'}
+          </button>
+          {merged ? (
+            <p className="text-2xs leading-relaxed text-state-success">
+              Merged into main at {merged.slice(0, 8)}.
+              {shipStage === 'queued' ? ' Restart queued.' : ''}
+            </p>
+          ) : null}
+          {shipError ? (
+            <p className="text-2xs leading-relaxed text-state-failure">{shipError}</p>
+          ) : null}
+          {restart.status !== 'none' ? (
+            <p
+              className={`text-2xs leading-relaxed ${
+                restart.status === 'failed' ? 'text-state-failure' : 'text-content-subtle'
+              }`}
+            >
+              Last restart: {humanise(restart.status)}
+              {restart.branch ? ` (${restart.branch})` : ''}
+              {restart.commit ? ` @ ${restart.commit.slice(0, 8)}` : ''}
+              {restart.error ? ` — ${restart.error}` : ''}
+              {restart.restartedAt ? ` · ${relativeTime(restart.restartedAt)}` : ''}
+            </p>
           ) : null}
         </div>
       ) : null}

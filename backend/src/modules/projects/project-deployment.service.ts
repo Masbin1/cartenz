@@ -40,6 +40,26 @@ export interface PullProjectResult {
   readonly durationMs: number;
 }
 
+/**
+ * ADR-057: what an upgrade-and-restart attempt produced.
+ *
+ * `rolledBack` is its own field rather than something a reader has to infer from
+ * the message: it is the difference between "your deploy did not land and the
+ * instance is on the code it was serving before" and "your deploy did not land
+ * and the instance may be half-upgraded". The first needs a retry, the second
+ * needs an operator.
+ */
+export interface RestartProjectResult {
+  readonly ok: boolean;
+  /** The commit the instance is serving afterwards — old or new. */
+  readonly commit: string | null;
+  readonly branch: string | null;
+  /** True when the upgrade failed and the code was put back as it was. */
+  readonly rolledBack: boolean;
+  readonly message: string;
+  readonly durationMs: number;
+}
+
 @Injectable()
 export class ProjectDeploymentService {
   private readonly logger = new Logger(ProjectDeploymentService.name);
@@ -65,6 +85,17 @@ export class ProjectDeploymentService {
    */
   get available(): boolean {
     return Boolean(this.config.provisioning?.enabled && this.config.provisioning.pullScript);
+  }
+
+  /**
+   * Whether this deployment can restart at all (ADR-057).
+   *
+   * Its own script, its own flag: `restartScript` is empty until an operator has
+   * installed `restart-project.sh` and its dedicated sudoers entry, exactly the
+   * two-part gate `pull`'s own `available` already checks for its script.
+   */
+  get restartAvailable(): boolean {
+    return Boolean(this.config.provisioning?.enabled && this.config.provisioning.restartScript);
   }
 
   async pull(projectId: string, userId: string): Promise<PullProjectResult> {
@@ -195,6 +226,143 @@ export class ProjectDeploymentService {
   }
 
   /**
+   * ADR-057: bring an instance onto a branch's tip *and serve it* — pull, apply
+   * every installed module's upgrade, bounce the unit.
+   *
+   * The half `pull` does not do. Pulling resets `addons/` on disk; a new field, a
+   * changed view or a migration is invisible until Odoo runs `-u` against the
+   * instance's database, and new Python is not loaded until the unit restarts.
+   * Doing only the pull is how a project ends up claiming to serve a commit whose
+   * schema it never applied.
+   *
+   * Asynchronous by design (ADR-057 §3): this method is the *worker's* entry
+   * point, reached through the provisioning queue because `-u all` can run past
+   * `PROCESS_MAX_TIMEOUT_MS`. It is not on an HTTP request thread, so it reports
+   * by writing the outcome onto the project row rather than by returning to a
+   * caller — the same division `completeSelectiveProvisioning` makes.
+   *
+   * The branch is a parameter, never implied from `defaultBranch`: restarting a
+   * staging instance onto `staging` is as legitimate a call as promoting onto
+   * `main`, and the caller states which it means.
+   */
+  async restart(
+    projectId: string,
+    technicalName: string,
+    repositoryUrl: string,
+    branch: string,
+    userId: string,
+  ): Promise<RestartProjectResult> {
+    const startedAt = Date.now();
+
+    if (!this.restartAvailable) {
+      return {
+        ok: false,
+        commit: null,
+        branch,
+        rolledBack: false,
+        message:
+          'Restarting is not configured on this deployment. PROJECT_RESTART_SCRIPT is empty, ' +
+          'or PROJECT_PROVISIONING_ENABLED is false.',
+        durationMs: 0,
+      };
+    }
+
+    const credential = await this.gitCredential(projectId);
+
+    this.logger.log(
+      `Restarting "${technicalName}" from ${repositoryUrl} (${branch}) via ` +
+        `${this.config.provisioning?.restartScript}`,
+    );
+
+    try {
+      const result = await this.commands.run(
+        'sudo',
+        ['-n', this.config.provisioning!.restartScript!, technicalName, repositoryUrl, branch],
+        {
+          cwd: '/',
+          timeoutMs: this.config.process.maxTimeoutMs,
+          // The credential travels on stdin, never in argv — the same reason the
+          // pull passes it that way.
+          ...(credential ? { stdin: credential } : {}),
+        },
+      );
+
+      const durationMs = Date.now() - startedAt;
+      const output = result.stdout.trim();
+
+      if (result.exitCode !== 0) {
+        // The script distinguishes the two failure shapes itself: it prints
+        // `ROLLEDBACK: <commit>` on the line before the error when it put the
+        // code back, and says nothing of the sort when the instance may be
+        // half-upgraded. Read rather than guessed, because the whole point of
+        // that flag is that a caller cannot infer it.
+        const rolledBack = /^ROLLEDBACK:/m.test(output);
+        const previousCommit = /^ROLLEDBACK:\s*([0-9a-f]{7,40})/m.exec(output)?.[1] ?? null;
+        const detail = summariseTail(result.stderr || result.stdout);
+
+        await this.audit.record({
+          event: AUDIT_EVENTS.PROJECT_RESTART_FAILED,
+          projectId,
+          userId,
+          metadata: {
+            branch,
+            repositoryUrl,
+            rolledBack,
+            commit: previousCommit,
+            error: detail,
+          },
+        });
+
+        this.logger.error(
+          `Restart of "${technicalName}" failed${rolledBack ? ' (rolled back)' : ''}: ${detail}`,
+        );
+
+        return {
+          ok: false,
+          commit: previousCommit,
+          branch,
+          rolledBack,
+          message: detail || `The restart script exited with code ${result.exitCode}.`,
+          durationMs,
+        };
+      }
+
+      // `OK: <name> is now serving <branch> @ <sha>` — the commit is read back
+      // from the script's output rather than from `git rev-parse` here, for the
+      // same reason the pull does: this process cannot read the instance
+      // directory the script just wrote to.
+      const commit = /@\s([0-9a-f]{7,40})\s*$/.exec(output)?.[1] ?? null;
+
+      await this.audit.record({
+        event: AUDIT_EVENTS.PROJECT_RESTARTED,
+        projectId,
+        userId,
+        metadata: { branch, commit, repositoryUrl },
+      });
+
+      return {
+        ok: true,
+        commit,
+        branch,
+        rolledBack: false,
+        message:
+          summariseTail(output) ||
+          `${technicalName} is now serving ${branch}${commit ? ` @ ${commit}` : ''}.`,
+        durationMs,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        commit: null,
+        branch,
+        rolledBack: false,
+        message: (error as Error).message,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+  }
+
+  /**
    * The oldest connection that can supply a git credential (ADR-041).
    *
    * The same selection the task layer makes, and for the same reason recorded
@@ -301,7 +469,7 @@ export function technicalNameFromOnPremisePath(
  * `OK: …` or the error that stopped it. Bounding it keeps a stack trace out of
  * the portal and out of the audit row.
  */
-function summariseTail(value: string): string {
+export function summariseTail(value: string): string {
   const lines = value
     .split('\n')
     .map((line) => line.trim())

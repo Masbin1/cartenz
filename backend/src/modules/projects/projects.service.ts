@@ -60,8 +60,12 @@ import { OdooSettingsService } from '../settings/odoo-settings.service';
 import { OdooVersionsService } from '../settings/odoo-versions.service';
 import { ProjectProvisioningService } from './project-provisioning.service';
 import { ProjectProvisioningQueue } from './project-provisioning.queue';
-import type { SelectiveProvisionJobData } from './project-provisioning.queue';
-import { ProjectDeploymentService } from './project-deployment.service';
+import type {
+  ProjectRestartJobData,
+  SelectiveProvisionJobData,
+} from './project-provisioning.queue';
+import { ProjectDeploymentService, technicalNameFromOnPremisePath } from './project-deployment.service';
+import { ProjectMergeService } from './project-merge.service';
 import {
   GitHubRepositoryService,
   type GitHubConnectionResult,
@@ -157,8 +161,8 @@ export class ProjectsService {
     private readonly provisioningQueue: ProjectProvisioningQueue,
     private readonly githubRepositories: GitHubRepositoryService,
     private readonly deployment: ProjectDeploymentService,
+    private readonly merge: ProjectMergeService,
   ) {}
-
   /**
    * Brings a project's provisioned instance up to date with its repository
    * (ADR-049).
@@ -178,6 +182,141 @@ export class ProjectsService {
   /** Whether this deployment can pull at all, for the portal to hide the action. */
   get deploymentAvailable(): boolean {
     return this.deployment.available;
+  }
+
+  /**
+   * ADR-057 §1: promote the project's `staging` branch onto `main` on GitHub.
+   *
+   * Admin-gated for the same reason `pull` is, and one step further: this is the
+   * one operation in the platform that writes to `main`, so it changes what the
+   * reviewed state of the project *is*, not merely what one instance serves.
+   */
+  async mergeToMain(user: AuthenticatedUser, projectId: string) {
+    await this.authz.requireProjectAccess(user, projectId, { requireAdmin: true });
+
+    return this.merge.merge(projectId, user.userId);
+  }
+
+  /** Whether this deployment can merge to main at all (GIT_PUSH_ENABLED). */
+  get mergeAvailable(): boolean {
+    return this.merge.available;
+  }
+
+  /**
+   * ADR-057 §2/§3: bring the project's instance onto a branch's tip and serve
+   * it — pull, `-u all`, restart the unit.
+   *
+   * Queued, not inline: the upgrade can run past `PROCESS_MAX_TIMEOUT_MS`, so the
+   * request records `restartStatus: 'pending'` on the project row and returns a
+   * job reference. The portal polls the row, the same shape selective
+   * provisioning already uses.
+   */
+  async restart(user: AuthenticatedUser, projectId: string, branch: string) {
+    await this.authz.requireProjectAccess(user, projectId, { requireAdmin: true });
+
+    const [project] = await this.database.db
+      .select({
+        name: projects.name,
+        repositoryUrl: projects.repositoryUrl,
+        environmentConfig: projects.environmentConfig,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+
+    if (!project) {
+      throw new NotFoundException('Project not found.');
+    }
+
+    if (!this.deployment.restartAvailable) {
+      // Refused before anything is recorded as pending: a restart action offered
+      // on a deployment without the script would otherwise leave a row stuck on
+      // 'pending' for a job that can never run.
+      throw new BadRequestException(
+        'Restarting is not configured on this deployment. PROJECT_RESTART_SCRIPT is empty, or ' +
+          'PROJECT_PROVISIONING_ENABLED is false.',
+      );
+    }
+
+    if (!project.repositoryUrl) {
+      throw new BadRequestException(
+        'This project has no repository, so there is nothing to restart onto. Connect one first.',
+      );
+    }
+
+    const technicalName = technicalNameFromOnPremisePath(
+      project.environmentConfig,
+      this.config.provisioning.projectsDir,
+    );
+
+    if (!technicalName) {
+      throw new BadRequestException(
+        'This project is not provisioned on this host, so there is no instance to restart. ' +
+          'Provision it first.',
+      );
+    }
+
+    // Recorded before the job is queued: the portal's first poll must see
+    // 'pending', not the previous attempt's outcome, or a watcher sees a stale
+    // "restarted" and believes the new one already finished.
+    await this.database.db
+      .update(projects)
+      .set({ restartStatus: 'pending', restartError: null, restartBranch: branch })
+      .where(eq(projects.id, projectId));
+
+    await this.provisioningQueue.enqueueRestart({
+      projectId,
+      technicalName,
+      repositoryUrl: project.repositoryUrl,
+      branch,
+      userId: user.userId,
+    });
+
+    return { queued: true, technicalName, branch };
+  }
+
+  /** Whether this deployment can restart at all, for the portal to hide the action. */
+  get restartAvailable(): boolean {
+    return this.deployment.restartAvailable;
+  }
+
+  /**
+   * ADR-057 §2: the worker's half of a restart.
+   *
+   * Never throws: there is no request to fail. Every outcome is written onto the
+   * project row, which is what the portal polls — the same contract
+   * `completeSelectiveProvisioning` states for its own worker-side half.
+   */
+  async completeRestart(data: ProjectRestartJobData): Promise<void> {
+    const result = await this.deployment.restart(
+      data.projectId,
+      data.technicalName,
+      data.repositoryUrl,
+      data.branch,
+      data.userId,
+    );
+
+    await this.recordSelectiveOutcome(data.projectId, {
+      restartStatus: result.ok ? 'restarted' : 'failed',
+      restartError: result.ok ? null : result.message,
+      restartCommit: result.commit,
+      restartBranch: result.branch,
+      // Only advanced on success: on a rollback the instance is serving the
+      // *previous* commit, and writing a timestamp for it would say a deploy
+      // landed when none did.
+      ...(result.ok ? { restartedAt: new Date() } : {}),
+    });
+
+    if (result.ok) {
+      this.logger.log(
+        `Restart of "${data.technicalName}" finished: ${result.branch} @ ${result.commit ?? 'unknown'}`,
+      );
+    } else {
+      this.logger.error(
+        `Restart of "${data.technicalName}" failed` +
+          `${result.rolledBack ? ' (code rolled back)' : ''}: ${result.message}`,
+      );
+    }
   }
 
   /**
@@ -2080,6 +2219,11 @@ export class ProjectsService {
     provisionedAt?: Date | null;
     httpsStatus?: string;
     httpsError?: string | null;
+    restartStatus?: string;
+    restartError?: string | null;
+    restartCommit?: string | null;
+    restartBranch?: string | null;
+    restartedAt?: Date | null;
   }) {
     return {
       id: project.id,
@@ -2116,6 +2260,20 @@ export class ProjectsService {
           status: project.httpsStatus ?? 'none',
           error: project.httpsError ?? null,
         },
+      },
+      /**
+       * The last restart attempt through the platform (ADR-057), for the portal
+       * to poll: 'pending' while the worker is running the upgrade, 'restarted'
+       * once the unit came back up on the new code, 'failed' — with the code
+       * already rolled back to what it was serving before — if the upgrade did
+       * not land.
+       */
+      restart: {
+        status: project.restartStatus ?? 'none',
+        error: project.restartError ?? null,
+        commit: project.restartCommit ?? null,
+        branch: project.restartBranch ?? null,
+        restartedAt: project.restartedAt ?? null,
       },
     };
   }

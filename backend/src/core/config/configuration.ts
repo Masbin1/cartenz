@@ -250,6 +250,20 @@ const environmentSchema = z.object({
     .default('/opt/cartenz/infrastructure/provisioning/list-installed-modules.sh'),
 
   /**
+   * Absolute path to the project-restart script (ADR-057).
+   *
+   * Same posture as PROJECT_PULL_SCRIPT and PROJECT_BACKUP_SCRIPT: defaulted,
+   * and empty disables the feature on a deployment that has not installed the
+   * script's sudoers entry. This is the one script that may stop and start a
+   * project's systemd unit and run an Odoo module upgrade against its
+   * database, so an empty value is what keeps the action off entirely rather
+   * than offered and then refused.
+   */
+  PROJECT_RESTART_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/restart-project.sh'),
+
+  /**
    * The email certbot registers a Let's Encrypt account under. Never a
    * secret — passed as a plain argument to certbot, and used only for expiry
    * notifications — but required (not defaulted) once PROJECT_HTTPS_ENABLED is
@@ -554,6 +568,12 @@ export interface AppConfig {
      * whose every read is refused by the guard.
      */
     readonly modulesListScript: string | null;
+    /**
+     * The project-restart script (ADR-057), or null when the deployment has
+     * not configured one. Null disables the restart action end to end: the
+     * guard refuses the invocation and the portal does not offer it.
+     */
+    readonly restartScript: string | null;
     readonly portRangeStart: number;
     readonly portRangeEnd: number;
     readonly baseDomain: string | null;
@@ -750,6 +770,12 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   if (env.PROJECT_BACKUP_SCRIPT && !isAbsolute(env.PROJECT_BACKUP_SCRIPT)) {
     throw new ConfigurationError(['PROJECT_BACKUP_SCRIPT must be an absolute path.']);
   }
+  // ADR-057, the same shape as the pull and backup scripts: empty disables the
+  // restart action rather than offering one the second gate would refuse
+  // every time.
+  if (env.PROJECT_RESTART_SCRIPT && !isAbsolute(env.PROJECT_RESTART_SCRIPT)) {
+    throw new ConfigurationError(['PROJECT_RESTART_SCRIPT must be an absolute path.']);
+  }
   if (!isAbsolute(env.PROJECT_PROVISION_PROJECTS_DIR)) {
     throw new ConfigurationError(['PROJECT_PROVISION_PROJECTS_DIR must be an absolute path.']);
   }
@@ -926,6 +952,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       pullScript: emptyToUndefined(env.PROJECT_PULL_SCRIPT) ?? null,
       backupScript: emptyToUndefined(env.PROJECT_BACKUP_SCRIPT) ?? null,
       modulesListScript: emptyToUndefined(env.PROJECT_MODULES_LIST_SCRIPT) ?? null,
+      restartScript: emptyToUndefined(env.PROJECT_RESTART_SCRIPT) ?? null,
       portRangeStart: env.PROJECT_PORT_RANGE_START,
       portRangeEnd: env.PROJECT_PORT_RANGE_END,
       baseDomain: emptyToUndefined(env.PROJECT_BASE_DOMAIN) ?? null,

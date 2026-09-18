@@ -167,6 +167,7 @@ export interface ProjectDetail {
   recentTasks: TaskSummary[];
   accessReason: 'admin' | 'creator' | 'grant';
   provisioning: ProjectProvisioningInfo;
+  restart: ProjectRestartInfo;
 }
 
 /**
@@ -204,6 +205,20 @@ export interface ProjectProvisioningInfo {
     status: 'none' | 'pending' | 'issued' | 'failed';
     error: string | null;
   };
+}
+
+/**
+ * The last restart attempt through the platform (ADR-057): pull, `-u all`,
+ * restart the unit. 'pending' while the worker runs the upgrade; 'failed'
+ * means the code was rolled back to what the instance was serving before, and
+ * `commit`/`branch` describe whichever of those two states it landed on.
+ */
+export interface ProjectRestartInfo {
+  status: 'none' | 'pending' | 'restarted' | 'failed';
+  error: string | null;
+  commit: string | null;
+  branch: string | null;
+  restartedAt: string | null;
 }
 
 export interface TaskSummary {

@@ -186,6 +186,8 @@ export class CommandRunner {
   private readonly backupScript: string;
   /** The installed-modules read script sudo may be asked to run (ADR-056). */
   private readonly modulesListScript: string;
+  /** The project-restart script sudo may be asked to run (ADR-057). */
+  private readonly restartScript: string;
   /** Settings that enable a guarded subcommand, by setting name. */
   private readonly enabled: Readonly<Record<string, boolean>>;
 
@@ -234,6 +236,14 @@ export class CommandRunner {
     // provisioning is on.
     this.modulesListScript = config.provisioning?.enabled
       ? (config.provisioning.modulesListScript ?? '')
+      : '';
+    // ADR-057. Same posture as the pull, preview, backup and modules-list
+    // scripts: empty PROJECT_RESTART_SCRIPT is the off switch, and it must hold
+    // even when provisioning is on. This is the widest of the eight grants (it
+    // stops and starts a unit and upgrades a database), which is why an empty
+    // value is the only thing that keeps it off.
+    this.restartScript = config.provisioning?.enabled
+      ? (config.provisioning.restartScript ?? '')
       : '';
 
     if (config.validation.enabled) {
@@ -330,6 +340,7 @@ export class CommandRunner {
         this.previewScript || null,
         this.backupScript || null,
         this.modulesListScript || null,
+        this.restartScript || null,
       );
     }
 
@@ -628,6 +639,7 @@ export function assertProvisioningInvocation(
   previewScript: string | null = null,
   backupScript: string | null = null,
   modulesListScript: string | null = null,
+  restartScript: string | null = null,
 ): void {
   if (args[0] !== '-n') {
     throw new CommandArgumentError(
@@ -649,8 +661,18 @@ export function assertProvisioningInvocation(
   const isPreview = previewScript !== null && script === previewScript;
   const isBackup = backupScript !== null && script === backupScript;
   const isModulesList = modulesListScript !== null && script === modulesListScript;
+  const isRestart = restartScript !== null && script === restartScript;
 
-  if (!isCreate && !isGrant && !isHttps && !isPull && !isPreview && !isBackup && !isModulesList) {
+  if (
+    !isCreate &&
+    !isGrant &&
+    !isHttps &&
+    !isPull &&
+    !isPreview &&
+    !isBackup &&
+    !isModulesList &&
+    !isRestart
+  ) {
     const configured = [
       ...createScripts,
       ...(grantScript ? [grantScript] : []),
@@ -659,6 +681,7 @@ export function assertProvisioningInvocation(
       ...(previewScript ? [previewScript] : []),
       ...(backupScript ? [backupScript] : []),
       ...(modulesListScript ? [modulesListScript] : []),
+      ...(restartScript ? [restartScript] : []),
     ];
     throw new CommandArgumentError(
       `"${script}" is not a configured provisioning script. Configured: ` +
@@ -791,6 +814,37 @@ export function assertProvisioningInvocation(
       throw new CommandArgumentError(
         `The project-pull script takes exactly "-n <script> <project-name> <repository-url> ` +
           `<branch>"; got ${args.length} arguments.`,
+      );
+    }
+    return;
+  }
+
+  // ADR-057. The restart script takes the same shape as the pull script - a
+  // project name, a repository URL and a branch - and is distinguishable from
+  // it only by its configured path. It restarts the instance's systemd unit
+  // and runs a module upgrade against its database, which the pull script
+  // never does, but the argument vector it accepts is identical: nothing here
+  // widens what a caller may pass beyond what the pull already accepts.
+  if (isRestart) {
+    const repositoryUrl = args[3];
+    const branch = args[4];
+
+    if (!repositoryUrl || !PULL_REPOSITORY_URL.test(repositoryUrl)) {
+      throw new CommandArgumentError(
+        'sudo project restart requires a repository URL as the third argument: https://… or ' +
+          `scp-style git@host:owner/repo.git; got "${String(repositoryUrl)}".`,
+      );
+    }
+    if (!branch || !PULL_BRANCH.test(branch)) {
+      throw new CommandArgumentError(
+        'sudo project restart requires a branch name as the fourth argument: it may not begin ' +
+          `with a hyphen; got "${String(branch)}".`,
+      );
+    }
+    if (args.length !== 5) {
+      throw new CommandArgumentError(
+        `The project-restart script takes exactly "-n <script> <project-name> ` +
+          `<repository-url> <branch>"; got ${args.length} arguments.`,
       );
     }
     return;

@@ -43,7 +43,9 @@ export const AUDIT_EVENTS = {
    * real and usable either way, but a person who expected a remote has to know.
    */
   PROJECT_GITHUB_REPOSITORY_FAILED: 'project.github_repository_failed',
-  /** A provisioned instance was brought up to date with its own repository (ADR-049). */
+  // ADR-049 (§2). Recorded separately from the pull itself: what a person who
+  // pressed Deploy needs to know is that the code on the branch is now what the
+  // instance has on disk, and the commit is the evidence.
   PROJECT_PULLED: 'project.pulled',
   /**
    * ...and it could not be. Recorded separately from the success because the
@@ -51,6 +53,36 @@ export const AUDIT_EVENTS = {
    * Deploy is entitled to know that what is running is not what is on the branch.
    */
   PROJECT_PULL_FAILED: 'project.pull_failed',
+
+  /**
+   * A project's `staging` branch was merged onto `main` and pushed (ADR-057).
+   *
+   * Its own event rather than a `PROJECT_PULLED` variant: this is the one push
+   * in the platform aimed at `main`, and what it promotes is the reviewed state
+   * of every change since the last merge. The metadata carries the commit `main`
+   * now sits on and the source branch it was merged from.
+   */
+  PROJECT_MERGED_TO_MAIN: 'project.merged_to_main',
+  /**
+   * ...and it could not be, which is worth recording separately because `main`
+   * is unchanged: nothing was promoted, and a person who asked for it has to
+   * know the branch they are looking at is not the one they think.
+   */
+  PROJECT_MERGE_TO_MAIN_FAILED: 'project.merge_to_main_failed',
+
+  /**
+   * A project's instance had its code upgraded to the branch tip and its unit
+   * restarted (ADR-057). Carries the commit it now serves, so the portal can
+   * show what is actually live rather than only that something was.
+   */
+  PROJECT_RESTARTED: 'project.restarted',
+  /**
+   * ...and it could not be. Separate from the success because this leaves an
+   * instance that was stopped and rolled back to the commit it was serving
+   * before — a person is entitled to know their deploy did not land, and that
+   * whatever is running is the previous code.
+   */
+  PROJECT_RESTART_FAILED: 'project.restart_failed',
 
   /** A person was given, or had withdrawn, access to a single project (ADR-043). */
   PROJECT_ACCESS_GRANTED: 'project.access_granted',
