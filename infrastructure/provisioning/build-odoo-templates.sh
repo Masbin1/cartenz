@@ -48,7 +48,12 @@ cd /
 usage() {
     echo
     echo "Usage:"
-    echo "  build-odoo-templates.sh <version> <base_path> <python> [enterprise_path]"
+    echo "  build-odoo-templates.sh <version> <base_path> <python> [enterprise_path] [only]"
+    echo
+    echo "  only  all (default) | full | base"
+    echo "        all   build every template for this version"
+    echo "        full  build only cartenz_tpl_<ver>_<com|ent>"
+    echo "        base  build only cartenz_tpl_<ver>_<com|ent>_base (minutes, not hours)"
     echo
     echo "Example:"
     echo "  build-odoo-templates.sh 19.0 /opt/odoo/versions/19.0/odoo \\"
@@ -62,7 +67,7 @@ if [[ "$EUID" -ne 0 ]]; then
     exit 1
 fi
 
-if [[ $# -lt 3 || $# -gt 4 ]]; then
+if [[ $# -lt 3 || $# -gt 5 ]]; then
     usage
 fi
 
@@ -70,6 +75,12 @@ VERSION="$1"
 BASE_PATH="$2"
 PYTHON="$3"
 ENTERPRISE_PATH="${4:-}"
+ONLY="${5:-all}"
+
+if [[ ! "$ONLY" =~ ^(all|full|base)$ ]]; then
+    echo "ERROR: Invalid 'only' value '${ONLY}'. Expected all, full, or base." >&2
+    exit 1
+fi
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
     echo "ERROR: Invalid version '${VERSION}'. Expected something like 19.0." >&2
@@ -224,10 +235,22 @@ build_template() {
     echo "OK: ${template} is a sealed template database."
 }
 
-build_template "community" "cartenz_tpl_${VER_TAG}_com"
-build_template "enterprise" "cartenz_tpl_${VER_TAG}_ent"
-build_template "community" "cartenz_tpl_${VER_TAG}_com_base" true
-build_template "enterprise" "cartenz_tpl_${VER_TAG}_ent_base" true
+case "$ONLY" in
+    all)
+        build_template "community" "cartenz_tpl_${VER_TAG}_com"
+        build_template "enterprise" "cartenz_tpl_${VER_TAG}_ent"
+        build_template "community" "cartenz_tpl_${VER_TAG}_com_base" true
+        build_template "enterprise" "cartenz_tpl_${VER_TAG}_ent_base" true
+        ;;
+    full)
+        build_template "community" "cartenz_tpl_${VER_TAG}_com"
+        build_template "enterprise" "cartenz_tpl_${VER_TAG}_ent"
+        ;;
+    base)
+        build_template "community" "cartenz_tpl_${VER_TAG}_com_base" true
+        build_template "enterprise" "cartenz_tpl_${VER_TAG}_ent_base" true
+        ;;
+esac
 
 echo
 echo "Done. New projects of version ${VERSION} can now be provisioned by"
