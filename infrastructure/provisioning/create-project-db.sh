@@ -274,13 +274,31 @@ if [[ -n "$MODULES_CSV" ]]; then
 
     echo "Installing requested modules: ${MODULES_CSV}"
 
+    INSTALL_LOG="${INSTALL_DIR}/install.log"
+    set +e
     sudo -u "$ODOO_USER" -H "$ODOO_PYTHON" "${ODOO_BASE_PATH}/odoo-bin" \
         -c "$INSTALL_CONF" \
         -d "$PROJECT_NAME" \
         -i "$MODULES_CSV" \
         --without-demo=all \
         --stop-after-init \
-        --no-http
+        --no-http \
+        --logfile "$INSTALL_LOG"
+    INSTALL_EXIT=$?
+    set -e
+
+    if (( INSTALL_EXIT != 0 )); then
+        # The scratch dir (and this log with it) is gone by the time on_exit's
+        # dropdb message prints, so keep the log the same way
+        # build-odoo-templates.sh does: outside the dir that is about to be
+        # removed, named after the one project this run was ever going to
+        # touch.
+        LOG_KEEP="/tmp/cartenz-selective-install-${PROJECT_NAME}.log"
+        cp -f "$INSTALL_LOG" "$LOG_KEEP" 2>/dev/null || true
+        echo "ERROR: installing '${MODULES_CSV}' into '${PROJECT_NAME}' failed (exit ${INSTALL_EXIT})." >&2
+        echo "See ${LOG_KEEP} for the Odoo log." >&2
+        exit "$INSTALL_EXIT"
+    fi
 
     rm -rf "$INSTALL_DIR"
     INSTALL_DIR=""
