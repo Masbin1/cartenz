@@ -10,6 +10,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
 } from '@nestjs/common';
 import {
   AddModelProviderDto,
@@ -29,6 +30,7 @@ import { ModelProviderResolver } from '../../agent/model/model-provider-resolver
 import { AuthorizationService } from '../../core/authz/authorization.service';
 import { CurrentUser } from '../../core/http/current-user.decorator';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
+import type { OdooEdition } from '../../core/enums';
 
 /**
  * Deployment settings at /api/v1/settings (ADR-023, ADR-033, ADR-044).
@@ -85,6 +87,23 @@ export class SettingsController {
   @Get('odoo-versions')
   async listOdooVersions() {
     return this.odooVersions.list();
+  }
+
+  /**
+   * The module picker's catalogue (ADR-056): every installable module a
+   * project of this version/edition could run against, read live from the
+   * host's manifests. No admin guard — the same "everyone creating a project
+   * should see this" reasoning as the GET above, since every user hits this
+   * during creation, not only operators.
+   */
+  @Get('odoo-versions/:version/modules')
+  async listOdooVersionModules(
+    @Param('version') version: string,
+    @Query('edition') edition?: string,
+  ) {
+    const resolvedEdition: OdooEdition = edition === 'community' ? 'community' : 'enterprise';
+    const modules = await this.odooVersions.modulesFor(version, resolvedEdition);
+    return { version, edition: resolvedEdition, modules };
   }
 
   @Post('odoo-versions')

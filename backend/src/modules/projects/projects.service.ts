@@ -43,6 +43,7 @@ import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secre
 import { redactMetadata } from '../../core/audit/redact';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import { buildProjectSpecification } from './project-specification';
+import { resolveSelectionOrThrow } from './module-selection-sanitiser';
 import {
   buildProvisionedAddonFiles,
   buildScaffoldFiles,
@@ -557,16 +558,29 @@ export class ProjectsService {
   async createAiProject(user: AuthenticatedUser, dto: CreateAiProjectDto) {
     this.assertRegionAllowed(user, dto.region);
 
+    // Enterprise unless the caller chose Community (ADR-037).
+    const odooEdition: OdooEdition = dto.odooEdition ?? DEFAULT_ODOO_EDITION;
+
+    /**
+     * ADR-056. A selection is validated against this version/edition's real
+     * catalog before anything is created — an unknown module name refuses the
+     * whole request rather than reaching provisioning, where it would either
+     * silently fail to install or (absent Task 7's sanitiser-in-provisioning
+     * layer too) become a shell-command risk. `undefined` when no selection
+     * was made keeps today's default (install everything) untouched.
+     */
+    const resolvedModules = resolveSelectionOrThrow(
+      dto.modules,
+      await this.odooVersions.modulesFor(dto.odooVersion, odooEdition),
+    );
+
     const specification = buildProjectSpecification({
       projectName: dto.name,
       odooVersion: dto.odooVersion,
       description: dto.description,
       requirements: dto.requirements,
-      modules: dto.modules,
+      modules: resolvedModules,
     });
-
-    // Enterprise unless the caller chose Community (ADR-037).
-    const odooEdition: OdooEdition = dto.odooEdition ?? DEFAULT_ODOO_EDITION;
 
     // A staging and a development line by default (ADR-038): the AI flow declares
     // no environments, so it always gets the two, and the scaffold lays down a

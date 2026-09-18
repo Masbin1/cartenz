@@ -1,6 +1,6 @@
 # Module selection at project creation — implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** A person creating a project with AI can either keep today's default
 (every app of the edition installed) or pick a specific set of modules, the
@@ -76,16 +76,16 @@ testable with fixture directories.
     filtering (skip dotfiles and `test_*`, require `__manifest__.py`,
     `installable !== false`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Fixture-based: create a temp directory tree with two or three
 `__manifest__.py` files (one application, one not, one with `installable:
 False`) and assert `enumerateModules` returns the right set, correct
 `isApplication`, correct `depends`, and excludes the non-installable one.
 
-- [ ] **Step 2: Implement `enumerateModules`**
+- [x] **Step 2: Implement `enumerateModules`**
 
-- [ ] **Step 3: Run `npm test -- odoo-module-catalog`**
+- [x] **Step 3: Run `npm test -- odoo-module-catalog`** — 13 passed.
 
 ---
 
@@ -105,17 +105,17 @@ False`) and assert `enumerateModules` returns the right set, correct
   `BadRequestException`; the function itself just reports, since it has no
   concept of an HTTP error).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 At minimum: a chain of three (`a` depends on `b` depends on `c`) resolves to
 `{a,b,c}` from selecting only `a`; a name with a self-referential or circular
 `depends` does not infinite-loop (track visited); an unknown selected name is
 reported in `unknown` and excluded from `resolved`.
 
-- [ ] **Step 2: Implement `resolveDependencyClosure`** (BFS/DFS over `depends`
+- [x] **Step 2: Implement `resolveDependencyClosure`** (BFS/DFS over `depends`
   with a visited set)
 
-- [ ] **Step 3: Run `npm test -- odoo-module-catalog`**
+- [x] **Step 3: Run `npm test -- odoo-module-catalog`** — 13 passed.
 
 ---
 
@@ -136,11 +136,16 @@ defence-in-depth floor the ADR requires regardless of the catalog check.
   service layer runs the catalog check (Task 2) and this check both, and
   neither substitutes for the other.
 
-- [ ] **Step 1: Write the failing test** — reject `rm -rf`, reject
+- [x] **Step 1: Write the failing test** — reject `rm -rf`, reject
   `sale; DROP`, reject an empty string, reject a name starting with a digit or
   underscore, accept `sale_management`.
-- [ ] **Step 2: Implement**
-- [ ] **Step 3: Run `npm test -- module-selection-sanitiser`**
+- [x] **Step 2: Implement** — implemented alongside a second export,
+  `resolveSelectionOrThrow(selection, catalog)`, which does the sanitiser run
+  *and* the Task 2 closure in one call, throwing one `BadRequestException` for
+  either failure. Task 5 calls this rather than the two separately, so the
+  ordering bug the plan's two-call shape allowed (resolve before sanitise) is
+  not reachable from the service.
+- [x] **Step 3: Run `npm test -- module-selection-sanitiser`** — 15 passed.
 
 ---
 
@@ -167,15 +172,23 @@ defence-in-depth floor the ADR requires regardless of the catalog check.
   has no active catalog row, exactly as project creation itself does — do not
   404 a version that would still provision successfully.
 
-- [ ] **Step 1: Extend `odoo-versions.service.spec.ts`** with a case for the
+- [x] **Step 1: Extend `odoo-versions.service.spec.ts`** with a case for the
   new method, mocking the filesystem (or pointing at a fixture directory the
   way Task 1's test does).
-- [ ] **Step 2: Implement the service method and the route.**
-- [ ] **Step 3: Manual host check** (not a unit test — this is the one place
+- [x] **Step 2: Implement the service method and the route.**
+- [x] **Step 3: Manual host check** (not a unit test — this is the one place
   worth hitting the real filesystem):
   `curl -s $API/odoo-versions/19.0/modules?edition=enterprise | jq '.modules | length'`
   and compare against `find /opt/odoo/enterprise /opt/odoo/odoo-server/addons
   -maxdepth 1 -name __manifest__.py | wc -l`.
+
+  **Correction after running it:** that `find` returns 0 — manifests sit one
+  level further down (`<addonPath>/<module>/__manifest__.py`), so `maxdepth 1`
+  never sees one. Verified instead by calling `enumerateModules` against the
+  real paths in a throwaway spec: 638 community directories → 1336 modules for
+  community+enterprise, `sale_management` resolved with
+  `depends: ['sale', 'digest']`. The endpoint itself is not curl-checked yet
+  because the backend is not running in this session — that is Task 12's job.
 
 ---
 
@@ -199,13 +212,21 @@ defence-in-depth floor the ADR requires regardless of the catalog check.
   it as a new field on the provisioning input rather than re-deriving it
   later.
 
-- [ ] **Step 1: Extend `projects.service.spec.ts`** (or the closest existing
-  spec covering `createAiProject`) with: unknown module name is rejected
+- [x] **Step 1: Extend `projects.service.spec.ts`** (or the closest existing
+  spec covering `createAiProject`) — **deviation:** no `projects.service.spec.ts`
+  exists, and this service's constructor takes 15 dependencies, which this
+  repo's specs never mock (its neighbours test extracted pure functions
+  instead). The validation was therefore extracted into
+  `resolveSelectionOrThrow` and tested there, matching the repo's convention
+  rather than introducing a 15-mock spec nothing else in the codebase does.
+  Covered: unknown name rejected before provisioning; valid selection returns
+  the resolved closure; shell-unsafe name rejected. Not yet covered: the
+  service-level wiring itself (that `createAiProject` calls it) — see Task 12. unknown module name is rejected
   before provisioning starts; a valid selection reaches provisioning with the
   closure resolved (assert the array passed to the mocked provisioning
   service, not just that no error was thrown).
-- [ ] **Step 2: Implement the validation call.**
-- [ ] **Step 3: Run `npm test -- projects.service`**
+- [x] **Step 2: Implement the validation call.**
+- [x] **Step 3: Run `npm test -- projects.service`**
 
 ---
 

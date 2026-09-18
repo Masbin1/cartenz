@@ -10,6 +10,8 @@ import {
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import type { OdooEdition } from '../../core/enums';
+import { enumerateModules, type CatalogModule } from './odoo-module-catalog';
+import { OdooSettingsService } from './odoo-settings.service';
 import type {
   CreateOdooVersionRepositoryDto,
   UpdateOdooVersionRepositoryDto,
@@ -46,6 +48,7 @@ export class OdooVersionsService {
   constructor(
     private readonly database: DatabaseService,
     private readonly audit: AuditService,
+    private readonly odooSettings: OdooSettingsService,
   ) {}
 
   async list(): Promise<OdooVersionRepositoryView[]> {
@@ -217,6 +220,24 @@ export class OdooVersionsService {
     });
 
     this.logger.log(`Removed Odoo ${existing.version} from the version catalog`);
+  }
+
+  /**
+   * The catalogue for the module picker (ADR-056): every installable module a
+   * project of this version and edition could actually run against, read from
+   * the same source paths `sourcePathsFor` already resolves — the per-version
+   * catalog row when active, otherwise the organisation-wide paths (ADR-033),
+   * so a version project creation would still provision successfully against
+   * never 404s here either.
+   */
+  async modulesFor(
+    version: string,
+    edition: OdooEdition,
+  ): Promise<CatalogModule[]> {
+    const paths =
+      (await this.sourcePathsFor(version, edition)) ??
+      (await this.odooSettings.sourcePathsFor(edition));
+    return enumerateModules(paths);
   }
 
   private async findById(rowId: string) {

@@ -1,6 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
-import { dirname } from 'node:path';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { OdooVersionsService } from './odoo-versions.service';
+import type { CatalogModule } from './odoo-module-catalog';
 
 /**
  * ADR-045. What matters here is resolution and refusal: which paths a project
@@ -14,10 +17,11 @@ describe('OdooVersionsService', () => {
   const otherRealDirectory = dirname(process.cwd());
 
   /** A service whose catalog reads stand in for the database. */
-  const serviceWith = (rows: Record<string, unknown>[]) => {
+  const serviceWith = (rows: Record<string, unknown>[], odooSettings?: unknown) => {
     const service = new OdooVersionsService(
       { db: {} } as never,
       { record: jest.fn() } as never,
+      (odooSettings ?? { sourcePathsFor: jest.fn().mockResolvedValue([]) }) as never,
     );
     const select = jest.fn().mockReturnValue({
       from: jest.fn().mockReturnThis(),
@@ -137,6 +141,57 @@ describe('OdooVersionsService', () => {
       expect(values.basePath).toBe(realDirectory);
       expect(values.enterprisePath).toBe(otherRealDirectory);
       expect(values.version).toBe('19.0');
+    });
+  });
+
+  /**
+   * ADR-056. The module picker reads the version's real addon paths, exactly
+   * as `sourcePathsFor` resolves them (ADR-045/037/033) — a version with no
+   * active catalog row still offers a catalogue, from the organisation-wide
+   * fallback, rather than 404ing a version project creation itself would
+   * still provision successfully against.
+   */
+  describe('modulesFor', () => {
+    let root: string;
+    let community: string;
+    let enterprise: string;
+
+    beforeEach(async () => {
+      root = await mkdtemp(join(tmpdir(), 'odoo-versions-modules-'));
+      community = join(root, 'community');
+      enterprise = join(root, 'enterprise');
+      await mkdir(join(community, 'sale'), { recursive: true });
+      await writeFile(join(community, 'sale', '__manifest__.py'), "{'name': 'Sale'}", 'utf8');
+      await mkdir(join(enterprise, 'sale_ent'), { recursive: true });
+      await writeFile(
+        join(enterprise, 'sale_ent', '__manifest__.py'),
+        "{'name': 'Sale Enterprise'}",
+        'utf8',
+      );
+    });
+
+    afterEach(async () => {
+      await rm(root, { recursive: true, force: true });
+    });
+
+    it('reads community-only modules for a community project from the active catalog row', async () => {
+      const service = serviceWith([row({ basePath: community, enterprisePath: enterprise })]);
+      const modules = await service.modulesFor('19.0', 'community');
+      expect(modules.map((m: CatalogModule) => m.technicalName)).toEqual(['sale']);
+    });
+
+    it('includes enterprise modules for an enterprise project', async () => {
+      const service = serviceWith([row({ basePath: community, enterprisePath: enterprise })]);
+      const modules = await service.modulesFor('19.0', 'enterprise');
+      expect(modules.map((m: CatalogModule) => m.technicalName).sort()).toEqual(['sale', 'sale_ent']);
+    });
+
+    it('falls back to the organisation-wide paths when the version has no active row', async () => {
+      const fallback = jest.fn().mockResolvedValue([community]);
+      const service = serviceWith([], { sourcePathsFor: fallback });
+      const modules = await service.modulesFor('19.0', 'community');
+      expect(fallback).toHaveBeenCalledWith('community');
+      expect(modules.map((m: CatalogModule) => m.technicalName)).toEqual(['sale']);
     });
   });
 });
