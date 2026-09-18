@@ -82,6 +82,30 @@ cartenz_tpl_19_0_ent    every Enterprise + Community module installed
 20–60 minutes. It happens once per version; nothing repeats it per project.
 Omit the last argument to build only the Community template.
 
+### Base-only templates (ADR-056)
+
+The same command also builds a second pair, `cartenz_tpl_19_0_com_base` and
+`cartenz_tpl_19_0_ent_base` — only the `base` module installed. A project
+created with a module selection (rather than "install everything") clones one
+of these and installs just what was asked for, instead of paying for a full
+install it does not use.
+
+Building all four templates the first time takes the same 20–60 minutes as
+before, since two of the four still need a full install. To build (or rebuild)
+**only** the `_base` pair — a couple of minutes, not the better part of an
+hour — pass a 5th argument:
+
+```bash
+sudo /opt/cartenz/infrastructure/provisioning/build-odoo-templates.sh \
+  19.0 /opt/odoo/odoo-server /opt/odoo/venv/bin/python /opt/odoo/enterprise \
+  base
+```
+
+`only` accepts `all` (default), `full` (the two existing templates only), or
+`base` (the two `_base` templates only). This exists so building the `_base`
+pair for the first time — or refreshing it after an addon path change — does
+not force a 20–60 minute reinstall of templates that were not touched.
+
 Check the result:
 
 ```bash
@@ -105,26 +129,40 @@ sudo -u postgres psql -Atc "update pg_database set datallowconn = false where da
 
 ## 4. Point the provisioning scripts at the templates
 
-The operator's `create_project` / `create_project_enterprise` are **not** in
-this repository — they are yours. Reference implementations carrying the exact
-contract the platform expects are:
+The operator's `create_project` / `create_project_enterprise` live on the host,
+not in the platform's control, but the repository carries the copies that are
+installed there:
 
 ```
-infrastructure/provisioning/create_project
-infrastructure/provisioning/create_project_enterprise
+infrastructure/provisioning/host/create_project
+infrastructure/provisioning/host/create_project_enterprise
 ```
+
+On this deployment those two files are byte-identical to
+`/opt/odoo/scripts/create_project` and `/opt/odoo/scripts/create_project_enterprise`
+(verify with `diff` before assuming otherwise). Editing the repository copies is
+**not enough** — they have to be installed over the host copies, which is what
+Step 4 below does.
 
 Two changes are needed in whatever you actually run:
 
 1. **Accept an optional third argument, the Odoo version.** The platform now
-   calls `sudo -n <script> <name> <port> [<version>]`. A script that ignores a
-   trailing argument keeps working; one that errors on it does not.
+   calls `sudo -n <script> <name> <port> [<version>] [<region>] [<modules_csv>]`.
+   A script that ignores a trailing argument keeps working; one that errors on
+   it does not.
 2. **Replace the database step** (`createdb` + `odoo-bin -i base`) with a call
    to `create-project-db.sh` when a version is given:
 
    ```bash
-   "${SCRIPTS_DIR}/create-project-db.sh" "$PROJECT_NAME" enterprise "$VERSION" "$URL"
+   "${SCRIPTS_DIR}/create-project-db.sh" "$PROJECT_NAME" enterprise "$VERSION" "$URL" "$REGION" "$MODULES_CSV"
    ```
+
+   The trailing `"${MODULES_CSV}"` (empty when nothing was selected) is ADR-056's
+   optional 6th argument. When it is non-empty, `create-project-db.sh` ignores
+   the region-scoped full-install template entirely, clones
+   `cartenz_tpl_<ver>_<edition>_base` instead, and runs `odoo-bin -i <modules>`
+   against the clone. It fails loudly if the `_base` template does not exist —
+   no silent fallback to the full template.
 
 Copy the helper next to your scripts so the path above resolves:
 
@@ -132,6 +170,17 @@ Copy the helper next to your scripts so the path above resolves:
 sudo install -o root -g root -m 0755 \
   /opt/cartenz/infrastructure/provisioning/create-project-db.sh \
   /opt/odoo/scripts/create-project-db.sh
+```
+
+And install the two host scripts themselves:
+
+```bash
+sudo install -o root -g root -m 0755 \
+  /opt/cartenz/infrastructure/provisioning/host/create_project \
+  /opt/odoo/scripts/create_project
+sudo install -o root -g root -m 0755 \
+  /opt/cartenz/infrastructure/provisioning/host/create_project_enterprise \
+  /opt/odoo/scripts/create_project_enterprise
 ```
 
 `create-project-db.sh` needs **no sudoers entry**: it is called by
