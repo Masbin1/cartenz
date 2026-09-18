@@ -18,5 +18,5 @@ export default function RootPage() {
     router.replace(user ? '/dashboard' : '/login');
   }, [loading, user, router]);
 
-  return <PageLoading label="Starting LinkedERP" />;
+  return <PageLoading label="Starting Cartenz" />;
 }

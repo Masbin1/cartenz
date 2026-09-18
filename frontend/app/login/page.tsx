@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { Spinner } from '@/components/ui/spinner';
+import { CartenzMark } from '@/components/ui/cartenz-mark';
 
 export default function LoginPage() {
   const { signIn, user, loading } = useAuth();
@@ -40,13 +41,11 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-5 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded bg-accent text-xs font-bold text-white">
-            L
-          </span>
+          <CartenzMark size={28} />
           <div>
-            <p className="text-sm font-semibold tracking-tight">LinkedERP</p>
+            <p className="text-sm font-semibold tracking-tight">Cartenz</p>
             <p className="text-2xs uppercase tracking-widest text-content-subtle">
-              AI Development Agent
+              by LinkedERP
             </p>
           </div>
         </div>

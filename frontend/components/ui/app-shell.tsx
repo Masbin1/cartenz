@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/lib/auth';
 import { USER_REGION_LABELS } from '@/lib/types';
+import { CartenzMark } from '@/components/ui/cartenz-mark';
 
 /**
  * The application frame: a narrow top bar carrying identity, region and
@@ -29,12 +30,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-20 border-b border-surface-border bg-surface/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-6 px-5">
           <Link href="/dashboard" className="flex items-center gap-2.5">
-            <span className="flex h-6 w-6 items-center justify-center rounded bg-accent text-2xs font-bold text-white">
-              L
-            </span>
+            <CartenzMark size={22} />
             <span className="text-sm font-semibold tracking-tight">
-              LinkedERP
-              <span className="ml-1.5 font-normal text-content-subtle">AI Development Agent</span>
+              Cartenz
+              <span className="ml-1.5 font-normal text-content-subtle">by LinkedERP</span>
             </span>
           </Link>
 
