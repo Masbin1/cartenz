@@ -114,6 +114,12 @@ trap 'rm -rf "$WORKDIR"' EXIT
 mkdir -p "$WORKDIR/data"
 chown -R odoo:odoo "$WORKDIR"
 
+# Where a template's filestore is kept once the scratch data_dir is gone
+# (create-project-db.sh already reads from here — build-standard-template.sh's
+# import path already writes here; this script's install-from-source path did
+# not, which is the bug this comment is next to the fix for).
+TEMPLATE_FILESTORE_DIR="${TEMPLATE_FILESTORE_DIR:-/opt/odoo/templates/filestore}"
+
 # A throwaway conf pointing at exactly the addons of one edition.
 list_modules() {
     # Prints every module directory found in the given addons paths as a
@@ -216,6 +222,29 @@ build_template() {
         echo "See ${LOG_KEEP} for the Odoo log." >&2
         sudo -u postgres dropdb --if-exists "$scratch"
         exit 1
+    fi
+
+    # Filestore: the install above wrote one under the scratch data_dir, keyed
+    # by the scratch database name. CREATE DATABASE ... TEMPLATE copies the
+    # database but never its filestore, and WORKDIR is removed on exit — so
+    # without this step the icons a module stored at install time (notably
+    # ir.ui.menu.web_icon_data, computed once on create() and kept as an
+    # attachment) are lost the moment the scratch dir goes, and every clone
+    # shows blank app icons with no way to recompute them.
+    #
+    # Store it beside the templates, keyed by the FINAL template name, which is
+    # the layout create-project-db.sh already expects. build-standard-template.sh
+    # (the dump-import path) has always done this; this script did not.
+    SCRATCH_FS="${WORKDIR}/data/filestore/${scratch}"
+    if [[ -d "$SCRATCH_FS" && -n "$(ls -A "$SCRATCH_FS" 2>/dev/null)" ]]; then
+        FILESTORE_DEST="${TEMPLATE_FILESTORE_DIR}/${template}"
+        rm -rf "$FILESTORE_DEST"
+        mkdir -p "$FILESTORE_DEST"
+        cp -a "${SCRATCH_FS}/." "$FILESTORE_DEST/"
+        chown -R odoo:odoo "$FILESTORE_DEST"
+        echo "OK: filestore stored at ${FILESTORE_DEST}."
+    else
+        echo "NOTE: the install produced no filestore; clones will start with an empty one." >&2
     fi
 
     # A refresh run replaces the previous template of this name; without this

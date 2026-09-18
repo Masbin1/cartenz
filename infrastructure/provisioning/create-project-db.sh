@@ -263,20 +263,20 @@ if [[ -n "$MODULES_CSV" ]]; then
 
     INSTALL_DIR="$(mktemp -d)"
     chown odoo:odoo "$INSTALL_DIR"
-    mkdir -p "${INSTALL_DIR}/data"
-    chown odoo:odoo "${INSTALL_DIR}/data"
     INSTALL_CONF="${INSTALL_DIR}/odoo.conf"
+    # The install's data_dir is the project's own, not scratch: Odoo writes a
+    # filestore keyed by database name into it, and ir.ui.menu.web_icon_data —
+    # every app icon in the main menu — is computed once on create() and kept
+    # there as an attachment. A scratch dir would be removed with the install,
+    # taking the icons with it and leaving the project with menu rows pointing
+    # at files that no longer exist, which no later run can recompute.
+    mkdir -p "${PROJECTS_DIR}/${PROJECT_NAME}/data"
+    chown "${ODOO_USER}:${ODOO_USER}" "${PROJECTS_DIR}/${PROJECT_NAME}/data"
     {
         echo "[options]"
         echo "addons_path = ${ADDONS}"
         echo "db_user = ${ODOO_USER}"
-        # Odoo's data_dir default is under the running user's $HOME
-        # (/opt/odoo for the odoo user), which is root:odoo 0755 — not
-        # writable by odoo itself. Point it at scratch space that is, so a
-        # module needing the filestore during install (attachments, demo
-        # assets even with without_demo) does not fail on that instead of
-        # on anything to do with the modules requested.
-        echo "data_dir = ${INSTALL_DIR}/data"
+        echo "data_dir = ${PROJECTS_DIR}/${PROJECT_NAME}/data"
         echo "without_demo = all"
     } > "$INSTALL_CONF"
     chown odoo:odoo "$INSTALL_CONF"
