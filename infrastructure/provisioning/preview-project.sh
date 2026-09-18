@@ -212,7 +212,7 @@ GIT_ENV=(-u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_DIR -u GIT_WORK_TREE -
 
 if [[ "$REPOSITORY_URL" == http* ]]; then
     if [[ -n "$CREDENTIAL" ]]; then
-        SECRET_DIR="$(mktemp -d /run/preview-project-XXXXXX)"
+        SECRET_DIR="$(mktemp -d /tmp/preview-project-XXXXXX)"
         chmod 0700 "$SECRET_DIR"
         chown "$ODOO_USER" "$SECRET_DIR"
         TOKEN_FILE="${SECRET_DIR}/token"

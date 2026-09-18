@@ -150,7 +150,14 @@ GIT_ENV=(
 
 if [[ "$REPOSITORY_URL" == http* ]]; then
     if [[ -n "$CREDENTIAL" ]]; then
-        SECRET_DIR="$(mktemp -d /run/pull-project-XXXXXX)"
+        # /run rather than /tmp would put this beside the platform's own
+        # secrets, but /run on this host is mounted noexec: the askpass
+        # helper below has to be *executable*, and git calling a script under
+        # a noexec mount fails with "Permission denied" on the helper itself —
+        # a failure that looks identical to a credential problem, and is not
+        # one. /tmp is exec-capable here; 0700 + chown to the odoo user is
+        # what actually keeps the token private, not the mount's exec bit.
+        SECRET_DIR="$(mktemp -d /tmp/pull-project-XXXXXX)"
         chmod 0700 "$SECRET_DIR"
         chown "$ODOO_USER" "$SECRET_DIR"
 
