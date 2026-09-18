@@ -55,3 +55,4 @@ with the condition under which it is retired.
 | [ADR-053](ADR-053-approved-chat-write-lands.md) | An approved chat write lands — committed and pushed like a change task | Accepted |
 | [ADR-054](ADR-054-per-client-backups.md) | Per-client backups, and the restore point before a staging push | Accepted |
 | [ADR-055](ADR-055-per-project-on-host-models-only.md) | A per-project "on-host models only" flag | Accepted |
+| [ADR-056](ADR-056-module-selection-at-project-creation.md) | Module selection at project creation | Proposed |
