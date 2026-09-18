@@ -1,6 +1,6 @@
 # ADR-056: Module selection at project creation
 
-- Status: Proposed
+- Status: Accepted
 - Date: 18 September 2026
 - Milestone: Phase 5 (connected-server estate)
 
