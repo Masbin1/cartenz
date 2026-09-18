@@ -82,6 +82,24 @@ cartenz_tpl_19_0_ent    every Enterprise + Community module installed
 20–60 minutes. It happens once per version; nothing repeats it per project.
 Omit the last argument to build only the Community template.
 
+> **⚠ Known issue on this host (found 2026-09-18, unrelated to ADR-056):**
+> the `cartenz_tpl_19_0_com`/`_ent` databases currently on this host hold 14
+> and 20 installed modules respectively (read from `ir_module_module`), not
+> "every module of the edition" — and `_com` is the same 14 modules as
+> `_com_base`, which by design installs only `base`. These two templates
+> predate commit `2e6ac66` ("Odoo 19 dropped the `-i all` expansion"); before
+> that fix the build silently installed only `base` plus what auto-installs
+> with it. A rebuild with the current script was attempted on this host and
+> failed partway on an unrelated pre-existing gap (`cloud_storage_google`
+> needs `google-auth`: `/opt/odoo/venv/bin/pip install google-auth`, then
+> rerun with `only=full`). **Not yet checked:** whether existing projects
+> carried over from these templates (e.g. `osza`, `vania`) show the same
+> small set — the platform's own database role cannot read
+> `ir_module_module`, which is exactly why `list-installed-modules.sh`
+> exists; check a live project with it before concluding. This does not
+> block ADR-056's selective path, which clones `_base` and only ever asked
+> for `base` there.
+
 ### Base-only templates (ADR-056)
 
 The same command also builds a second pair, `cartenz_tpl_19_0_com_base` and
