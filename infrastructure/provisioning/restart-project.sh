@@ -125,7 +125,13 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     exit 1
 fi
 
-if ! systemctl list-unit-files "${SERVICE_NAME}.service" | grep -q "${SERVICE_NAME}.service"; then
+# `systemctl cat` rather than `list-unit-files | grep` (ADR-057): under
+# `set -o pipefail` the pipeline is a race. `grep -q` exits the moment it
+# matches, which closes the pipe; `systemctl` is then killed by SIGPIPE and
+# exits 141. pipefail promotes that 141 over grep's 0, so the guard reports
+# "unit does not exist" for a unit that exists and is running — measured at
+# roughly 1 run in 8. A single command with no pipe has no such window.
+if ! systemctl cat "${SERVICE_NAME}.service" >/dev/null 2>&1; then
     echo "ERROR: systemd unit ${SERVICE_NAME}.service does not exist." >&2
     exit 1
 fi
