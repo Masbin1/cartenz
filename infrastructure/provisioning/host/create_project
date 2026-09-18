@@ -51,10 +51,10 @@ NGINX_ENABLED="/etc/nginx/sites-enabled"
 usage() {
     echo
     echo "Usage:"
-    echo "  create_project <project_name> <http_port> [odoo_version] [region]"
+    echo "  create_project <project_name> <http_port> [odoo_version] [region] [modules_csv]"
     echo
     echo "Example:"
-    echo "  create_project pipamas 9091 19.0 indonesia"
+    echo "  create_project pipamas 9091 19.0 indonesia sale_management,stock"
     echo
     exit 1
 }
@@ -75,7 +75,7 @@ fi
 # ARGUMENTS
 # ============================================================
 
-if [[ $# -lt 2 || $# -gt 4 ]]; then
+if [[ $# -lt 2 || $# -gt 5 ]]; then
     usage
 fi
 
@@ -83,6 +83,7 @@ PROJECT_NAME="$1"
 HTTP_PORT="$2"
 VERSION="${3:-}"
 REGION="${4:-}"
+MODULES_CSV="${5:-}"
 
 GEVENT_PORT=$((HTTP_PORT + 1))
 
@@ -178,6 +179,20 @@ if [[ -n "$REGION" ]]; then
     fi
     if [[ ! "$REGION" =~ ^(indonesia|south-africa|south_africa|india)$ ]]; then
         error "Invalid region '${REGION}'. Expected indonesia, south-africa or india."
+        exit 1
+    fi
+fi
+
+# Modules (optional, ADR-056): a comma-separated selective install. Requires a
+# version, because the selective path clones a base-only template that only
+# exists per version.
+if [[ -n "$MODULES_CSV" ]]; then
+    if [[ -z "$VERSION" ]]; then
+        error "A module selection requires an Odoo version, because it selects a base template."
+        exit 1
+    fi
+    if [[ ! "$MODULES_CSV" =~ ^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$ ]]; then
+        error "Invalid modules list '${MODULES_CSV}'."
         exit 1
     fi
 fi
@@ -416,7 +431,7 @@ if [[ -n "$VERSION" ]]; then
     info "Creating database from the ${VERSION} template..."
 
     "${SCRIPTS_DIR}/create-project-db.sh" \
-        "${PROJECT_NAME}" community "${VERSION}" "https://${DOMAIN}" "${REGION}"
+        "${PROJECT_NAME}" community "${VERSION}" "https://${DOMAIN}" "${REGION}" "${MODULES_CSV}"
 
     CREATED_DB=true
 

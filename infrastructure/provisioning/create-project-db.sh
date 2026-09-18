@@ -43,11 +43,20 @@ set -Eeuo pipefail
 # odoo.conf; neither is stored in the template.
 #
 # Usage:
-#   create-project-db.sh <project_name> <community|enterprise> <version> [url] [region]
+#   create-project-db.sh <project_name> <community|enterprise> <version> [url] [region] [modules_csv]
+#
+# ADR-056: when modules_csv is given, the region-scoped full-installation
+# template is ignored entirely and the project's database is built by
+# cloning the base-only template (Task 6, `cartenz_tpl_<ver>_<edition>_base`)
+# and running `odoo-bin -i <modules_csv>` against the clone, so a project
+# that asks for a handful of modules is not paying to install (and then
+# ignore) hundreds. Fails loudly, exactly like the full-template case, when
+# the base template does not exist — no silent fallback to the full
+# template.
 #
 # Example:
 #   create-project-db.sh dodolbintangmas enterprise 19.0 \
-#     https://dodolbintangmas.example.com indonesia
+#     https://dodolbintangmas.example.com indonesia sale_management,stock
 #
 # Requirements:
 #   - run as root
@@ -61,16 +70,22 @@ set -Eeuo pipefail
 PROJECTS_DIR="${PROJECTS_DIR:-/opt/odoo/projects}"
 TEMPLATE_FILESTORE_DIR="${TEMPLATE_FILESTORE_DIR:-/opt/odoo/templates/filestore}"
 ODOO_USER="${ODOO_USER:-odoo}"
+# ADR-056: the selective-install path has to run odoo-bin itself, the same way
+# build-odoo-templates.sh does (peer auth over the local socket, no
+# db_password). Point these at whichever runtime the version uses.
+ODOO_BASE_PATH="${ODOO_BASE_PATH:-/opt/odoo/odoo-server}"
+ODOO_ENTERPRISE_PATH="${ODOO_ENTERPRISE_PATH:-/opt/odoo/enterprise}"
+ODOO_PYTHON="${ODOO_PYTHON:-/opt/odoo/venv/bin/python}"
 # ----------------------------------------------------------------------
 
 usage() {
     echo
     echo "Usage:"
-    echo "  create-project-db.sh <project_name> <community|enterprise> <version> [url] [region]"
+    echo "  create-project-db.sh <project_name> <community|enterprise> <version> [url] [region] [modules_csv]"
     echo
     echo "Example:"
     echo "  create-project-db.sh dodolbintangmas enterprise 19.0 \\"
-    echo "    https://dodolbintangmas.example.com indonesia"
+    echo "    https://dodolbintangmas.example.com indonesia sale_management,stock"
     echo
     exit 1
 }
@@ -80,7 +95,7 @@ if [[ "$EUID" -ne 0 ]]; then
     exit 1
 fi
 
-if [[ $# -lt 3 || $# -gt 5 ]]; then
+if [[ $# -lt 3 || $# -gt 6 ]]; then
     usage
 fi
 
@@ -89,6 +104,7 @@ EDITION="$2"
 VERSION="$3"
 URL="${4:-}"
 REGION="${5:-}"
+MODULES_CSV="${6:-}"
 
 if [[ ! "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]{1,30}$ ]]; then
     echo "ERROR: Invalid project name." >&2
@@ -120,6 +136,16 @@ fi
 
 VER_TAG="${VERSION/./_}"
 
+# ADR-056: same whitelist floor as the platform's sanitiser (Task 3), applied
+# independently here — a bug in one gate must not be the only thing standing
+# between a bad string and a root-run shell command.
+if [[ -n "$MODULES_CSV" ]]; then
+    if [[ ! "$MODULES_CSV" =~ ^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$ ]]; then
+        echo "ERROR: invalid modules list '${MODULES_CSV}'." >&2
+        exit 1
+    fi
+fi
+
 # The builder seals its templates as cartenz_tpl_<ver>_<edition>[_<region>];
 # map the edition to the com/ent suffix rather than spelling the word out.
 TEMPLATE_SUFFIX="com"
@@ -134,7 +160,17 @@ template_exists() {
 }
 
 TEMPLATE=""
-if [[ -n "$REGION_TOKEN" ]]; then
+if [[ -n "$MODULES_CSV" ]]; then
+    # ADR-056: a selective install ignores the region-scoped template
+    # entirely and clones the base-only artefact instead (Task 6).
+    TEMPLATE="${TEMPLATE_BASE}_base"
+    if ! template_exists "$TEMPLATE"; then
+        echo "ERROR: the base-only template database '${TEMPLATE}' does not" >&2
+        echo "exist (or is not a template). Build it first:" >&2
+        echo "  infrastructure/provisioning/build-odoo-templates.sh ${VERSION} …" >&2
+        exit 1
+    fi
+elif [[ -n "$REGION_TOKEN" ]]; then
     REGION_TEMPLATE="${TEMPLATE_BASE}_${REGION_TOKEN}"
     if template_exists "$REGION_TEMPLATE"; then
         TEMPLATE="$REGION_TEMPLATE"
@@ -179,6 +215,51 @@ if [[ -n "$URL" ]]; then
         -c "UPDATE ir_config_parameter SET value = '${URL}' WHERE key = 'web.base.url';"
 fi
 
+# ADR-056: the clone came from the base-only template (just `base`), so the
+# requested selection still has to be installed. Same runtime and peer-auth
+# pattern as build-odoo-templates.sh: no db_host/db_port/db_password, local
+# socket, role `odoo`.
+if [[ -n "$MODULES_CSV" ]]; then
+    ADDONS="${ODOO_BASE_PATH}/addons"
+    if [[ "$EDITION" == "enterprise" ]]; then
+        ADDONS="${ODOO_ENTERPRISE_PATH},${ADDONS}"
+    fi
+    if [[ ! -x "$ODOO_PYTHON" ]]; then
+        echo "ERROR: Python interpreter not found or not executable:" >&2
+        echo "  ${ODOO_PYTHON}" >&2
+        exit 1
+    fi
+    if [[ ! -x "${ODOO_BASE_PATH}/odoo-bin" ]]; then
+        echo "ERROR: odoo-bin not found or not executable:" >&2
+        echo "  ${ODOO_BASE_PATH}/odoo-bin" >&2
+        exit 1
+    fi
+
+    INSTALL_CONF="$(mktemp)"
+    trap 'rm -f "$INSTALL_CONF"' EXIT
+    {
+        echo "[options]"
+        echo "addons_path = ${ADDONS}"
+        echo "db_user = ${ODOO_USER}"
+        echo "without_demo = all"
+    } > "$INSTALL_CONF"
+
+    echo "Installing requested modules: ${MODULES_CSV}"
+
+    sudo -u "$ODOO_USER" -H "$ODOO_PYTHON" "${ODOO_BASE_PATH}/odoo-bin" \
+        -c "$INSTALL_CONF" \
+        -d "$PROJECT_NAME" \
+        -i "$MODULES_CSV" \
+        --without-demo=all \
+        --stop-after-init \
+        --no-http
+
+    rm -f "$INSTALL_CONF"
+    trap - EXIT
+
+    echo "OK: requested modules installed."
+fi
+
 # Filestore (ADR-051): CREATE DATABASE does not copy it. When the template's
 # filestore was stored, copy it into the clone's own data dir, keyed by the
 # project's database name.
@@ -193,4 +274,8 @@ if [[ -d "$TEMPLATE_FS" ]]; then
     echo "OK: filestore copied from ${TEMPLATE_FS}."
 fi
 
-echo "OK: database '${PROJECT_NAME}' created from '${TEMPLATE}' (all modules installed)."
+if [[ -n "$MODULES_CSV" ]]; then
+    echo "OK: database '${PROJECT_NAME}' created from '${TEMPLATE}' (base only; requested modules installed)."
+else
+    echo "OK: database '${PROJECT_NAME}' created from '${TEMPLATE}' (all modules installed)."
+fi

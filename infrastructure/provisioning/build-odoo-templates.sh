@@ -14,8 +14,15 @@ cd /
 #
 # One template per version and edition:
 #
-#   cartenz_tpl_<ver>_com    every Community module installed
-#   cartenz_tpl_<ver>_ent    every Enterprise + Community module installed
+#   cartenz_tpl_<ver>_com        every Community module installed
+#   cartenz_tpl_<ver>_ent        every Enterprise + Community module installed
+#   cartenz_tpl_<ver>_com_base   base only (ADR-056 selective installs clone this)
+#   cartenz_tpl_<ver>_ent_base   base only (ADR-056 selective installs clone this)
+#
+# The `_base` pair exists so a project that asks for a handful of modules
+# (ADR-056) can clone a near-empty database and install just those, instead of
+# cloning a full installation it will not use. Full templates remain the
+# default for every project that does not ask for a selection.
 #
 # A template is a Postgres database with `is_template = true` and
 # `datallowconn = false`, so `CREATE DATABASE ... TEMPLATE ...` can clone it
@@ -131,10 +138,16 @@ write_conf() {
 }
 
 # Builds one template: scratch database -> full install -> seal as template.
+# `base_only=true` swaps the module list for the literal "base" (today's
+# pre-ADR-045 behaviour, kept as its own named artefact per ADR-056 rather
+# than being retired): the selective-install path (Task 7) clones this and
+# runs `odoo-bin -i <selection>` against it instead of the full templates
+# below, so a person choosing 3 modules is not paying for hundreds.
 build_template() {
     local edition="$1"   # community | enterprise
-    local template="$2"  # cartenz_tpl_<ver>_com | cartenz_tpl_<ver>_ent
-    local scratch="cartenz_tplbuild_${VER_TAG}_${edition}"
+    local template="$2"  # cartenz_tpl_<ver>_com | cartenz_tpl_<ver>_ent | ..._base
+    local base_only="${3:-false}"
+    local scratch="cartenz_tplbuild_${VER_TAG}_${edition}$([[ "$base_only" == true ]] && echo _base || true)"
 
     local addons="${BASE_PATH}/addons"
     if [[ "$edition" == "enterprise" ]]; then
@@ -145,19 +158,24 @@ build_template() {
         addons="${ENTERPRISE_PATH},${addons}"
     fi
 
-    # Odoo 19 dropped the `-i all` expansion (the name `all` is now only
-    # discarded by the module-name check, so `-i all` installs nothing but
-    # base). Expand the list ourselves from the addons directories.
-    local -a addons_dirs
-    IFS=',' read -ra addons_dirs <<< "$addons"
     local modules module_count
-    modules="$(list_modules "${addons_dirs[@]}")"
-    if [[ -z "$modules" ]]; then
-        echo "ERROR: no modules found under ${addons}" >&2
-        exit 1
+    if [[ "$base_only" == true ]]; then
+        modules="base"
+        module_count=1
+    else
+        # Odoo 19 dropped the `-i all` expansion (the name `all` is now only
+        # discarded by the module-name check, so `-i all` installs nothing but
+        # base). Expand the list ourselves from the addons directories.
+        local -a addons_dirs
+        IFS=',' read -ra addons_dirs <<< "$addons"
+        modules="$(list_modules "${addons_dirs[@]}")"
+        if [[ -z "$modules" ]]; then
+            echo "ERROR: no modules found under ${addons}" >&2
+            exit 1
+        fi
+        module_count="$(awk -F, '{print NF}' <<< "$modules")"
     fi
-    module_count="$(awk -F, '{print NF}' <<< "$modules")"
-    echo "Installing ${module_count} modules from: ${addons}"
+    echo "Installing ${module_count} module(s) from: ${addons}"
 
     local conf="${WORKDIR}/${edition}.conf"
     write_conf "$conf" "$addons"
@@ -208,10 +226,14 @@ build_template() {
 
 build_template "community" "cartenz_tpl_${VER_TAG}_com"
 build_template "enterprise" "cartenz_tpl_${VER_TAG}_ent"
+build_template "community" "cartenz_tpl_${VER_TAG}_com_base" true
+build_template "enterprise" "cartenz_tpl_${VER_TAG}_ent_base" true
 
 echo
 echo "Done. New projects of version ${VERSION} can now be provisioned by"
 echo "duplicating these templates:"
 echo
-echo "  cartenz_tpl_${VER_TAG}_com   (community, full installation)"
-echo "  cartenz_tpl_${VER_TAG}_ent   (enterprise, full installation)"
+echo "  cartenz_tpl_${VER_TAG}_com        (community, full installation)"
+echo "  cartenz_tpl_${VER_TAG}_ent        (enterprise, full installation)"
+echo "  cartenz_tpl_${VER_TAG}_com_base   (community, base only — selective installs clone this)"
+echo "  cartenz_tpl_${VER_TAG}_ent_base   (enterprise, base only — selective installs clone this)"

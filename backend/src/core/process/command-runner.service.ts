@@ -521,6 +521,11 @@ export function assertOdooInvocation(
 
 /** A project name the operator's provisioning scripts will accept. */
 const PROVISIONING_PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{1,30}$/;
+/**
+ * ADR-056: comma-separated technical module names for a selective install.
+ * Matches Task 3's sanitiser floor exactly, applied independently here.
+ */
+const PROVISIONING_MODULES = /^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$/;
 
 /** A domain name the HTTPS-issuance script will accept (ADR-040). */
 const HTTPS_DOMAIN = /^[a-z0-9.-]+$/;
@@ -565,11 +570,13 @@ const PREVIEW_REF = /^[a-z0-9]{16}$/;
  * run anything its sudoers rule permits, as root. The grant is narrowed here to
  * three fixed shapes - mirroring assertOdooInvocation above - and nothing else:
  *
- *   `sudo -n <create-script> <project-name> <port> [<version>] [<region>]` — the
- *   operator's create_project / create_project_enterprise scripts. The optional
- *   version (ADR-045) selects the template database for that Odoo series, and
- *   the optional region (ADR-051) selects the standard database for that
- *   version, edition and region.
+ *   `sudo -n <create-script> <project-name> <port> [<version>] [<region>]
+ *   [<modules>]` — the operator's create_project / create_project_enterprise
+ *   scripts. The optional version (ADR-045) selects the template database for
+ *   that Odoo series, and the optional region (ADR-051) selects the standard
+ *   database for that version, edition and region. The optional modules
+ *   (ADR-056) is a comma-separated selection for a selective install, which
+ *   clones the base-only template instead of the full one.
  *
  *   `sudo -n <grant-script> <project-name>` — the addons-ownership fix-up
  *   script, which takes no port because it touches only a directory the
@@ -781,7 +788,7 @@ export function assertProvisioningInvocation(
     return;
   }
 
-  if (args.length === 5 || args.length === 6) {
+  if (args.length === 5 || args.length === 6 || args.length === 7) {
     const version = args[4];
     if (!version || !/^\d+\.\d+$/.test(version)) {
       throw new CommandArgumentError(
@@ -790,7 +797,7 @@ export function assertProvisioningInvocation(
       );
     }
 
-    if (args.length === 6) {
+    if (args.length >= 6) {
       const region = args[5];
       // Accept the hyphenated form the file names use as well as the underscored
       // form the enum uses; the scripts normalise to one.
@@ -802,11 +809,27 @@ export function assertProvisioningInvocation(
         );
       }
     }
+
+    // ADR-056: an optional sixth argument is a comma-separated module selection
+    // for a selective install. It is checked here against the same whitelist the
+    // sanitiser enforces, deliberately duplicated: this is the platform's own
+    // opinion of what may be handed to a root-run script, independent of any
+    // upstream validation that may be bypassed or changed.
+    if (args.length === 7) {
+      const modules = args[6];
+      if (!modules || !PROVISIONING_MODULES.test(modules)) {
+        throw new CommandArgumentError(
+          'sudo provisioning accepts an optional module list as the sixth argument: ' +
+            'comma-separated lowercase technical names shaped like "sale_management,stock"; ' +
+            `got "${String(modules)}".`,
+        );
+      }
+    }
     return;
   }
 
   throw new CommandArgumentError(
     `sudo provisioning takes exactly "-n <script> <project-name> <port> [<version>] ` +
-      `[<region>]"; got ${args.length} arguments.`,
+      `[<region>] [<modules>]"; got ${args.length} arguments.`,
   );
 }

@@ -504,10 +504,55 @@ describe('assertProvisioningInvocation', () => {
     }
   });
 
-  it('refuses a seventh argument even when version and region are valid', () => {
+  it('refuses a malformed modules list as the seventh argument (ADR-056)', () => {
+    for (const bad of [
+      'sale_management;rm -rf /',
+      'sale-management',
+      'Sale_Management',
+      '1sale',
+      'sale management',
+      'sale,,stock',
+      ',sale',
+      'sale,',
+      'sale_management --stop-after-init',
+      '$(whoami)',
+      '',
+    ]) {
+      expect(() =>
+        assertProvisioningInvocation(
+          ['-n', createScripts[0], 'name', '7001', '19.0', 'indonesia', bad],
+          createScripts,
+          grantScript,
+        ),
+      ).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('permits a selective install carrying a module list (ADR-056)', () => {
+    for (const modules of ['sale_management', 'sale_management,stock', 'base']) {
+      expect(() =>
+        assertProvisioningInvocation(
+          ['-n', createScripts[0], 'dodolbintangmas', '7001', '19.0', 'indonesia', modules],
+          createScripts,
+          grantScript,
+        ),
+      ).not.toThrow();
+    }
+  });
+
+  it('refuses an eighth argument even when version, region and modules are valid', () => {
     expect(() =>
       assertProvisioningInvocation(
-        ['-n', createScripts[0], 'name', '7001', '19.0', 'indonesia', 'extra'],
+        [
+          '-n',
+          createScripts[0],
+          'name',
+          '7001',
+          '19.0',
+          'indonesia',
+          'sale_management',
+          'extra',
+        ],
         createScripts,
         grantScript,
       ),
