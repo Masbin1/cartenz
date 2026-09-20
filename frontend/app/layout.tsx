@@ -13,7 +13,7 @@ export const metadata: Metadata = {
       { url: '/brand/icon-32.png', sizes: '32x32', type: 'image/png' },
       { url: '/brand/icon-192.png', sizes: '192x192', type: 'image/png' },
     ],
-    shortcut: '/brand/favicon.ico',
+    shortcut: '/brand/favicon.icon.svg',
     apple: [{ url: '/brand/icon-180.png', sizes: '180x180', type: 'image/png' }],
   },
 };

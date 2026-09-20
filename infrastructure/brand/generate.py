@@ -20,7 +20,7 @@ Outputs:
     lockup-horizontal.svg     mark beside the wordmark, transparent
     icon-<size>.png          square mark on the surface colour (favicons/PWA)
     lockup-on-<surface>.png  raster lockup, for places SVG cannot go
-    favicon.ico              multi-resolution, for the browser tab
+    favicon.icon.svg              multi-resolution, for the browser tab
     manifest.webmanifest     web app manifest, for the install prompt
 """
 
@@ -466,7 +466,7 @@ def main() -> int:
             written.append(png_path)
             print(f"wrote {png_path.relative_to(root)}")
 
-        ico_path = out / "favicon.ico"
+        ico_path = out / "favicon.icon.svg"
         build_ico(ico_sources, ico_path)
         written.append(ico_path)
         print(f"wrote {ico_path.relative_to(root)}")

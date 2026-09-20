@@ -29,7 +29,7 @@ is needed.
 | `icon-16 … icon-512.png` | Square mark on the surface colour, for favicons and the PWA. |
 | `lockup-on-dark.png` | Raster lockup on `#0d1117`. Email, slides, social. |
 | `lockup-on-raised.png` | Raster lockup on `#151b23`. |
-| `favicon.ico` | 16/32/48 in one file, for the browser tab. |
+| `favicon.icon.svg` | 16/32/48 in one file, for the browser tab. |
 | `manifest.webmanifest` | Web app manifest, for the install prompt. |
 
 Wired into the app through `frontend/app/layout.tsx` (metadata) and
