@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { leaseGitCredential, tokenUsernameFor } from './git-credentials';
+import { leaseGitCredential, normalizePrivateKey, tokenUsernameFor } from './git-credentials';
 
 /**
  * The credential lease (ADR-014, ADR-021).
@@ -97,23 +97,22 @@ describe('leaseGitCredential', () => {
     });
 
     /**
-     * A key pasted from a Windows clipboard (or a form that saved CRLF) carries
-     * `\r\n` line endings. OpenSSH parses PEM line-by-line and rejects a body with
-     * stray `\r` bytes as "error in libcrypto" — indistinguishable from a wrong
-     * key unless you know to look at the bytes, not the content.
+     * A key pasted through a path that collapsed newlines (a single-line input,
+     * a terminal wrap, or a chat client) has spaces instead of line breaks.
+     * OpenSSH fails to parse it unless the lines are re-wrapped.
      */
-    it('normalizes CRLF line endings so OpenSSH can parse the key', async () => {
-      const crlfKey = {
+    it('restores line breaks when they were flattened into a single line', async () => {
+      const flattenedKey = {
         kind: 'ssh_key' as const,
-        value: KEY.replace(/\n/g, '\r\n'),
+        value: KEY.replace(/\n/g, ' '),
       };
 
-      await lease(crlfKey);
+      await lease(flattenedKey);
       const written = await readFile(join(directory, 'id_ssh'), 'utf8');
 
-      expect(written).not.toContain('\r');
-      expect(written.endsWith('\n')).toBe(true);
-      expect(written.endsWith('\n\n')).toBe(false);
+      expect(written).toContain('-----BEGIN OPENSSH PRIVATE KEY-----\n');
+      expect(written).toContain('\n-----END OPENSSH PRIVATE KEY-----\n');
+      expect(written.split('\n').length).toBeGreaterThan(2);
     });
 
     /**
@@ -197,5 +196,41 @@ describe('tokenUsernameFor', () => {
     expect(tokenUsernameFor('github.com')).toBe('x-access-token');
     expect(tokenUsernameFor('gitlab.com')).toBe('oauth2');
     expect(tokenUsernameFor('git.odoo.com')).toBe('git');
+  });
+});
+
+describe('normalizePrivateKey', () => {
+  const KEY = [
+    '[REDACTED PRIVATE KEY]',
+  ].join('\n');
+
+  it('leaves an already well-formed key unchanged', () => {
+    expect(normalizePrivateKey(KEY)).toBe(KEY);
+  });
+
+  it('re-wraps a key flattened onto a single line by a plain <input>', () => {
+    const flattened = KEY.replace(/\n/g, ' ');
+    const restored = normalizePrivateKey(flattened);
+
+    expect(restored).toBe(KEY);
+  });
+
+  it('re-wraps a key whose newlines became commas, tabs, or repeated spaces', () => {
+    const mangled = KEY.replace(/\n/g, '   ');
+    expect(normalizePrivateKey(mangled)).toBe(KEY);
+  });
+
+  it('converts CRLF and lone CR to LF', () => {
+    expect(normalizePrivateKey(KEY.replace(/\n/g, '\r\n'))).toBe(KEY);
+    expect(normalizePrivateKey(KEY.replace(/\n/g, '\r'))).toBe(KEY);
+  });
+
+  it('is a no-op for content with no PEM header, so a wrong paste fails honestly', () => {
+    const notAKey = 'this is not a key at all';
+    expect(normalizePrivateKey(notAKey)).toBe(notAKey);
+  });
+
+  it('trims surrounding whitespace a paste often adds', () => {
+    expect(normalizePrivateKey(`\n\n  ${KEY}  \n\n`)).toBe(KEY);
   });
 });

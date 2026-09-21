@@ -128,6 +128,48 @@ async function leaseToken(directory: string, token: string): Promise<GitCredenti
  *    recorded key; `accept-new` trusts first contact and is a stated compromise.
  *  - `BatchMode=yes` - fail rather than prompt, because nothing is watching.
  */
+/**
+ * Restores a private key whose line breaks were lost in transit.
+ *
+ * A pasted key arrives through paths that collapse whitespace: a single-line
+ * `<input>`, a terminal that wrapped the text before the copy, or a chat client
+ * that reflowed it. The result is a header, one enormous base64 line, and a
+ * footer — which OpenSSH rejects with `Load key "...": error in libcrypto`,
+ * indistinguishable from a wrong key.
+ *
+ * The repair is deterministic rather than a guess: base64 never contains a space
+ * or a newline, so every whitespace character inside the body is transport noise
+ * and can be stripped and re-wrapped at the width the format expects. A key that
+ * already has correct line breaks comes out unchanged.
+ *
+ * Not a validator: a key with content actually missing still fails, and should —
+ * but it now fails in `ssh`, on a key that was reconstructed correctly.
+ */
+export function normalizePrivateKey(value: string): string {
+  const unified = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+
+  const match = /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/.exec(unified);
+
+  // Not a PEM block (or truncated past recognition): leave it alone so the
+  // failure names the real problem instead of a repair gone wrong.
+  if (!match) {
+    return unified;
+  }
+
+  const [, label, body] = match;
+  const compact = (body ?? '').replace(/\s+/g, '');
+
+  if (compact.length === 0) {
+    return unified;
+  }
+
+  // 70 columns for OpenSSH's own format, 64 for the classic PEM wrap.
+  const width = label.includes('OPENSSH') ? 70 : 64;
+  const lines = compact.match(new RegExp(`.{1,${width}}`, 'g')) ?? [];
+
+  return `-----BEGIN ${label}-----\n${lines.join('\n')}\n-----END ${label}-----`;
+}
+
 async function leaseSshKey(
   directory: string,
   credential: GitCredential,
@@ -136,9 +178,9 @@ async function leaseSshKey(
   const keyPath = join(directory, 'id_ssh');
   const knownHostsPath = join(directory, 'known_hosts');
 
-  // OpenSSH refuses a key file without a trailing newline, and chokes on Windows CRLF.
-  const normalized = credential.value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
-  const key = `${normalized}\n`;
+  // Restores line breaks if they were flattened into a single line, and ensures
+  // the trailing newline OpenSSH requires.
+  const key = `${normalizePrivateKey(credential.value)}\n`;
 
   await writeFile(keyPath, key, { encoding: 'utf8', mode: 0o600 });
   await chmod(keyPath, 0o600);
