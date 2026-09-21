@@ -575,16 +575,32 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
 
             <div className="sm:col-span-2">
               <label htmlFor="credential" className="field-label">
-                Access token (optional)
+                {usesSshRemote(form.repositoryUrl) ? 'SSH private key (optional)' : 'Access token (optional)'}
               </label>
-              <input
-                id="credential"
-                type="password"
-                value={form.credential}
-                onChange={update('credential')}
-                className="field-input font-mono text-xs"
-                placeholder="Leave blank to add later"
-              />
+              {usesSshRemote(form.repositoryUrl) ? (
+                // A private key spans multiple lines, and a single-line <input> silently
+                // drops the newlines a paste carries — the key still "looks" pasted but
+                // OpenSSH then fails with "error in libcrypto" on an unparsable PEM body.
+                // A <textarea> keeps every line break the clipboard held.
+                <textarea
+                  id="credential"
+                  value={form.credential}
+                  onChange={update('credential')}
+                  className="field-input font-mono text-xs"
+                  rows={6}
+                  spellCheck={false}
+                  placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----'}
+                />
+              ) : (
+                <input
+                  id="credential"
+                  type="password"
+                  value={form.credential}
+                  onChange={update('credential')}
+                  className="field-input font-mono text-xs"
+                  placeholder="Leave blank to add later"
+                />
+              )}
               <p className="mt-1.5 text-2xs text-content-subtle">
                 Encrypted under a key unique to this project and stored by reference. It is never
                 returned by the API, written to a log, or sent to an AI provider. Also used to read

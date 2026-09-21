@@ -136,8 +136,9 @@ async function leaseSshKey(
   const keyPath = join(directory, 'id_ssh');
   const knownHostsPath = join(directory, 'known_hosts');
 
-  // OpenSSH refuses a key file without a trailing newline.
-  const key = credential.value.endsWith('\n') ? credential.value : `${credential.value}\n`;
+  // OpenSSH refuses a key file without a trailing newline, and chokes on Windows CRLF.
+  const normalized = credential.value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
+  const key = `${normalized}\n`;
 
   await writeFile(keyPath, key, { encoding: 'utf8', mode: 0o600 });
   await chmod(keyPath, 0o600);

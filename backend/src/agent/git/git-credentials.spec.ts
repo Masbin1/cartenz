@@ -97,6 +97,26 @@ describe('leaseGitCredential', () => {
     });
 
     /**
+     * A key pasted from a Windows clipboard (or a form that saved CRLF) carries
+     * `\r\n` line endings. OpenSSH parses PEM line-by-line and rejects a body with
+     * stray `\r` bytes as "error in libcrypto" — indistinguishable from a wrong
+     * key unless you know to look at the bytes, not the content.
+     */
+    it('normalizes CRLF line endings so OpenSSH can parse the key', async () => {
+      const crlfKey = {
+        kind: 'ssh_key' as const,
+        value: KEY.replace(/\n/g, '\r\n'),
+      };
+
+      await lease(crlfKey);
+      const written = await readFile(join(directory, 'id_ssh'), 'utf8');
+
+      expect(written).not.toContain('\r');
+      expect(written.endsWith('\n')).toBe(true);
+      expect(written.endsWith('\n\n')).toBe(false);
+    });
+
+    /**
      * Without IdentitiesOnly, ssh offers every key the host machine's agent holds,
      * so a clone could succeed using a credential belonging to someone else.
      */
