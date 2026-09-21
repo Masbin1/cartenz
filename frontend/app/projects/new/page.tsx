@@ -184,6 +184,12 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
     repositoryUrl: '',
     credential: '',
     connectionType: 'github',
+    // ADR-050/ADR-054: the linked instance this connect points at (the
+    // customer's own odoo.sh/on-premise project), so a restore can later be
+    // aimed at its database manager. Never used to create a repository.
+    projectUrl: '',
+    projectDatabase: '',
+    isOdoosh: false,
   });
 
   // Odoo Online: the four things needed to reach an instance. The API key is
@@ -367,6 +373,14 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
                 kind: row.kind,
               }))
           : undefined,
+        // ADR-050/ADR-054: the customer's own odoo.sh/on-premise instance this
+        // connect points at, so a later restore reaches its database manager.
+        // Never a repository - a repository-backed project still pulls from
+        // `repositoryUrl` above exactly as before.
+        projectUrl: form.projectUrl.trim().length > 0 ? form.projectUrl.trim() : undefined,
+        projectDatabase:
+          form.projectDatabase.trim().length > 0 ? form.projectDatabase.trim() : undefined,
+        isOdoosh: form.isOdoosh || undefined,
       });
 
       // The credential is sent separately, so it never travels in a project
@@ -634,6 +648,59 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
               </p>
             </div>
           </>
+        ) : null}
+
+        {needsRepository ? (
+          <div className="sm:col-span-2 rounded-md border border-border-subtle p-3">
+            <p className="field-label mb-2">
+              Linked instance (optional)
+            </p>
+            <p className="mb-3 text-2xs text-content-subtle">
+              Only needed when this connects to a customer&apos;s existing odoo.sh or
+              on-premise instance: recorded so a restore can later be aimed at that
+              instance&apos;s own database manager. This never creates a repository — the
+              code still pulls from the Repository URL above (ADR-049, ADR-050).
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label htmlFor="projectUrl" className="field-label">
+                  Instance URL
+                </label>
+                <input
+                  id="projectUrl"
+                  value={form.projectUrl}
+                  onChange={update('projectUrl')}
+                  className="field-input font-mono text-xs"
+                  placeholder="https://testpurchase.masbintang.space"
+                />
+              </div>
+              <div>
+                <label htmlFor="projectDatabase" className="field-label">
+                  Database name
+                </label>
+                <input
+                  id="projectDatabase"
+                  value={form.projectDatabase}
+                  onChange={update('projectDatabase')}
+                  className="field-input font-mono text-xs"
+                  placeholder="testpurchase"
+                />
+              </div>
+              <div className="flex items-end pb-1">
+                <label htmlFor="isOdoosh" className="flex items-center gap-2 text-xs text-content-default">
+                  <input
+                    id="isOdoosh"
+                    type="checkbox"
+                    checked={form.isOdoosh}
+                    onChange={(event) =>
+                      setForm((previous) => ({ ...previous, isOdoosh: event.target.checked }))
+                    }
+                  />
+                  This is an Odoo.sh instance
+                </label>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {form.projectType === 'on_premise' ? (

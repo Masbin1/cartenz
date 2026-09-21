@@ -27,6 +27,18 @@ export type ProjectType = (typeof PROJECT_TYPES)[number];
 /** Project types that require a repository reference before a task may run. */
 export const REPOSITORY_BACKED_PROJECT_TYPES: readonly ProjectType[] = ['repository', 'odoo_sh'];
 
+/**
+ * Where a connected project's linked instance actually lives (ADR-050, ADR-054).
+ *
+ * This is metadata about the *link* a connect-existing flow records, not a new
+ * connection mechanism: no code path here ever creates a new repository. A
+ * repository-backed connect always points at the operator's own remote
+ * (github/gitlab/odoo_sh); `on_premise` is recorded when the linked instance's
+ * database manager lives on a host the platform does not otherwise reach.
+ */
+export const CONNECTION_ORIGINS = ['github', 'gitlab', 'odoo_sh', 'on_premise'] as const;
+export type ConnectionOrigin = (typeof CONNECTION_ORIGINS)[number];
+
 /** Connection type. Table 4, unchanged. */
 /**
  * Connection type. Table 4 defines github, gitlab, odoo_api and connector; ADR-021

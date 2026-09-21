@@ -683,6 +683,13 @@ export class ProjectsService {
         ? { ...environmentConfig, onPremisePath: scaffolded.gitRootPath }
         : environmentConfig,
       createdByUserId: user.userId,
+      // ADR-050/ADR-054: the linked instance this connect points at (the
+      // customer's own odoo.sh/on-premise project), recorded so a later
+      // restore action can reach its database manager. Never used to create a
+      // repository or a connection by itself.
+      projectUrl: dto.projectUrl?.trim() || null,
+      projectDatabase: dto.projectDatabase?.trim() || null,
+      isOdoosh: dto.isOdoosh ?? false,
     });
 
     await this.database.db.insert(projectEnvironments).values(
@@ -1643,6 +1650,10 @@ export class ProjectsService {
     repositoryUrl: string | null;
     environmentConfig: Record<string, unknown>;
     createdByUserId: string;
+    /** ADR-050/ADR-054: the linked instance's own URL, database and kind. */
+    projectUrl?: string | null;
+    projectDatabase?: string | null;
+    isOdoosh?: boolean;
   }) {
     try {
       const [project] = await this.database.db
@@ -2256,6 +2267,10 @@ export class ProjectsService {
     restartCommit?: string | null;
     restartBranch?: string | null;
     restartedAt?: Date | null;
+    /** ADR-050/ADR-054: the linked instance this connect points at. */
+    projectUrl?: string | null;
+    projectDatabase?: string | null;
+    isOdoosh?: boolean;
   }) {
     return {
       id: project.id,
@@ -2306,6 +2321,18 @@ export class ProjectsService {
         commit: project.restartCommit ?? null,
         branch: project.restartBranch ?? null,
         restartedAt: project.restartedAt ?? null,
+      },
+      /**
+       * The linked instance this project points at (ADR-050, ADR-054), when the
+       * operator connected an existing odoo.sh/on-premise project rather than
+       * only a repository. Not a secret: a URL and a database name, shown so a
+       * restore can be aimed at the right instance, and so the portal never
+       * presents the Cartenz replica as the customer's live system.
+       */
+      link: {
+        projectUrl: project.projectUrl ?? null,
+        database: project.projectDatabase ?? null,
+        isOdoosh: project.isOdoosh ?? false,
       },
     };
   }

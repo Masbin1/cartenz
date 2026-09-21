@@ -424,6 +424,15 @@ export const api = {
       repositoryUrl?: string;
       environmentConfig?: Record<string, unknown>;
       environments?: { name: string; branch: string; kind: EnvironmentKind }[];
+      /**
+       * ADR-050/ADR-054: the customer's own odoo.sh/on-premise instance this
+       * connect points at, so a restore can later reach its database manager.
+       * Distinct from `repositoryUrl`, which is the git remote the platform
+       * pulls from.
+       */
+      projectUrl?: string;
+      projectDatabase?: string;
+      isOdoosh?: boolean;
     }) => request<ProjectDetail>('/projects', { method: 'POST', body }),
 
     createWithAi: (body: {

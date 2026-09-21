@@ -156,6 +156,33 @@ export class CreateProjectDto {
   @ValidateNested({ each: true })
   @Type(() => EnvironmentDto)
   environments?: EnvironmentDto[];
+
+  /**
+   * Internal-only metadata about the linked instance the operator is
+   * connecting to (ADR-050, ADR-054) — the customer's own odoo.sh/on-premise
+   * project, so a later restore action can reach its database manager.
+   *
+   * This never creates a repository or a connection by itself: a
+   * repository-backed project still pulls from `repositoryUrl` exactly as
+   * before (ADR-049). It is metadata about a second, separate URL.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  @Transform(trim)
+  projectUrl?: string;
+
+  /** The database name at `projectUrl`, when the operator knows it. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  @Transform(trim)
+  projectDatabase?: string;
+
+  /** True when `projectUrl` names an Odoo.sh project. */
+  @IsOptional()
+  @IsBoolean()
+  isOdoosh?: boolean;
 }
 
 /** One requirement in the AI project specification. */

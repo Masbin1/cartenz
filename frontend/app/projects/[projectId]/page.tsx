@@ -306,6 +306,20 @@ export default function ProjectDetailPage() {
                 />
                 <DetailRow label="Your access" value={humanise(project.accessReason)} />
                 <DetailRow label="Created" value={relativeTime(project.createdAt)} />
+                {project.link.projectUrl ? (
+                  <>
+                    <DetailRow label="Linked instance" value={project.link.projectUrl} mono />
+                    <DetailRow
+                      label="Linked database"
+                      value={project.link.database ?? 'Not set'}
+                      mono
+                    />
+                    <DetailRow
+                      label="Linked instance kind"
+                      value={project.link.isOdoosh ? 'Odoo.sh' : 'On-premise'}
+                    />
+                  </>
+                ) : null}
               </dl>
             </section>
 

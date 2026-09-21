@@ -168,6 +168,12 @@ export interface ProjectDetail {
   accessReason: 'admin' | 'creator' | 'grant';
   provisioning: ProjectProvisioningInfo;
   restart: ProjectRestartInfo;
+  /**
+   * The linked instance this project points at (ADR-050, ADR-054), when the
+   * operator connected an existing odoo.sh/on-premise project rather than
+   * only a repository - so a restore can be aimed at the right instance.
+   */
+  link: ProjectLink;
 }
 
 /**
@@ -205,6 +211,13 @@ export interface ProjectProvisioningInfo {
     status: 'none' | 'pending' | 'issued' | 'failed';
     error: string | null;
   };
+}
+
+/** Per-client restore endpoint metadata (ADR-050, ADR-054). */
+export interface ProjectLink {
+  projectUrl?: string | null;
+  database?: string | null;
+  isOdoosh: boolean;
 }
 
 /**

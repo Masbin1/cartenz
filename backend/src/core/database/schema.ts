@@ -286,6 +286,23 @@ export const projects = pgTable(
     /** The branch that commit came from. */
     restartBranch: text('restart_branch'),
     restartedAt: timestamp('restarted_at', { withTimezone: true }),
+    /**
+     * The linked instance's own URL (ADR-050, ADR-054): the customer's
+     * odoo.sh/on-premise project the operator is connecting to, so its
+     * database manager can later be reached for a restore. Distinct from
+     * `provisioningUrl`, which is the Cartenz-hosted replica this platform
+     * runs itself — the two must never be presented as the same instance.
+     */
+    projectUrl: text('project_url'),
+    /** The database name at `projectUrl`, when the operator supplied one. */
+    projectDatabase: text('project_database'),
+    /**
+     * True when `projectUrl` names an Odoo.sh project rather than a plain
+     * on-premise host — Odoo.sh's own database manager and branch model
+     * differ from a bare on-premise instance's, so a restore path reads this
+     * to choose which one it is talking to.
+     */
+    isOdoosh: boolean('is_odoosh').notNull().default(false),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
