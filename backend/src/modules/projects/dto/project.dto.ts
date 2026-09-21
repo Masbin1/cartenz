@@ -351,6 +351,28 @@ export class RemoteBranchesDto {
   @MaxLength(2048)
   @Transform(trim)
   repositoryUrl!: string;
+
+  /**
+   * Optional credential to probe a private repository with, before a
+   * connection exists to hold one. Never stored: used for this one
+   * `ls-remote` call and then discarded, exactly like the clone-time lease.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(16384)
+  credential?: string;
+
+  @IsOptional()
+  @IsIn(CREDENTIAL_KINDS, {
+    message: `credentialKind must be one of: ${CREDENTIAL_KINDS.join(', ')}`,
+  })
+  credentialKind?: CredentialKind;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4096)
+  @Transform(trim)
+  sshHostKey?: string;
 }
 
 /** Query filter for the project list. */

@@ -68,7 +68,7 @@ export class ProjectsController {
   @Post('remote-branches')
   @HttpCode(HttpStatus.OK)
   remoteBranchesFor(@CurrentUser() user: AuthenticatedUser, @Body() dto: RemoteBranchesDto) {
-    return this.projects.remoteBranchesFor(user, dto.repositoryUrl);
+    return this.projects.remoteBranchesFor(user, dto);
   }
 
   /**

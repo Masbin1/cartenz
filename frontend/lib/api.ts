@@ -446,8 +446,17 @@ export const api = {
     }) => request<ProjectDetail>('/projects/ai', { method: 'POST', body }),
 
     /** The branches a repository advertises, before the project exists. */
-    remoteBranchesFor: (body: { repositoryUrl: string }) =>
-      request<{ branches: string[] }>('/projects/remote-branches', { method: 'POST', body }),
+    remoteBranchesFor: (body: {
+      repositoryUrl: string;
+      /**
+       * Optional. A private repository cannot be probed without one, and there is
+       * no connection yet to hold a credential (ADR-021). Used for this single
+       * `ls-remote` and not stored.
+       */
+      credential?: string;
+      credentialKind?: 'token' | 'ssh_key';
+      sshHostKey?: string;
+    }) => request<{ branches: string[] }>('/projects/remote-branches', { method: 'POST', body }),
 
     /** The folders an on-premise project may be pointed at. */
     onPremiseLocations: () =>

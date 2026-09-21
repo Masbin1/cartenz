@@ -33,6 +33,7 @@ import {
 import {
   REPOSITORY_BACKED_PROJECT_TYPES,
   DEFAULT_ODOO_EDITION,
+  type CredentialKind,
   type OdooEdition,
   type ProjectProvisioningStatus,
   type ProjectType,
@@ -363,11 +364,14 @@ export class ProjectsService {
    * surface, so it goes through the same `assertSafeRemoteUrl` the clone path
    * uses - no scheme is reachable here that is not reachable there.
    */
-  private async readRemoteBranches(repositoryUrl: string): Promise<readonly string[]> {
+  private async readRemoteBranches(
+    repositoryUrl: string,
+    credential?: { kind: CredentialKind; value: string; hostKey?: string | null } | null,
+  ): Promise<readonly string[]> {
     this.assertRepositoryUrl(repositoryUrl);
 
     try {
-      return await this.git.listRemoteBranches(repositoryUrl);
+      return await this.git.listRemoteBranches(repositoryUrl, { credential: credential ?? null });
     } catch (error) {
       // A private or mistyped repository is the caller's problem to correct, not
       // a platform fault - and the portal falls back to typing a branch, so the
@@ -377,15 +381,32 @@ export class ProjectsService {
     }
   }
 
-  /** Branch probe for the project-creation form, before a project exists. */
+  /**
+   * Branch probe for the project-creation form, before a project exists.
+   *
+   * A credential supplied here is used for this one `ls-remote` and discarded:
+   * nothing is stored, and the connection created later holds whatever the
+   * operator saves at that point. Without it a private repository could never be
+   * read before the project exists, which is the moment the form needs it.
+   */
   async remoteBranchesFor(
     user: AuthenticatedUser,
-    repositoryUrl: string,
+    dto: { repositoryUrl: string; credential?: string; credentialKind?: CredentialKind; sshHostKey?: string },
   ): Promise<{ branches: readonly string[] }> {
     // No project exists yet, so there is no grant to check. Any signed-in caller
     // may probe a repository URL they are about to connect.
     void user;
-    return { branches: await this.readRemoteBranches(repositoryUrl) };
+
+    const credential =
+      dto.credential && dto.credential.length > 0
+        ? {
+            kind: dto.credentialKind ?? 'token',
+            value: dto.credential,
+            hostKey: dto.sshHostKey ?? null,
+          }
+        : null;
+
+    return { branches: await this.readRemoteBranches(dto.repositoryUrl, credential) };
   }
 
   /**

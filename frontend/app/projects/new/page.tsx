@@ -39,6 +39,20 @@ function databaseFromOdooUrl(url: string): string {
   }
 }
 
+/**
+ * True when a repository URL names an SSH remote — either the `ssh://` scheme
+ * or git's scp-like `git@host:path` form, which has no scheme at all.
+ *
+ * Worth a function because the two forms look nothing alike, and telling them
+ * apart decides whether the credential is presented as a token or a key.
+ */
+function usesSshRemote(repositoryUrl: string): boolean {
+  const trimmed = repositoryUrl.trim();
+  if (trimmed.startsWith('ssh://')) return true;
+  // scp-like: user@host:path, with no scheme and no slash before the colon.
+  return /^[^/@\s]+@[^/:\s]+:/.test(trimmed);
+}
+
 type Flow = 'connect' | 'ai';
 
 /**
@@ -255,8 +269,15 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
     setBranchError(null);
 
     try {
+      // A private repository cannot be read without a credential, and no
+      // connection exists yet to hold one (ADR-021) — the token/key typed
+      // into the form below is sent for this one probe and never stored here.
+      // The kind follows the URL's own scheme: an `ssh://` or `git@host:path`
+      // remote is reached with a key, everything else with an HTTPS token.
       const { branches: found } = await api.projects.remoteBranchesFor({
         repositoryUrl: form.repositoryUrl,
+        credential: form.credential.trim().length > 0 ? form.credential.trim() : undefined,
+        credentialKind: usesSshRemote(form.repositoryUrl) ? 'ssh_key' : 'token',
       });
 
       setBranches(found);
@@ -562,7 +583,8 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
               />
               <p className="mt-1.5 text-2xs text-content-subtle">
                 Encrypted under a key unique to this project and stored by reference. It is never
-                returned by the API, written to a log, or sent to an AI provider.
+                returned by the API, written to a log, or sent to an AI provider. Also used to read
+                branches from a private repository above, for this one check only.
               </p>
             </div>
           </>
