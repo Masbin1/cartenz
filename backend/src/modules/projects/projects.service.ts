@@ -1486,7 +1486,7 @@ export class ProjectsService {
       requireAdmin: true,
     });
 
-    const credentialKind = dto.credentialKind ?? 'token';
+    const credentialKind = dto.credentialKind ?? this.inferCredentialKind(dto);
 
     /**
      * An Odoo Online connection is normalised and proven before it is stored.
@@ -1548,6 +1548,37 @@ export class ProjectsService {
     });
 
     return { ...connection, hasCredentials: secretRef !== null };
+  }
+
+  /**
+   * What a supplied connection credential is, decided from the remote it is for.
+   *
+   * `token` was the old default, and it was wrong for the case it mattered: the
+   * connect-existing form pastes an SSH private key for a repository whose URL is
+   * `git@host:owner/repo.git`, so the key was stored as a token and presented to
+   * the HTTPS askpass helper - while git was talking SSH. The push then failed
+   * with an authentication error naming nothing the operator had done.
+   *
+   * An explicit `credentialKind` still wins; this only covers the omitted case.
+   * The URL decides because the scheme is what git itself switches on: an `ssh://`
+   * remote (or git's scp-like `user@host:path`) is reached with a key, everything
+   * else with an HTTPS token. A URL that cannot be parsed falls back to `token`,
+   * which is the previous behaviour rather than a new failure.
+   */
+  private inferCredentialKind(dto: CreateConnectionDto): CredentialKind {
+    const repositoryUrl =
+      typeof dto.metadata?.repositoryUrl === 'string' ? dto.metadata.repositoryUrl : null;
+    if (!repositoryUrl) return 'token';
+
+    try {
+      return assertSafeRemoteUrl(repositoryUrl, { allowLocal: false }).scheme === 'ssh'
+        ? 'ssh_key'
+        : 'token';
+    } catch {
+      // A refused URL is the URL validator's complaint to make, not this
+      // function's, and it will be made when the connection is used.
+      return 'token';
+    }
   }
 
   /**

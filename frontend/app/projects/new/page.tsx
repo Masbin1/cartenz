@@ -422,6 +422,10 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
         await api.projects.createConnection(project.id, {
           connectionType: form.connectionType,
           credential: form.credential,
+          // Sent explicitly so an SSH key is not stored as a token (ADR-021):
+          // the kind decides whether the credential is handed to ssh or to the
+          // HTTPS askpass helper, and only the form knows which was pasted.
+          credentialKind: usesSshRemote(form.repositoryUrl) ? 'ssh_key' : 'token',
           metadata: { repositoryUrl: form.repositoryUrl },
         });
       }

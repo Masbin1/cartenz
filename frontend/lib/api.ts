@@ -568,7 +568,19 @@ export const api = {
 
     createConnection: (
       projectId: string,
-      body: { connectionType: string; credential?: string; metadata?: Record<string, unknown> },
+      body: {
+        connectionType: string;
+        credential?: string;
+        /**
+         * What the credential is (ADR-021). A token for HTTPS; an SSH private
+         * key for an `ssh://` or `git@host:path` remote. Omitted, the server
+         * infers it from the repository URL — but sending it explicitly keeps
+         * the two from disagreeing when both are known here.
+         */
+        credentialKind?: 'token' | 'ssh_key';
+        sshHostKey?: string;
+        metadata?: Record<string, unknown>;
+      },
     ) => request<ProjectConnectionResponse>(`/projects/${projectId}/connections`, {
       method: 'POST',
       body,
