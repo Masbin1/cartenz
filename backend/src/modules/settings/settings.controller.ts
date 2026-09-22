@@ -27,7 +27,16 @@ import {
   UpdateOdooVersionRepositoryDto,
 } from './dto/odoo-versions.dto';
 import { ModelProviderResolver } from '../../agent/model/model-provider-resolver';
+import { GitService } from '../../agent/git/git.service';
+import { GitCredentialsService } from './git-credentials.service';
+import {
+  CreateGitCredentialDto,
+  TestGitCredentialDto,
+  UpdateGitCredentialDto,
+} from './dto/git-credentials.dto';
 import { AuthorizationService } from '../../core/authz/authorization.service';
+import { AuditService } from '../../core/audit/audit.service';
+import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import { CurrentUser } from '../../core/http/current-user.decorator';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import type { OdooEdition } from '../../core/enums';
@@ -54,8 +63,11 @@ export class SettingsController {
     private readonly modelSettings: ModelSettingsService,
     private readonly odooSettings: OdooSettingsService,
     private readonly odooVersions: OdooVersionsService,
+    private readonly gitCredentials: GitCredentialsService,
+    private readonly git: GitService,
     private readonly providers: ModelProviderResolver,
     private readonly authz: AuthorizationService,
+    private readonly audit: AuditService,
   ) {}
 
   @Get('model-providers')
@@ -225,5 +237,111 @@ export class SettingsController {
   ) {
     await this.authz.requireAdmin(user);
     return this.providers.testRow(rowId, user.userId);
+  }
+
+  /**
+   * Deployment-wide git credentials (ADR-058).
+   *
+   * Registered once here, then used as the default whenever a project-creation
+   * form needs to read a private repository — so the same SSH key is not pasted
+   * into every form, which is where a paste that loses its line breaks produced
+   * `Load key "...": error in libcrypto` and read like a GitHub permissions fault.
+   *
+   * Readable by any signed-in account because the creation form needs the list
+   * to offer a choice; writable only by an admin, because a credential stored
+   * here is one every project can reach a remote with. No response ever contains
+   * the value: the shape has nowhere to put one.
+   */
+  @Get('git-credentials')
+  async listGitCredentials() {
+    return { credentials: await this.gitCredentials.list() };
+  }
+
+  @Post('git-credentials')
+  @HttpCode(HttpStatus.CREATED)
+  async addGitCredential(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateGitCredentialDto,
+  ) {
+    await this.authz.requireAdmin(user);
+    return this.gitCredentials.create(user.userId, dto);
+  }
+
+  @Patch('git-credentials/:id')
+  async updateGitCredential(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateGitCredentialDto,
+  ) {
+    await this.authz.requireAdmin(user);
+    return this.gitCredentials.update(user.userId, id, dto);
+  }
+
+  @Delete('git-credentials/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeGitCredential(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    await this.authz.requireAdmin(user);
+    await this.gitCredentials.remove(user.userId, id);
+  }
+
+  /**
+   * Proves a registered credential against a repository, and records the result
+   * on the row so the settings page can show whether it was ever confirmed.
+   *
+   * Declared before `:id/test` has no equivalent here (there is only one POST
+   * under this path), but the pattern of testing rather than trusting follows
+   * `model-providers/test`: the value of an endpoint like this is that it fails
+   * here, on the settings page, rather than on the first task of a project.
+   */
+  @Post('git-credentials/:id/test')
+  async testGitCredential(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: TestGitCredentialDto,
+  ) {
+    await this.authz.requireAdmin(user);
+
+    const credential = await this.gitCredentials.resolveForHost({
+      credentialId: id,
+      host: this.gitCredentials.hostOf(dto.repositoryUrl),
+    });
+
+    if (!credential) {
+      // resolveForHost returning null means the row is missing or disabled; the
+      // error names which, because "it did not work" is not actionable.
+      const error = 'That credential is disabled or no longer exists.';
+      await this.gitCredentials.recordVerification(id, error);
+      return { ok: false, branches: [], error };
+    }
+
+    try {
+      const branches = await this.git.listRemoteBranches(dto.repositoryUrl, {
+        credential: { kind: credential.kind, value: credential.value },
+      });
+
+      await this.gitCredentials.recordVerification(id, null);
+      await this.audit.record({
+        event: AUDIT_EVENTS.GIT_CREDENTIAL_TESTED,
+        userId: user.userId,
+        metadata: { id, repositoryUrl: dto.repositoryUrl, ok: true, branchCount: branches.length },
+      });
+
+      return { ok: true, branches, error: null };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.gitCredentials.recordVerification(id, detail);
+      await this.audit.record({
+        event: AUDIT_EVENTS.GIT_CREDENTIAL_TESTED,
+        userId: user.userId,
+        metadata: { id, repositoryUrl: dto.repositoryUrl, ok: false },
+      });
+
+      // Returned rather than thrown: "this key cannot reach that repository" is
+      // an answer the form renders, not a failed request.
+      return { ok: false, branches: [], error: detail };
+    }
   }
 }

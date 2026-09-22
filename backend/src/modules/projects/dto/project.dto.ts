@@ -7,6 +7,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   ValidateNested,
@@ -333,6 +334,18 @@ export class CreateConnectionDto {
   @Transform(trim)
   sshHostKey?: string;
 
+  /**
+   * A credential registered in deployment settings (ADR-058) to attach to this
+   * connection instead of supplying `credential` again.
+   *
+   * The connection then stores that credential's *existing* secret reference
+   * rather than a copy, so rotating the registered key reaches every project
+   * that took the default - which is the point of registering it once.
+   */
+  @IsOptional()
+  @IsUUID()
+  credentialId?: string;
+
   /** Non-sensitive detail: host, account, repository slug. */
   @IsOptional()
   @IsObject()
@@ -373,6 +386,16 @@ export class RemoteBranchesDto {
   @MaxLength(4096)
   @Transform(trim)
   sshHostKey?: string;
+
+  /**
+   * A credential registered in deployment settings to use instead of pasting a
+   * value here (ADR-058). Resolved server-side; the caller never sees the value.
+   *
+   * An explicit `credential` still wins, so an ad-hoc probe keeps working.
+   */
+  @IsOptional()
+  @IsUUID()
+  credentialId?: string;
 }
 
 /** Query filter for the project list. */

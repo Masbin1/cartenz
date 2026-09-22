@@ -7,7 +7,7 @@ import { ApiError, api } from '@/lib/api';
 import { AppShell } from '@/components/ui/app-shell';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
-import { USER_REGIONS, USER_REGION_LABELS, type UserRegion } from '@/lib/types';
+import { USER_REGIONS, USER_REGION_LABELS, type GitCredential, type UserRegion } from '@/lib/types';
 import {
   defaultEnvironments,
   EnvironmentEditor,
@@ -220,6 +220,43 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
   const [branchError, setBranchError] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
 
+  /**
+   * Credentials registered in Settings (ADR-058), so this form does not ask for
+   * the same SSH key every time. `chosen` is '' for "use the default", which is
+   * resolved server-side and so needs no value here — that is what makes the
+   * common case zero-input.
+   */
+  const [credentials, setCredentials] = useState<GitCredential[]>([]);
+  const [chosenCredentialId, setChosenCredentialId] = useState('');
+  /** Which credential actually read the branches, so the list can say so. */
+  const [readingCredentialLabel, setReadingCredentialLabel] = useState<string | null>(null);
+
+  const defaultCredential = credentials.find((entry) => entry.isDefault && entry.enabled) ?? null;
+  const chosenCredential =
+    credentials.find((entry) => entry.id === chosenCredentialId) ?? defaultCredential;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { credentials: rows } = await api.settings.gitCredentials();
+        if (cancelled) return;
+        // Only credentials that can actually be used: a disabled one is a
+        // withdrawal, and offering it would promise something the server refuses.
+        setCredentials(rows.filter((row) => row.enabled));
+      } catch {
+        // Not fatal: the form still works by pasting a value, which is the
+        // behaviour before this feature existed.
+        if (!cancelled) setCredentials([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // On-premise: the folders a project may be pointed at, read once the type is
   // chosen. `onPremiseRoot` is undefined until read, null when disabled, and a
   // string when enabled.
@@ -267,20 +304,31 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
   const readBranches = async () => {
     setReading(true);
     setBranchError(null);
+    setReadingCredentialLabel(null);
 
     try {
-      // A private repository cannot be read without a credential, and no
-      // connection exists yet to hold one (ADR-021) — the token/key typed
-      // into the form below is sent for this one probe and never stored here.
-      // The kind follows the URL's own scheme: an `ssh://` or `git@host:path`
-      // remote is reached with a key, everything else with an HTTPS token.
-      const { branches: found } = await api.projects.remoteBranchesFor({
+      /**
+       * Precedence, and it has to match the server's (ADR-058): a value typed
+       * into this form wins, because someone who pasted one meant to use it;
+       * otherwise a credential registered in Settings is resolved server-side —
+       * the chosen one, or the default. That is what makes the common case need
+       * no credential typed here at all, and a key that is never retyped is a
+       * key that cannot lose its line breaks in a paste.
+       */
+      const typed = form.credential.trim();
+      const { branches: found, credentialLabel } = await api.projects.remoteBranchesFor({
         repositoryUrl: form.repositoryUrl,
-        credential: form.credential.trim().length > 0 ? form.credential.trim() : undefined,
-        credentialKind: usesSshRemote(form.repositoryUrl) ? 'ssh_key' : 'token',
+        credential: typed.length > 0 ? typed : undefined,
+        credentialKind: typed.length > 0
+          ? usesSshRemote(form.repositoryUrl)
+            ? 'ssh_key'
+            : 'token'
+          : undefined,
+        credentialId: typed.length > 0 ? undefined : chosenCredentialId || undefined,
       });
 
       setBranches(found);
+      setReadingCredentialLabel(credentialLabel);
       setEnvironments(defaultEnvironments(form.defaultBranch, found));
     } catch (caught) {
       setBranches(undefined);
@@ -418,13 +466,27 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
             login: odooOnline.login.trim(),
           },
         });
-      } else if (form.credential.trim().length > 0) {
+      } else {
+        /**
+         * No value typed, so the connection attaches a credential registered in
+         * Settings (ADR-058) — the chosen one, or the default whose host list
+         * covers this remote. The connection then stores that credential's own
+         * secret reference, so rotating it in Settings reaches this project
+         * without anyone editing it here.
+         *
+         * Nothing is sent when there is no registered credential either: an empty
+         * connection is a valid state (status `pending`), and inventing one would
+         * make the project look connected when it is not.
+         */
+        const credentialId = chosenCredentialId || chosenCredential?.id || undefined;
+
         await api.projects.createConnection(project.id, {
           connectionType: form.connectionType,
-          credential: form.credential,
+          credentialId,
           // Sent explicitly so an SSH key is not stored as a token (ADR-021):
           // the kind decides whether the credential is handed to ssh or to the
-          // HTTPS askpass helper, and only the form knows which was pasted.
+          // HTTPS askpass helper. A registered credential's own kind wins
+          // server-side, which is the case this branch exists for.
           credentialKind: usesSshRemote(form.repositoryUrl) ? 'ssh_key' : 'token',
           metadata: { repositoryUrl: form.repositoryUrl },
         });
@@ -534,6 +596,11 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
                   {branchError} The branch fields below stay typeable.
                 </p>
               ) : null}
+              {!branchError && readingCredentialLabel ? (
+                <p className="mt-1.5 text-2xs text-content-subtle">
+                  Read using the registered credential — {readingCredentialLabel}.
+                </p>
+              ) : null}
             </div>
 
             <div>
@@ -573,9 +640,47 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
               </select>
             </div>
 
+            {credentials.length > 0 ? (
+              <div className="sm:col-span-2">
+                <label htmlFor="credentialChoice" className="field-label">
+                  Credential
+                </label>
+                <select
+                  id="credentialChoice"
+                  value={chosenCredentialId}
+                  onChange={(event) => setChosenCredentialId(event.target.value)}
+                  className="field-input"
+                >
+                  <option value="">
+                    {defaultCredential
+                      ? `Use the default — ${defaultCredential.label}`
+                      : 'No default registered'}
+                  </option>
+                  {credentials.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.label} ({entry.credentialKind === 'ssh_key' ? 'SSH key' : 'token'})
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-2xs text-content-subtle">
+                  Registered in Settings, so the same key is not pasted for every project. The
+                  connection keeps a reference to it, so rotating it there reaches this project too.
+                  {chosenCredential?.hosts.length
+                    ? ` Usable for: ${chosenCredential.hosts.join(', ')}.`
+                    : ''}
+                </p>
+              </div>
+            ) : null}
+
             <div className="sm:col-span-2">
               <label htmlFor="credential" className="field-label">
-                {usesSshRemote(form.repositoryUrl) ? 'SSH private key (optional)' : 'Access token (optional)'}
+                {usesSshRemote(form.repositoryUrl)
+                  ? credentials.length > 0
+                    ? 'SSH private key (leave blank to use the one above)'
+                    : 'SSH private key (optional)'
+                  : credentials.length > 0
+                    ? 'Access token (leave blank to use the one above)'
+                    : 'Access token (optional)'}
               </label>
               {usesSshRemote(form.repositoryUrl) ? (
                 // A private key spans multiple lines, and a single-line <input> silently
@@ -589,7 +694,7 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
                   className="field-input font-mono text-xs"
                   rows={6}
                   spellCheck={false}
-                  placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----'}
+                  placeholder={'[REDACTED PRIVATE KEY]'}
                 />
               ) : (
                 <input
@@ -605,6 +710,9 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
                 Encrypted under a key unique to this project and stored by reference. It is never
                 returned by the API, written to a log, or sent to an AI provider. Also used to read
                 branches from a private repository above, for this one check only.
+                {credentials.length > 0
+                  ? ' Filling this in overrides the credential chosen above for this project only.'
+                  : ''}
               </p>
             </div>
           </>

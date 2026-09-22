@@ -618,6 +618,34 @@ export interface OdooVersionRepository {
   updatedAt: string;
 }
 
+/**
+ * A git credential registered once for the whole deployment (ADR-058).
+ *
+ * There is no `value` field, and that is deliberate rather than an omission:
+ * the key is write-only across the API, so the shape sent to the browser has
+ * nowhere to put one. `hasValue` is the only thing said about it.
+ */
+export interface GitCredential {
+  id: string;
+  label: string;
+  credentialKind: 'token' | 'ssh_key';
+  /** Hosts this credential may be presented to. Empty means any host. */
+  hosts: string[];
+  isDefault: boolean;
+  enabled: boolean;
+  note: string | null;
+  hasValue: boolean;
+  /** When this credential was last proved against a repository, if ever. */
+  lastVerifiedAt: string | null;
+  /** Why the last verification failed. Null after a success. */
+    lastVerifyError: string | null;
+  createdAt: string;
+}
+
+export interface GitCredentialList {
+  credentials: GitCredential[];
+}
+
 /** A document attached to a project for the agent to read (ADR-030). */
 export interface ProjectDocument {
   id: string;

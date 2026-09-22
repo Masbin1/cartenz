@@ -5,6 +5,8 @@ import type {
   AuthTokens,
   CurrentUser,
   EnvironmentKind,
+  GitCredential,
+  GitCredentialList,
   ModelProviderId,
   ModelProviderList,
   ModelProviderRow,
@@ -394,6 +396,53 @@ export const api = {
         body,
       }),
 
+    /**
+     * Git credentials registered once for the whole deployment (ADR-058).
+     *
+     * Readable by any signed-in account because the project-creation form has to
+     * offer the choice; every write is admin-only server-side, so a 403 here
+     * means the viewer's role rather than a client bug. No response carries the
+     * value — the shape has nowhere to put one.
+     */
+    gitCredentials: () => request<GitCredentialList>('/settings/git-credentials'),
+
+    addGitCredential: (body: {
+      label: string;
+      value: string;
+      credentialKind?: 'token' | 'ssh_key';
+      hosts?: string[];
+      isDefault?: boolean;
+      note?: string;
+    }) => request<GitCredential>('/settings/git-credentials', { method: 'POST', body }),
+
+    updateGitCredential: (
+      id: string,
+      body: {
+        label?: string;
+        /** Omitted keeps the stored value: it can never be read back. */
+        value?: string;
+        credentialKind?: 'token' | 'ssh_key';
+        hosts?: string[];
+        isDefault?: boolean;
+        enabled?: boolean;
+        note?: string;
+      },
+    ) => request<GitCredential>(`/settings/git-credentials/${id}`, { method: 'PATCH', body }),
+
+    removeGitCredential: (id: string) =>
+      request<void>(`/settings/git-credentials/${id}`, { method: 'DELETE' }),
+
+    /**
+     * Proves a registered credential against a repository and records the
+     * outcome. Returns `ok: false` with the reason rather than throwing, because
+     * "this key cannot reach that repository" is something the form renders.
+     */
+    testGitCredential: (id: string, body: { repositoryUrl: string }) =>
+      request<{ ok: boolean; branches: string[]; error: string | null }>(
+        `/settings/git-credentials/${id}/test`,
+        { method: 'POST', body },
+      ),
+
     auditLogs: (limit = 50) => request<AuditLogEntry[]>(`/settings/audit-logs?limit=${limit}`),
   },
 
@@ -456,7 +505,13 @@ export const api = {
       credential?: string;
       credentialKind?: 'token' | 'ssh_key';
       sshHostKey?: string;
-    }) => request<{ branches: string[] }>('/projects/remote-branches', { method: 'POST', body }),
+      /** A registered credential to resolve server-side (ADR-058). */
+      credentialId?: string;
+    }) =>
+      request<{ branches: string[]; credentialLabel: string | null }>(
+        '/projects/remote-branches',
+        { method: 'POST', body },
+      ),
 
     /** The folders an on-premise project may be pointed at. */
     onPremiseLocations: () =>
@@ -579,6 +634,13 @@ export const api = {
          */
         credentialKind?: 'token' | 'ssh_key';
         sshHostKey?: string;
+        /**
+         * A credential registered in deployment settings (ADR-058) to attach
+         * instead of supplying `credential` again. The server stores that
+         * credential's existing secret reference, so rotating it reaches this
+         * project without editing it.
+         */
+        credentialId?: string;
         metadata?: Record<string, unknown>;
       },
     ) => request<ProjectConnectionResponse>(`/projects/${projectId}/connections`, {

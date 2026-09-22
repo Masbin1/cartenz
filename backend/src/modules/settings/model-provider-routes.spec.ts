@@ -5,10 +5,13 @@ import { SettingsController } from './settings.controller';
 import { ModelSettingsService } from './model-settings.service';
 import { OdooSettingsService } from './odoo-settings.service';
 import { OdooVersionsService } from './odoo-versions.service';
+import { GitCredentialsService } from './git-credentials.service';
 import { ModelProviderResolver } from '../../agent/model/model-provider-resolver';
 import { AuthorizationService } from '../../core/authz/authorization.service';
 import { AUTH_USER_KEY } from '../../core/http/current-user.decorator';
 import type { AuthenticatedRequest } from '../../core/http/current-user.decorator';
+import { GitService } from '../../agent/git/git.service';
+import { AuditService } from '../../core/audit/audit.service';
 
 /**
  * Nest matches routes in declaration order, so a literal path declared after a
@@ -32,6 +35,20 @@ describe('model provider route matching', () => {
         { provide: ModelSettingsService, useValue: { reorder, updateRow } },
         { provide: OdooSettingsService, useValue: { get: jest.fn(), update: jest.fn() } },
         { provide: OdooVersionsService, useValue: { list: jest.fn() } },
+        {
+          provide: GitCredentialsService,
+          useValue: {
+            list: jest.fn(),
+            create: jest.fn(),
+            update: jest.fn(),
+            remove: jest.fn(),
+            resolveForHost: jest.fn(),
+            hostOf: jest.fn(),
+            recordVerification: jest.fn(),
+          },
+        },
+        { provide: GitService, useValue: { listRemoteBranches: jest.fn() } },
+        { provide: AuditService, useValue: { record: jest.fn() } },
         { provide: ModelProviderResolver, useValue: { invalidate: jest.fn() } },
         { provide: AuthorizationService, useValue: { requireAdmin: jest.fn() } },
       ],

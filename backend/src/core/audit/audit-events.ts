@@ -152,6 +152,17 @@ export const AUDIT_EVENTS = {
   ODOO_VERSION_REPOSITORY_UPDATED: 'odoo_version_repository.updated',
   ODOO_VERSION_REPOSITORY_REMOVED: 'odoo_version_repository.removed',
 
+  /**
+   * A deployment-wide git credential was registered, changed, or removed
+   * (ADR-058). Recorded with the label and kind only: the value is never in an
+   * audit record, and `valueReplaced` is a boolean rather than the value, so the
+   * log answers "did the key change" without holding one.
+   */
+  GIT_CREDENTIAL_CREATED: 'git_credential.created',
+  GIT_CREDENTIAL_UPDATED: 'git_credential.updated',
+  GIT_CREDENTIAL_REMOVED: 'git_credential.removed',
+  GIT_CREDENTIAL_TESTED: 'git_credential.tested',
+
   AUTHORIZATION_DENIED: 'authorization.denied',
 } as const;
 

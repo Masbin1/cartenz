@@ -8,6 +8,7 @@ import { AccessRequestsPanel } from '@/components/projects/access-requests-panel
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
 import type {
+  GitCredential,
   ModelProviderId,
   ModelProviderList,
   ModelProviderPreset,
@@ -181,18 +182,37 @@ export default function SettingsPage() {
   const [testResults, setTestResults] = useState<Record<string, ModelProviderTestResult>>({});
   const [detachedResults, setDetachedResults] = useState<ModelProviderTestResult[] | null>(null);
 
+  // Git credentials (ADR-058)
+  const [gitCredentials, setGitCredentials] = useState<GitCredential[]>([]);
+  const [addingCredential, setAddingCredential] = useState(false);
+  const [credentialId, setCredentialId] = useState<string | null>(null);
+  const [testingCredentialId, setTestingCredentialId] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ id: string; ok: boolean; detail: string } | null>(null);
+  const [credentialBusy, setCredentialBusy] = useState(false);
+  const [credentialForm, setCredentialForm] = useState({
+    label: '',
+    credentialKind: 'ssh_key' as 'ssh_key' | 'token',
+    value: '',
+    hosts: '',
+    isDefault: false,
+    note: '',
+  });
+  const [testRepoUrl, setTestRepoUrl] = useState('');
+
   const canEdit = user?.isAdmin ?? false;
 
   const load = useCallback(async () => {
     try {
-      const [providers, odoo, versions] = await Promise.all([
+      const [providers, odoo, versions, credentials] = await Promise.all([
         api.settings.modelProviders(),
         api.settings.odooSettings(),
         api.settings.odooVersions(),
+        api.settings.gitCredentials(),
       ]);
       setList(providers);
       setOdoo(odoo);
       setVersions(versions);
+      setGitCredentials(credentials.credentials);
       setOdooForm({
         basePath: odoo.basePath.path ?? '',
         enterprisePath: odoo.enterprisePath.path ?? '',
@@ -277,6 +297,157 @@ export default function SettingsPage() {
       setError(caught instanceof ApiError ? caught.message : 'The version could not be updated.');
     } finally {
       setVersionBusy(false);
+    }
+  };
+
+  /**
+   * Registers a deployment-wide git credential (ADR-058). The value is sealed
+   * server-side and never comes back — a save that succeeds shows the label and
+   * kind only, which is also what every later read of this list returns.
+   */
+  const startAddCredential = () => {
+    setCredentialId(null);
+    setCredentialForm({
+      label: '',
+      credentialKind: 'ssh_key',
+      value: '',
+      hosts: '',
+      isDefault: gitCredentials.length === 0,
+      note: '',
+    });
+    setAddingCredential(true);
+  };
+
+  const startEditCredential = (row: GitCredential) => {
+    setCredentialId(row.id);
+    setCredentialForm({
+      label: row.label,
+      credentialKind: row.credentialKind,
+      value: '',
+      hosts: row.hosts.join(', '),
+      isDefault: row.isDefault,
+      note: row.note ?? '',
+    });
+    setAddingCredential(true);
+  };
+
+  const closeCredentialForm = () => {
+    setAddingCredential(false);
+    setCredentialId(null);
+  };
+
+  const saveCredential = async () => {
+    setCredentialBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const hosts = credentialForm.hosts
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+
+      if (credentialId) {
+        await api.settings.updateGitCredential(credentialId, {
+          label: credentialForm.label.trim(),
+          value: credentialForm.value.trim().length > 0 ? credentialForm.value : undefined,
+          hosts,
+          isDefault: credentialForm.isDefault,
+          note: credentialForm.note.trim() || undefined,
+        });
+        setNotice(`${credentialForm.label} was updated.`);
+      } else {
+        await api.settings.addGitCredential({
+          label: credentialForm.label.trim(),
+          credentialKind: credentialForm.credentialKind,
+          value: credentialForm.value,
+          hosts,
+          isDefault: credentialForm.isDefault,
+          note: credentialForm.note.trim() || undefined,
+        });
+        setNotice(`${credentialForm.label} was registered.`);
+      }
+      await load();
+      closeCredentialForm();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The credential could not be saved.');
+    } finally {
+      setCredentialBusy(false);
+    }
+  };
+
+  const removeCredential = async (row: GitCredential) => {
+    if (!window.confirm(`Remove "${row.label}"? Any connection still using it keeps working, but a rotation will not reach it.`)) {
+      return;
+    }
+    setCredentialBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.settings.removeGitCredential(row.id);
+      await load();
+      setNotice(`${row.label} was removed.`);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The credential could not be removed.');
+    } finally {
+      setCredentialBusy(false);
+    }
+  };
+
+  const makeDefaultCredential = async (row: GitCredential) => {
+    setCredentialBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.settings.updateGitCredential(row.id, { isDefault: true });
+      await load();
+      setNotice(`${row.label} is now the default.`);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The default could not be changed.');
+    } finally {
+      setCredentialBusy(false);
+    }
+  };
+
+  const toggleCredentialEnabled = async (row: GitCredential) => {
+    setCredentialBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.settings.updateGitCredential(row.id, { enabled: !row.enabled });
+      await load();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The credential could not be updated.');
+    } finally {
+      setCredentialBusy(false);
+    }
+  };
+
+  /**
+   * Proves a registered credential actually reads a repository, rather than
+   * trusting that a paste months ago is still good. `testRepoUrl` is not
+   * stored — it exists only to give the probe somewhere to reach.
+   */
+  const testCredential = async (row: GitCredential) => {
+    if (!testRepoUrl.trim()) {
+      setError('Enter a repository URL to test against first.');
+      return;
+    }
+    setTestingCredentialId(row.id);
+    setTestResult(null);
+    setError(null);
+    try {
+      const result = await api.settings.testGitCredential(row.id, { repositoryUrl: testRepoUrl.trim() });
+      setTestResult({ id: row.id, ok: true, detail: `Read ${result.branches.length} branches.` });
+      await load();
+    } catch (caught) {
+      setTestResult({
+        id: row.id,
+        ok: false,
+        detail: caught instanceof ApiError ? caught.message : 'The credential could not reach that repository.',
+      });
+      await load();
+    } finally {
+      setTestingCredentialId(null);
     }
   };
 
@@ -984,6 +1155,313 @@ export default function SettingsPage() {
                   type="button"
                   onClick={() => setAddingVersion(false)}
                   disabled={versionBusy}
+                  className="btn-ghost"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="panel mt-5">
+        <div className="panel-header">
+          <h2 className="panel-title">Git credentials</h2>
+        </div>
+
+        <div className="space-y-3 px-4 py-4">
+          <p className="text-xs text-content-muted">
+            An SSH key or access token registered once here, so a project&apos;s repository does
+            not need one pasted into the creation form. The default is offered automatically;
+            others stay available to pick. The value is sealed and never returned by any read —
+            rotating it means saving a new one.
+          </p>
+
+          {gitCredentials.length === 0 ? (
+            <p className="text-2xs text-content-subtle">
+              No credentials registered. Every project-creation form will ask for one to be
+              pasted directly.
+            </p>
+          ) : null}
+
+          {gitCredentials.length > 0 ? (
+            <div>
+              <label htmlFor="credential-test-url" className="field-label">
+                Test against
+              </label>
+              <input
+                id="credential-test-url"
+                value={testRepoUrl}
+                onChange={(event) => setTestRepoUrl(event.target.value)}
+                placeholder="git@github.com:organisation/repository.git"
+                className="field-input font-mono text-xs"
+              />
+              <p className="mt-1.5 text-2xs text-content-subtle">
+                A repository URL to prove a credential below against, via{' '}
+                <span className="font-mono">git ls-remote</span> — nothing is cloned.
+              </p>
+            </div>
+          ) : null}
+
+          {gitCredentials.map((row) => (
+            <div
+              key={row.id}
+              className="rounded border border-surface-border bg-surface-raised px-3 py-2.5"
+            >
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        onClick={() => startEditCredential(row)}
+                        className="text-xs font-medium text-content hover:text-accent"
+                      >
+                        {row.label}
+                      </button>
+                    ) : (
+                      <span className="text-xs font-medium">{row.label}</span>
+                    )}
+                    <span className="rounded border border-surface-border px-1.5 py-0.5 text-2xs uppercase tracking-wide text-content-subtle">
+                      {row.credentialKind === 'ssh_key' ? 'SSH key' : 'token'}
+                    </span>
+                    {row.isDefault ? (
+                      <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-2xs uppercase tracking-wide text-accent">
+                        default
+                      </span>
+                    ) : null}
+                    {!row.enabled ? (
+                      <span className="rounded border border-surface-border px-1.5 py-0.5 text-2xs uppercase tracking-wide text-content-subtle">
+                        disabled
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-0.5 text-2xs text-content-subtle">
+                    {row.hosts.length > 0 ? `Usable for: ${row.hosts.join(', ')}` : 'Usable for any host'}
+                  </p>
+                  {row.note ? (
+                    <p className="mt-0.5 text-2xs text-content-subtle">{row.note}</p>
+                  ) : null}
+                  {row.lastVerifiedAt ? (
+                    <p
+                      className={`mt-0.5 text-2xs ${
+                        row.lastVerifyError ? 'text-state-failure' : 'text-content-subtle'
+                      }`}
+                    >
+                      {row.lastVerifyError
+                        ? `Last test failed: ${row.lastVerifyError}`
+                        : `Last confirmed working ${new Date(row.lastVerifiedAt).toLocaleString()}`}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-2xs text-content-subtle">Never tested.</p>
+                  )}
+                  {testResult && testResult.id === row.id ? (
+                    <p
+                      className={`mt-1 text-2xs ${testResult.ok ? 'text-state-success' : 'text-state-failure'}`}
+                    >
+                      {testResult.detail}
+                    </p>
+                  ) : null}
+                </div>
+
+                {canEdit ? (
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void testCredential(row)}
+                      disabled={credentialBusy || testingCredentialId === row.id || !row.enabled}
+                      className="text-2xs text-content-subtle hover:text-accent disabled:opacity-40"
+                    >
+                      {testingCredentialId === row.id ? 'Testing…' : 'Test'}
+                    </button>
+                    {!row.isDefault ? (
+                      <button
+                        type="button"
+                        onClick={() => void makeDefaultCredential(row)}
+                        disabled={credentialBusy || !row.enabled}
+                        className="text-2xs text-content-subtle hover:text-accent disabled:opacity-40"
+                      >
+                        Make default
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void toggleCredentialEnabled(row)}
+                      disabled={credentialBusy}
+                      className="text-2xs text-content-subtle hover:text-accent disabled:opacity-40"
+                    >
+                      {row.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void removeCredential(row)}
+                      disabled={credentialBusy}
+                      className="text-2xs text-content-subtle hover:text-state-failure disabled:opacity-40"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ))}
+
+          {canEdit && !addingCredential ? (
+            <div className="border-t border-surface-border pt-4">
+              <button type="button" onClick={startAddCredential} className="btn-secondary">
+                + Register a credential
+              </button>
+            </div>
+          ) : null}
+
+          {canEdit && addingCredential ? (
+            <div className="space-y-4 rounded border border-surface-border bg-surface-raised px-3 py-3">
+              <div>
+                <label htmlFor="credential-label" className="field-label">
+                  Label
+                </label>
+                <input
+                  id="credential-label"
+                  value={credentialForm.label}
+                  onChange={(event) =>
+                    setCredentialForm({ ...credentialForm, label: event.target.value })
+                  }
+                  disabled={credentialBusy}
+                  placeholder="GitHub - Masbin1"
+                  className="field-input"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="credential-kind" className="field-label">
+                  Kind
+                </label>
+                <select
+                  id="credential-kind"
+                  value={credentialForm.credentialKind}
+                  onChange={(event) =>
+                    setCredentialForm({
+                      ...credentialForm,
+                      credentialKind: event.target.value as 'ssh_key' | 'token',
+                    })
+                  }
+                  disabled={credentialBusy || credentialId !== null}
+                  className="field-input"
+                >
+                  <option value="ssh_key">SSH private key</option>
+                  <option value="token">Access token</option>
+                </select>
+                {credentialId !== null ? (
+                  <p className="mt-1.5 text-2xs text-content-subtle">
+                    The kind cannot change on an existing credential — register a new one instead.
+                  </p>
+                ) : null}
+              </div>
+
+              <div>
+                <label htmlFor="credential-value" className="field-label">
+                  {credentialForm.credentialKind === 'ssh_key' ? 'Private key' : 'Access token'}
+                  {credentialId !== null ? ' (leave blank to keep the current one)' : ''}
+                </label>
+                {credentialForm.credentialKind === 'ssh_key' ? (
+                  // A private key spans multiple lines; a single-line input drops them
+                  // on paste and produces "error in libcrypto" later, on a project.
+                  <textarea
+                    id="credential-value"
+                    value={credentialForm.value}
+                    onChange={(event) =>
+                      setCredentialForm({ ...credentialForm, value: event.target.value })
+                    }
+                    disabled={credentialBusy}
+                    className="field-input font-mono text-xs"
+                    rows={6}
+                    spellCheck={false}
+                    placeholder={'[REDACTED PRIVATE KEY]'}
+                  />
+                ) : (
+                  <input
+                    id="credential-value"
+                    type="password"
+                    value={credentialForm.value}
+                    onChange={(event) =>
+                      setCredentialForm({ ...credentialForm, value: event.target.value })
+                    }
+                    disabled={credentialBusy}
+                    className="field-input font-mono text-xs"
+                  />
+                )}
+                <p className="mt-1.5 text-2xs text-content-subtle">
+                  Even a flattened paste (line breaks lost) is repaired automatically before it is
+                  sealed — it is never returned or logged.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="credential-hosts" className="field-label">
+                  Hosts (optional)
+                </label>
+                <input
+                  id="credential-hosts"
+                  value={credentialForm.hosts}
+                  onChange={(event) =>
+                    setCredentialForm({ ...credentialForm, hosts: event.target.value })
+                  }
+                  disabled={credentialBusy}
+                  placeholder="github.com, gitlab.com"
+                  className="field-input font-mono text-xs"
+                />
+                <p className="mt-1.5 text-2xs text-content-subtle">
+                  Comma-separated. Left empty, this credential is offered for any host.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="credential-note" className="field-label">
+                  Note
+                </label>
+                <input
+                  id="credential-note"
+                  value={credentialForm.note}
+                  onChange={(event) =>
+                    setCredentialForm({ ...credentialForm, note: event.target.value })
+                  }
+                  disabled={credentialBusy}
+                  placeholder="Optional"
+                  className="field-input"
+                />
+              </div>
+
+              <label className="flex items-center gap-1.5 text-2xs text-content-muted">
+                <input
+                  type="checkbox"
+                  checked={credentialForm.isDefault}
+                  onChange={(event) =>
+                    setCredentialForm({ ...credentialForm, isDefault: event.target.checked })
+                  }
+                  disabled={credentialBusy}
+                />
+                Use as the default credential
+              </label>
+
+              <div className="flex items-center gap-2 border-t border-surface-border pt-3">
+                <button
+                  type="button"
+                  onClick={() => void saveCredential()}
+                  disabled={
+                    credentialBusy ||
+                    !credentialForm.label.trim() ||
+                    (credentialId === null && !credentialForm.value.trim())
+                  }
+                  className="btn-primary"
+                >
+                  {credentialBusy ? <Spinner /> : null}
+                  {credentialBusy ? 'Saving' : credentialId ? 'Save' : 'Register'}
+                </button>
+                <button
+                  type="button"
+                  onClick={closeCredentialForm}
+                  disabled={credentialBusy}
                   className="btn-ghost"
                 >
                   Cancel

@@ -2,9 +2,11 @@ import { Global, Module } from '@nestjs/common';
 import { ModelSettingsService } from './model-settings.service';
 import { OdooSettingsService } from './odoo-settings.service';
 import { OdooVersionsService } from './odoo-versions.service';
+import { GitCredentialsService } from './git-credentials.service';
 
 /**
- * Deployment settings: the model provider chain and the Odoo estate.
+ * Deployment settings: the model provider chain, the Odoo estate, and
+ * registered git credentials.
  *
  * Global, and separate from the controller that exposes it, because the agent
  * runtime needs `ModelSettingsService` and the controller needs
@@ -13,7 +15,17 @@ import { OdooVersionsService } from './odoo-versions.service';
  */
 @Global()
 @Module({
-  providers: [ModelSettingsService, OdooSettingsService, OdooVersionsService],
-  exports: [ModelSettingsService, OdooSettingsService, OdooVersionsService],
+  providers: [
+    ModelSettingsService,
+    OdooSettingsService,
+    OdooVersionsService,
+    GitCredentialsService,
+  ],
+  exports: [
+    ModelSettingsService,
+    OdooSettingsService,
+    OdooVersionsService,
+    GitCredentialsService,
+  ],
 })
 export class ModelSettingsModule {}

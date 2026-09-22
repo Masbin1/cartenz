@@ -60,6 +60,7 @@ import {
 } from './project-environments.service';
 import { OdooSettingsService } from '../settings/odoo-settings.service';
 import { OdooVersionsService } from '../settings/odoo-versions.service';
+import { GitCredentialsService } from '../settings/git-credentials.service';
 import { ProjectProvisioningService } from './project-provisioning.service';
 import { ProjectProvisioningQueue } from './project-provisioning.queue';
 import type {
@@ -158,6 +159,7 @@ export class ProjectsService {
     private readonly git: GitService,
     private readonly odooSettings: OdooSettingsService,
     private readonly odooVersions: OdooVersionsService,
+    private readonly gitCredentials: GitCredentialsService,
     private readonly odooOnline: OdooOnlineClient,
     private readonly provisioning: ProjectProvisioningService,
     private readonly provisioningQueue: ProjectProvisioningQueue,
@@ -388,25 +390,75 @@ export class ProjectsService {
    * nothing is stored, and the connection created later holds whatever the
    * operator saves at that point. Without it a private repository could never be
    * read before the project exists, which is the moment the form needs it.
+   *
+   * When no credential is supplied, a credential registered in deployment
+   * settings is used (ADR-058) — a named one when the form chose it, otherwise
+   * the default. That is what makes registering a key once enough: the form no
+   * longer has to carry it, and a key that is never retyped is a key that cannot
+   * lose its line breaks in a paste.
    */
   async remoteBranchesFor(
     user: AuthenticatedUser,
-    dto: { repositoryUrl: string; credential?: string; credentialKind?: CredentialKind; sshHostKey?: string },
-  ): Promise<{ branches: readonly string[] }> {
+    dto: {
+      repositoryUrl: string;
+      credential?: string;
+      credentialKind?: CredentialKind;
+      sshHostKey?: string;
+      credentialId?: string;
+    },
+  ): Promise<{ branches: readonly string[]; credentialLabel: string | null }> {
     // No project exists yet, so there is no grant to check. Any signed-in caller
     // may probe a repository URL they are about to connect.
     void user;
 
-    const credential =
-      dto.credential && dto.credential.length > 0
-        ? {
-            kind: dto.credentialKind ?? 'token',
-            value: dto.credential,
-            hostKey: dto.sshHostKey ?? null,
-          }
-        : null;
+    if (dto.credential && dto.credential.length > 0) {
+      const branches = await this.readRemoteBranches(dto.repositoryUrl, {
+        kind: dto.credentialKind ?? this.inferCredentialKindFromUrl(dto.repositoryUrl),
+        value: dto.credential,
+        hostKey: dto.sshHostKey ?? null,
+      });
+      // An ad-hoc value has no label: there is no stored row to name.
+      return { branches, credentialLabel: null };
+    }
 
-    return { branches: await this.readRemoteBranches(dto.repositoryUrl, credential) };
+    const registered = await this.gitCredentials.resolveForHost({
+      credentialId: dto.credentialId ?? null,
+      host: this.gitCredentials.hostOf(dto.repositoryUrl),
+    });
+
+    if (!registered) {
+      return { branches: await this.readRemoteBranches(dto.repositoryUrl, null), credentialLabel: null };
+    }
+
+    const branches = await this.readRemoteBranches(dto.repositoryUrl, {
+      kind: registered.kind,
+      value: registered.value,
+      hostKey: dto.sshHostKey ?? null,
+    });
+
+    // The label is returned so the form can say *which* credential read the
+    // branches — an operator seeing a list needs to know what produced it.
+    const label = registered.credentialId
+      ? (await this.gitCredentials.list()).find((row) => row.id === registered.credentialId)?.label ??
+        null
+      : null;
+
+    return { branches, credentialLabel: label };
+  }
+
+  /**
+   * The credential kind a URL implies, for a caller that supplied a value but no
+   * kind. Mirrors `inferCredentialKind` below, which does the same for a
+   * connection's metadata.
+   */
+  private inferCredentialKindFromUrl(repositoryUrl: string): CredentialKind {
+    try {
+      return assertSafeRemoteUrl(repositoryUrl, { allowLocal: false }).scheme === 'ssh'
+        ? 'ssh_key'
+        : 'token';
+    } catch {
+      return 'token';
+    }
   }
 
   /**
@@ -1503,7 +1555,23 @@ export class ProjectsService {
         ? await this.verifiedOdooOnlineMetadata(dto)
         : (dto.metadata ?? {});
 
+    /**
+     * Where the connection's secret comes from, in precedence order (ADR-058):
+     *
+     *  1. A value supplied on this request, sealed under the project's own key.
+     *  2. A registered credential the caller named, or the one whose `hosts`
+     *     list covers this remote - the default. Its *existing* reference is
+     *     stored rather than a copy, so rotating the registered key reaches this
+     *     project without anyone editing it. That sharing is the point.
+     *  3. Nothing, leaving the connection `pending`.
+     *
+     * A registered credential is only attached when the remote's host is one it
+     * was registered for (or its list is empty), so a default meant for
+     * github.com is not silently attached to a gitlab.com remote.
+     */
     let secretRef: string | null = null;
+    let adoptedCredentialId: string | null = null;
+
     if (dto.credential && dto.credential.length > 0) {
       const reference = await this.secrets.write({
         projectId,
@@ -1511,7 +1579,38 @@ export class ProjectsService {
         value: dto.credential,
       });
       secretRef = reference.ref;
+    } else {
+      const repositoryUrl =
+        typeof metadata.repositoryUrl === 'string' ? metadata.repositoryUrl : null;
+
+      const registered = await this.gitCredentials
+        .resolveForHost({
+          credentialId: dto.credentialId ?? null,
+          host: repositoryUrl ? this.gitCredentials.hostOf(repositoryUrl) : null,
+        })
+        // A registered default that does not fit this remote is not a reason to
+        // fail the connection: the connection is still valid and the operator may
+        // add a credential to it later.
+        .catch(() => null);
+
+      if (registered?.secretRef) {
+        secretRef = registered.secretRef;
+        adoptedCredentialId = registered.credentialId;
+      }
     }
+
+    /**
+     * The kind has to follow the value that was actually attached. When a
+     * registered credential is adopted its own kind wins, because the remote may
+     * have been reached with a key while the URL says HTTPS (or the reverse),
+     * and presenting the wrong kind to git is the failure this whole path exists
+     * to avoid.
+     */
+    const effectiveKind = adoptedCredentialId
+      ? ((
+          await this.gitCredentials.list()
+        ).find((row) => row.id === adoptedCredentialId)?.credentialKind ?? credentialKind)
+      : credentialKind;
 
     const [connection] = await this.database.db
       .insert(projectConnections)
@@ -1519,7 +1618,7 @@ export class ProjectsService {
         projectId,
         connectionType: dto.connectionType,
         secretRef,
-        credentialKind,
+        credentialKind: effectiveKind,
         // A host's public key is public, so it is stored directly rather than
         // through the secret manager (ADR-021).
         sshHostKey: dto.sshHostKey ?? null,
@@ -1541,9 +1640,13 @@ export class ProjectsService {
       userId: user.userId,
       metadata: {
         connectionType: dto.connectionType,
-        credentialKind,
+        credentialKind: effectiveKind,
         hasCredentials: secretRef !== null,
         hostKeyProvided: Boolean(dto.sshHostKey),
+        // Which registered credential this borrowed, when it borrowed one. An
+        // id rather than the value, and present so the audit log can answer
+        // "which projects use the shared key" after a rotation.
+        registeredCredentialId: adoptedCredentialId,
       },
     });
 

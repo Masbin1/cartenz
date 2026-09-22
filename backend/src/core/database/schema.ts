@@ -398,6 +398,81 @@ export const odooSettings = pgTable('odoo_settings', {
 export type OdooSettingsRow = typeof odooSettings.$inferSelect;
 
 /**
+ * Deployment-wide git credentials (ADR-021, ADR-058).
+ *
+ * One row per credential an operator registers once, so a project-creation form
+ * does not ask for the same private key every time. Scope is the deployment, not
+ * a project: the value is sealed under the single global data key
+ * (`projectId: null`), and `connected_projects` count is derived at read time.
+ *
+ * The secret itself is never in this table — `secretRef` points into
+ * `secret_records`, exactly as `project_connections.secretRef` does. A
+ * connection created for a project that used a default credential stores this
+ * same reference rather than copying the value, so rotating the default reaches
+ * every project that never overrode it.
+ */
+export const gitCredentials = pgTable(
+  'git_credentials',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** What a person calls it: "GitHub - Masbin1". */
+    label: text('label').notNull(),
+    /** Reference into secret_records. Never null: a row without a value is pointless. */
+    secretRef: text('secret_ref').notNull(),
+    credentialKind: text('credential_kind', { enum: asEnum(CREDENTIAL_KINDS) })
+      .notNull()
+      .default('ssh_key'),
+    /**
+     * The hosts this credential may be presented to, lowercased and without a
+     * port. Empty means "any host", which is the honest default for a key an
+     * operator registered deliberately - and the reason this is metadata rather
+     * than a security control: the platform already refuses a credential for a
+     * remote it was not registered against when the host is listed.
+     */
+    hosts: jsonb('hosts').$type<string[]>().notNull().default([]),
+    /**
+     * The default to use when a form supplies no credential and no entry is
+     * chosen. At most one row is true; the service enforces that on write.
+     */
+    isDefault: boolean('is_default').notNull().default(false),
+    /**
+     * A registered credential is held back from use without deleting it, and
+     * from being the default. Separate from `isDefault` because disabling the
+     * default is a distinct intent from choosing a different one.
+     */
+    enabled: boolean('enabled').notNull().default(true),
+    /** Free-text note, e.g. which GitHub account the key authenticates as. */
+    note: text('note'),
+    /**
+     * Whether the registering operator ever proved the credential works, and
+     * against what. Written only by the verify action, so it is a record of a
+     * real test rather than of an intention.
+     */
+    lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true }),
+    lastVerifyError: text('last_verify_error'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    ...timestamps,
+  },
+  (table) => ({
+    labelUnique: uniqueIndex('git_credentials_label_unique').on(table.label),
+    /**
+     * At most one default row, enforced by the database rather than by the
+     * service alone: a partial unique index means a race between two admins
+     * setting a default cannot leave two, which a read-then-write in the service
+     * could.
+     */
+    singleDefault: uniqueIndex('git_credentials_single_default')
+      .on(table.isDefault)
+      .where(sql`${table.isDefault}`),
+    byLabel: index('git_credentials_label_idx').on(table.label),
+  }),
+);
+
+export type GitCredentialRow = typeof gitCredentials.$inferSelect;
+
+/**
  * Per-version Odoo source repositories (centralized version catalog).
  *
  * Allows registering a full Odoo source tree per version (e.g. 17.0, 18.0)
