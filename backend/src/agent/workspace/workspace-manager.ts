@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
 import { mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join, resolve, sep } from 'node:path';
@@ -8,6 +8,7 @@ import type { AppConfig } from '../../core/config/configuration';
 import { DatabaseService } from '../../core/database/database.service';
 import { agentWorkspaces } from '../../core/database/schema';
 import { GitService } from '../git/git.service';
+import { ProjectCheckoutService } from '../../modules/projects/project-checkout.service';
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
 import type { ExecutionMode } from '../executors/execution-mode';
 import {
@@ -157,6 +158,20 @@ export class WorkspaceManager {
     private readonly database: DatabaseService,
     private readonly git: GitService,
     @Inject(SECRETS_PROVIDER) private readonly secrets: SecretsProvider,
+    /**
+     * The project's long-lived clone, when this deployment keeps one (ADR-063).
+     *
+     * Optional so the layer still constructs where the project module is absent
+     * (tests, and any future caller), and so a deployment with no
+     * `PROJECT_CHECKOUT_ROOT` behaves exactly as it did: every task clones.
+     *
+     * `forwardRef` because the projects module already imports the agent module
+     * (ADR-054's backup, and this service's own analyser and git); the two
+     * modules reference each other on purpose.
+     */
+    @Optional()
+    @Inject(forwardRef(() => ProjectCheckoutService))
+    private readonly projectCheckouts?: ProjectCheckoutService,
   ) {
     this.root = resolve(config.workspace.root);
   }
@@ -210,6 +225,16 @@ export class WorkspaceManager {
     const metadataPath = join(root, 'metadata');
     const logsPath = join(root, 'logs');
     const branch = taskBranchFor(input.defaultBranch, input.taskReference, input.prompt);
+
+    /**
+     * The project's clone, taken as a worktree, when this deployment keeps one
+     * and it exists (ADR-063). This is the fast path: no download, and the
+     * worktree still lives under this task's own directory, so everything
+     * downstream - the quota check, the file tools' containment, `release` - sees
+     * the same shape it always has.
+     */
+    const fromCheckout = await this.allocateFromCheckout(input, workspaceId, root, branch);
+    if (fromCheckout) return fromCheckout;
 
     await mkdir(metadataPath, { recursive: true });
     await mkdir(logsPath, { recursive: true });
@@ -342,6 +367,162 @@ export class WorkspaceManager {
       // the reclaimer: it holds a partial clone of customer source.
       await rm(root, { recursive: true, force: true }).catch(() => undefined);
       throw error;
+    }
+  }
+
+  /**
+   * A working tree out of the project's existing clone, when there is one
+   * (ADR-063), or null to clone as before.
+   *
+   * This is the whole point of keeping a clone per project: the objects are
+   * already on disk, so a task gets a directory in milliseconds instead of
+   * downloading the repository again. The directory is still the task's own -
+   * `git worktree` gives it a working tree with its own HEAD, index and
+   * uncommitted changes - and still under the workspace root, so the quota, the
+   * agent's file containment and `release` all behave exactly as they did.
+   *
+   * Two deliberate choices:
+   *
+   *  - **The branch is the project's own local branch, not a fresh one.** On a
+   *    laptop, choosing a branch means working on *that* branch, with whatever
+   *    the last task left on it. A task that invented `task/fix-vat` would push
+   *    a branch nobody asked for and leave the real one untouched.
+   *  - **A branch a running task holds is refused, not copied.** git refuses to
+   *    check out one branch in two worktrees. The alternative - cloning this
+   *    branch separately - would let two tasks commit to the same branch and
+   *    race at push time, where one silently loses. Refusing says so at the
+   *    point the person can choose another target.
+   *
+   * A refresh is attempted first, so a task starts from the remote's tip as a
+   * fresh clone would have. It is not fatal when it fails: the code is on disk,
+   * and a task that cannot start because GitHub is unreachable would be a worse
+   * answer than one that starts from a slightly old tip and says so.
+   */
+  private async allocateFromCheckout(
+    input: AllocateWorkspaceInput,
+    workspaceId: string,
+    root: string,
+    branch: string,
+  ): Promise<Workspace | null> {
+    if (!this.projectCheckouts || !this.config.checkouts.reuse) return null;
+
+    const checkoutPath = await this.projectCheckouts
+      .existingCheckout(input.projectId)
+      .catch(() => null);
+    if (!checkoutPath) return null;
+
+    const repositoryPath = join(root, 'repository');
+    const metadataPath = join(root, 'metadata');
+    const logsPath = join(root, 'logs');
+
+    await mkdir(metadataPath, { recursive: true });
+    await mkdir(logsPath, { recursive: true });
+
+    // Recorded before the worktree: an interrupted allocation must leave evidence
+    // of a directory, which is how the reclaimer finds it.
+    await this.database.db.insert(agentWorkspaces).values({
+      id: undefined,
+      workspaceRef: workspaceId,
+      taskId: input.taskId,
+      projectId: input.projectId,
+      rootPath: root,
+      branch,
+      status: 'allocated',
+    });
+
+    try {
+      await this.projectCheckouts.refreshForTask(input.projectId).catch((error: unknown) => {
+        this.logger.warn(
+          `Could not refresh the project's clone before ${input.taskReference}: ` +
+            `${(error as Error).message}. Starting from what is on disk.`,
+        );
+      });
+
+      const hasLocal = await this.git.hasRef(checkoutPath, `refs/heads/${branch}`);
+      const hasRemote = await this.git.hasRef(checkoutPath, `refs/remotes/origin/${branch}`);
+
+      /**
+       * A branch the clone has never seen - not locally, not on the remote - is
+       * not something a worktree can be made from. Falling back to a clone lets
+       * git report the missing branch in its own words, which is the message an
+       * operator needs to fix the environment's configuration.
+       */
+      if (!hasLocal && !hasRemote) {
+        await rm(root, { recursive: true, force: true }).catch(() => undefined);
+        await this.markStatus(workspaceId, 'released', null, 0, 0);
+        return null;
+      }
+
+      if (!hasLocal) await this.git.branchAt(checkoutPath, branch, branch);
+      await this.git.worktreeAttach(checkoutPath, repositoryPath, branch);
+
+      const baseCommit = await this.git.headOf(repositoryPath, 'HEAD');
+      const usage = await this.measure(repositoryPath);
+      this.assertWithinQuota(usage);
+      await this.markStatus(workspaceId, 'ready', baseCommit, usage.bytes, usage.files);
+
+      await writeFile(
+        join(metadataPath, 'task.json'),
+        JSON.stringify(
+          {
+            workspaceId,
+            taskReference: input.taskReference,
+            branch,
+            baseBranch: input.defaultBranch,
+            baseCommit,
+            checkoutPath,
+            allocatedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      this.logger.log(
+        `Workspace ${workspaceId} ready from the project's clone: branch ${branch}, ` +
+          `${usage.files} files, ${Math.round(usage.bytes / 1024)} KiB`,
+      );
+
+      return {
+        workspaceId,
+        taskReference: input.taskReference,
+        root,
+        repositoryPath,
+        metadataPath,
+        logsPath,
+        branch,
+        baseBranch: input.defaultBranch,
+        baseCommit,
+        repositoryUrl: input.repositoryUrl,
+        odooVersion: input.odooVersion,
+        simulated: false,
+        readOnlyRoots: this.odooSourceRoots(input.odooSourcePaths),
+        learnedHostKey: null,
+        credentialRef: input.credentialRef,
+        credentialKind: input.credentialKind,
+        sshHostKey: input.sshHostKey,
+        credentialUsername: input.credentialUsername,
+      };
+    } catch (error) {
+      /**
+       * The common case here is git refusing a branch another task is already
+       * working on. That is reported as the branch being busy rather than as a
+       * failure of this task's configuration, because it is a state that passes:
+       * the other task ends, and this one can be started again.
+       *
+       * Cloning instead is deliberately not the fallback. Two working trees on
+       * one branch is what pushes over each other, and losing a task's commit
+       * that way is the failure this design exists to prevent.
+       */
+      await rm(root, { recursive: true, force: true }).catch(() => undefined);
+      await this.markStatus(workspaceId, 'failed', null, 0, 0, (error as Error).message);
+
+      throw new Error(
+        `The branch "${branch}" could not be taken from this project's local clone: ` +
+          `${(error as Error).message}. If another task is working on that branch, wait for ` +
+          'it to finish or run this one against a different target.',
+      );
     }
   }
 
@@ -681,17 +862,82 @@ export class WorkspaceManager {
       return;
     }
 
+    // Before the files go: which clone owns this working tree is read from the
+    // working tree itself, so it cannot be asked once the directory is removed.
+    const owningClone = await this.owningClone(workspace.repositoryPath);
+
     await rm(workspace.root, { recursive: true, force: true }).catch((error: unknown) => {
       this.logger.error(
         `Failed to remove workspace ${workspace.workspaceId}: ${(error as Error).message}`,
       );
     });
 
+    if (owningClone) {
+      await this.unregisterWorktree(workspace.workspaceId, owningClone, workspace.repositoryPath);
+    }
+
     this.learnedHostKeys.delete(workspace.workspaceId);
     await this.markStatus(workspace.workspaceId, 'released', workspace.baseCommit, 0, 0);
     this.logger.log(`Workspace ${workspace.workspaceId} released`);
   }
 
+
+  /**
+   * The clone a working tree belongs to, when that is not the working tree
+   * itself - that is, when it is a worktree of the project's clone (ADR-063).
+   *
+   * For a per-task clone (the fallback path) `gitCommonDir` returns the
+   * workspace's own `.git`, which is what marks it as having nothing to
+   * unregister. Null on any failure: the answer only decides whether cleanup
+   * has a second step, and a failure here must not stop the first.
+   */
+  private async owningClone(repositoryPath: string): Promise<string | null> {
+    /**
+     * Only a working tree this platform created under its own workspace root.
+     * An on-premise workspace's repository path is the customer's own project
+     * directory (ADR-030); if that directory happened to be a worktree of some
+     * other repository, "unregistering" it with `worktree remove --force` would
+     * delete the customer's files. The containment check makes that impossible
+     * rather than unlikely.
+     */
+    if (!resolve(repositoryPath).startsWith(this.root + sep)) return null;
+
+    const commonDir = await Promise.resolve()
+      .then(() => this.git.gitCommonDir(repositoryPath))
+      .catch(() => null);
+    if (!commonDir || commonDir === join(repositoryPath, '.git')) return null;
+    return commonDir;
+  }
+
+  /**
+   * Unregisters a worktree from the project's clone once its files are gone.
+   *
+   * A worktree out of the project's clone (ADR-063) is not just files: git also
+   * keeps an entry for it under the clone's `.git/worktrees/`, and that entry is
+   * what makes the branch "in use" for `ProjectCheckoutService.sync` and for the
+   * next `allocateFromCheckout`. `rm -rf` on the workspace directory removes the
+   * files but leaves that entry, and an entry whose directory is gone still pins
+   * its branch - every later task on that branch would then be refused over a
+   * directory nobody can see.
+   *
+   * Called after the files are removed, so the entry is pruned rather than the
+   * worktree removed: `worktree remove` would refuse a directory that no longer
+   * exists, and pruning is exactly "forget entries whose directory is gone".
+   * `worktreeBranches` also prunes before reading, so an entry left behind by a
+   * worker that died mid-task cannot pin a branch either.
+   */
+  private async unregisterWorktree(
+    workspaceId: string,
+    owningClone: string,
+    repositoryPath: string,
+  ): Promise<void> {
+    await this.git.worktreeRemove(owningClone, repositoryPath).catch((error: unknown) =>
+      this.logger.warn(
+        `Worktree for ${workspaceId} could not be unregistered from the project's clone: ` +
+          `${(error as Error).message}`,
+      ),
+    );
+  }
 
   /**
    * Removes every workspace directory belonging to a project (ADR-024).

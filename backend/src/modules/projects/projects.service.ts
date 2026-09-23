@@ -1071,13 +1071,13 @@ export class ProjectsService {
   }
 
   /**
-   * Clones the default branch locally, when this deployment keeps local clones.
+   * Clones the project once, every branch, when this deployment keeps local
+   * clones (ADR-063).
    *
-   * One branch, not all of them: a project may declare several environments and
-   * cloning each would make connecting a project cost as many full clones as it
-   * has branches, on a request a person is waiting for. The rest are one press
-   * away on the project page, and `PROJECT_CHECKOUT_REUSE` decides whether the
-   * clone is used by tasks or only read.
+   * One clone holds every branch, so connecting costs one download however many
+   * environments the project declares, and the branch a task works on is picked
+   * later from the ones already there. `PROJECT_CHECKOUT_REUSE` decides whether
+   * tasks take worktrees from it or keep cloning for themselves.
    */
   private async warmCheckout(projectId: string, userId: string, projectName: string): Promise<void> {
     if (!this.checkouts.enabled) return;

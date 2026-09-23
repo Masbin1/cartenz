@@ -92,6 +92,16 @@ export interface GitCloneOptions {
    * stays shallow; the merge path needs the history, and passes this.
    */
   readonly full?: boolean;
+  /**
+   * Take every branch, not only the one checked out (ADR-063).
+   *
+   * A task clones one branch because one branch is all it works on. The
+   * long-lived clone a project keeps is the opposite: it is cloned once and then
+   * asked for any of the project's branches, so a `--single-branch` clone would
+   * make every other branch a network round trip and, without a remote-tracking
+   * ref, would leave `behind` unanswerable for all of them.
+   */
+  readonly allBranches?: boolean;
 }
 
 export interface GitCloneResult {
@@ -243,7 +253,9 @@ export class GitService {
           ...HARDENING_ARGS,
           'clone',
           '--quiet',
-          '--single-branch',
+          // One branch per task, or every branch for the clone a project keeps
+          // between tasks (ADR-063).
+          ...(options.allBranches === true ? [] : ['--single-branch']),
           '--no-recurse-submodules',
           '--no-tags',
           ...(fullHistory ? [] : [`--depth=${depth}`]),
@@ -785,6 +797,271 @@ export class GitService {
     } finally {
       await lease.release();
     }
+  }
+
+  /**
+   * Refreshes every branch a remote advertises into `refs/remotes/origin/*`
+   * (ADR-063).
+   *
+   * The counterpart of `fetchBranch` for a clone that outlives a task: the
+   * project's clone is cloned once and then asked for any of the project's
+   * branches, so the remote-tracking refs are what make "N commits behind"
+   * answerable for a branch that is not checked out. Nothing is merged and no
+   * working tree moves - this reads the remote's state.
+   *
+   * The forced refspec (`+`) means a branch the remote rewrote still updates
+   * its remote-tracking ref; no local branch follows it, which is what keeps
+   * this safe while a task's worktree is checked out on one of them.
+   */
+  async fetchAll(
+    repositoryPath: string,
+    remoteUrl: string,
+    options: {
+      readonly credentialDirectory: string;
+      readonly credential: GitCredential | null;
+    },
+  ): Promise<void> {
+    const remote = assertSafeRemoteUrl(remoteUrl, {
+      allowLocal: this.config.git.allowLocalRemotes,
+    });
+
+    const lease = await leaseGitCredential({
+      directory: options.credentialDirectory,
+      credential: options.credential,
+      hostKeyPolicy: this.config.git.sshHostKeyPolicy,
+    });
+
+    const fetchUrl =
+      remote.scheme === 'https' && options.credential?.kind === 'token'
+        ? `https://${httpsUsername(options.credential, remote.host)}@${remote.host}/${remote.path}`
+        : remote.url;
+
+    try {
+      const result = await this.commands.run(
+        'git',
+        [
+          ...HARDENING_ARGS,
+          'fetch',
+          '--quiet',
+          '--prune',
+          '--no-tags',
+          '--',
+          fetchUrl,
+          '+refs/heads/*:refs/remotes/origin/*',
+        ],
+        { cwd: repositoryPath, env: lease.env, timeoutMs: this.config.process.maxTimeoutMs },
+      );
+
+      if (result.exitCode !== 0) {
+        throw new GitCommandError('fetch', result.exitCode, summariseFailure(result));
+      }
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /**
+   * Checks a branch out in a working tree of its own, attached to an existing
+   * clone (ADR-063).
+   *
+   * This is how a task gets a directory without downloading the repository
+   * again: the objects live once, in the project's clone, and each task gets a
+   * working tree over them. `-B` points the local branch at `startPoint` - the
+   * remote-tracking ref, so a task starts from the remote's tip exactly as a
+   * fresh clone would.
+   *
+   * git refuses a branch already checked out in another worktree, so two tasks
+   * on one branch cannot share a working tree; the second fails with git's own
+   * message. `--force` is deliberately not passed: it is precisely the flag
+   * that would override that refusal.
+   */
+  async worktreeAdd(
+    repositoryPath: string,
+    worktreePath: string,
+    branch: string,
+    fromRemoteBranch: string,
+  ): Promise<void> {
+    const safeBranch = assertSafeRefName(branch);
+    // Built here rather than accepted as a ref, so a caller cannot start a
+    // worktree from an arbitrary revision expression.
+    const startPoint = `refs/remotes/origin/${assertSafeRefName(fromRemoteBranch)}`;
+    const result = await this.run(repositoryPath, [
+      'worktree',
+      'add',
+      '--quiet',
+      '-B',
+      safeBranch,
+      '--',
+      worktreePath,
+      startPoint,
+    ]);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('worktree add', result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * Detaches a clone's own checkout to a branch's tip (ADR-063).
+   *
+   * Detached on purpose: a branch checked out here would be unavailable to
+   * every task worktree, because git allows a branch in one worktree only. The
+   * files are still there to read and analyse; no branch is held.
+   *
+   * `source` picks which tip: `'local'` for the project's own local branch -
+   * the one a task may have committed to and not pushed, so this is what a
+   * person reading the clone should see - and `'remote'` for the
+   * remote-tracking ref, used right after a clone when no local branch exists
+   * yet.
+   */
+  async detachAt(
+    repositoryPath: string,
+    branch: string,
+    source: 'local' | 'remote',
+  ): Promise<void> {
+    const safeBranch = assertSafeRefName(branch);
+    const ref = source === 'local' ? `refs/heads/${safeBranch}` : `refs/remotes/origin/${safeBranch}`;
+    const result = await this.run(repositoryPath, ['checkout', '--quiet', '--detach', ref]);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('checkout --detach', result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * A working tree of its own on a branch that already exists locally
+   * (ADR-063).
+   *
+   * The counterpart to `worktreeAdd`: no `-B`, so an existing local branch keeps
+   * exactly the commits it has - a previous task's work included. Fails when the
+   * branch has no local ref yet; callers create one with `branchAt` first, which
+   * is equally non-destructive.
+   */
+  async worktreeAttach(
+    repositoryPath: string,
+    worktreePath: string,
+    branch: string,
+  ): Promise<void> {
+    const safeBranch = assertSafeRefName(branch);
+    const result = await this.run(repositoryPath, [
+      'worktree',
+      'add',
+      '--quiet',
+      '--',
+      worktreePath,
+      safeBranch,
+    ]);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('worktree add', result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * Creates a local branch at a remote branch's tip, when it does not exist
+   * (ADR-063).
+   *
+   * Existence is checked rather than the command's failure ignored, because a
+   * local branch that exists must keep its own position: a task part-way through
+   * work has commits this would otherwise throw away.
+   */
+  async branchAt(repositoryPath: string, name: string, fromRemoteBranch: string): Promise<void> {
+    const safeBranch = assertSafeRefName(name);
+    if (await this.hasRef(repositoryPath, `refs/heads/${safeBranch}`)) return;
+
+    const startPoint = `refs/remotes/origin/${assertSafeRefName(fromRemoteBranch)}`;
+    const result = await this.run(repositoryPath, ['branch', safeBranch, startPoint, '--']);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('branch', result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * Moves a local branch to a new commit, but only when it is still at the
+   * commit the caller last saw (ADR-063).
+   *
+   * A compare-and-swap: used to fast-forward a branch nobody has checked out,
+   * where "nobody" was established by reading `git worktree list` moments
+   * earlier. Passing the expected old value makes the two atomic - if a task took
+   * the branch into a worktree in between, this fails instead of moving a branch
+   * out from under it.
+   */
+  async updateBranchRef(
+    repositoryPath: string,
+    branch: string,
+    to: string,
+    expectedCurrent: string,
+  ): Promise<void> {
+    const safeBranch = assertSafeRefName(branch);
+    const result = await this.run(repositoryPath, [
+      'update-ref',
+      `refs/heads/${safeBranch}`,
+      to,
+      expectedCurrent,
+    ]);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('update-ref', result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * The `.git` directory of the repository this working tree belongs to, or
+   * null when there is none (ADR-063).
+   *
+   * How release finds the clone to detach from: a task's directory is a
+   * worktree whose metadata lives in the project's clone, so removing the
+   * directory must also drop the worktree's record - a record left behind pins
+   * its branch and would refuse every later task over a directory nobody can
+   * see. For an ordinary per-task clone this returns its own `.git`, which is
+   * how the caller tells the two apart: a main working tree is never detached.
+   */
+  async gitCommonDir(repositoryPath: string): Promise<string | null> {
+    const result = await this.run(repositoryPath, [
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-common-dir',
+    ]);
+    if (result.exitCode !== 0) return null;
+    const dir = result.stdout.trim();
+    return dir.length > 0 ? dir : null;
+  }
+
+  /**
+   * Detaches a task's working tree from the clone; the clone itself stays.
+   *
+   * `--force` here discards the worktree's uncommitted changes, which is what
+   * releasing a task has always meant - the per-task clone this replaces was
+   * deleted with `rm -rf`. A worktree already gone is the goal state.
+   */
+  async worktreeRemove(repositoryPath: string, worktreePath: string): Promise<void> {
+    await this.run(repositoryPath, ['worktree', 'remove', '--force', '--', worktreePath]);
+    // Whatever the removal said, drop records whose directory is gone: a stale
+    // record pins its branch, and every later task on that branch would then be
+    // refused over a directory nobody can see.
+    await this.run(repositoryPath, ['worktree', 'prune']);
+  }
+
+  /** The branches currently checked out in any worktree of this clone. */
+  async worktreeBranches(repositoryPath: string): Promise<Map<string, string>> {
+    /**
+     * Pruned first, because a worktree directory can disappear without git
+     * hearing about it - a `rm -rf` from `reclaimOrphans`, a workspace released
+     * after its record was lost, a killed worker. Its record would still pin the
+     * branch, so `worktree add` on that branch would be refused over a directory
+     * nobody can see. Pruning drops exactly the records whose directory is gone,
+     * so this read leaves live worktrees alone.
+     */
+    await this.run(repositoryPath, ['worktree', 'prune']);
+
+    const result = await this.run(repositoryPath, ['worktree', 'list', '--porcelain']);
+    const branches = new Map<string, string>();
+    if (result.exitCode !== 0) return branches;
+
+    let path: string | null = null;
+    for (const line of result.stdout.split(NEWLINE)) {
+      if (line.startsWith('worktree ')) path = line.slice('worktree '.length);
+      else if (line.startsWith('branch refs/heads/') && path) {
+        branches.set(line.slice('branch refs/heads/'.length), path);
+      }
+    }
+    return branches;
   }
 
   /**

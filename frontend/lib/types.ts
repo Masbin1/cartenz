@@ -742,10 +742,10 @@ export interface ProjectPreviewState {
 }
 
 /**
- * The local clone this host keeps for a project (ADR-063).
+ * One branch of the single local clone this host keeps for a project (ADR-063).
  *
- * `behind` is deliberately nullable: it is read from the local
- * remote-tracking ref, so it is the truth as of the last sync, and a checkout
+ * `behind`/`ahead` are deliberately nullable: they are read from the local
+ * remote-tracking ref, so they are the truth as of the last sync, and a branch
  * that has never been compared says so rather than claiming to be current.
  */
 export interface CheckoutBranchState {
@@ -755,7 +755,11 @@ export interface CheckoutBranchState {
   commit: string | null;
   remoteCommit: string | null;
   behind: number | null;
+  /** Local commits the remote does not have yet (a task's unpushed work). */
+  ahead: number | null;
   dirty: boolean;
+  /** A running task has this branch checked out in its worktree. */
+  inUse: boolean;
   historyDepth: number | null;
   lastSyncedAt: string | null;
 }
@@ -764,6 +768,9 @@ export interface CheckoutStatus {
   enabled: boolean;
   reason: string | null;
   root: string | null;
+  /** The project's one clone; every branch and every task worktree comes from it. */
+  path: string | null;
+  cloned: boolean;
   branches: CheckoutBranchState[];
 }
 

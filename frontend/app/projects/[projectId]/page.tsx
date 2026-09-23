@@ -853,9 +853,13 @@ const BACKUP_TONE: Record<BackupSummary['status'], StatusTone> = {
 };
 
 /**
- * The long-lived local clone this host keeps of a connected project's
+ * The one long-lived local clone this host keeps of a connected project's
  * repository (ADR-063): a second source, so this project's code on this host
  * matches what is on GitHub or odoo.sh without waiting for a task to fetch it.
+ *
+ * One clone, every branch, like a working copy on a laptop. A Sync fetches all
+ * of them at once and analyses the chosen one; a task takes its own worktree
+ * from the same clone rather than downloading the repository again.
  *
  * Loads on mount so a person opening the page immediately sees whether the
  * local clone is behind, not only after pressing a button - that gap (a branch
@@ -924,74 +928,77 @@ function CheckoutPanel({
     }
   };
 
-  const branches = status.branches.length > 0 ? status.branches : null;
-
   return (
     <Section
       size="small"
       title="Local clone"
       description={
-        status.root ? `Kept on this host under ${status.root}.` : undefined
+        status.path
+          ? `${status.cloned ? 'One clone, kept' : 'Will be cloned'} at ${status.path} — every branch is fetched together, and tasks work from it instead of cloning again.`
+          : undefined
       }
     >
-      {!branches ? (
-        <p className="text-callout text-content-muted">
-          Not cloned yet. Sync the {defaultBranch} branch to bring the code onto this host.
-        </p>
+      {status.reason ? (
+        <p className="text-callout text-content-muted">{status.reason}</p>
       ) : (
-        <ul className="divide-y divide-surface-border/70 border-y border-surface-border/70">
-          {branches.map((branch) => (
-            <li
-              key={branch.branch}
-              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3.5"
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <p className="text-meta text-content-subtle">
+              {status.cloned
+                ? `${status.branches.filter((branch) => branch.exists).length} of ${status.branches.length} branch(es) here.`
+                : 'Not cloned yet. Cloning brings every branch onto this host at once.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => void sync(defaultBranch)}
+              disabled={syncing !== null}
+              className="btn-secondary shrink-0"
             >
-              <div className="min-w-0">
-                <p className="flex items-center gap-2 font-mono text-callout text-content">
-                  <GitBranch className="h-3.5 w-3.5 shrink-0 text-content-subtle" strokeWidth={1.75} aria-hidden="true" />
-                  {branch.branch}
-                </p>
-                <p className="mt-1 text-meta text-content-subtle">
-                  {!branch.exists
-                    ? 'Never cloned.'
-                    : branch.dirty
-                      ? 'Local changes present — sync refused to avoid losing them.'
-                      : branch.behind === null
-                        ? `At ${branch.commit?.slice(0, 8) ?? 'unknown'}. Sync to compare with the remote.`
-                        : branch.behind === 0
-                          ? `Up to date at ${branch.commit?.slice(0, 8) ?? ''}.`
-                          : `${branch.behind} commit${branch.behind === 1 ? '' : 's'} behind the remote.`}
-                  {branch.lastSyncedAt ? ` · Synced ${relativeTime(branch.lastSyncedAt)}` : ''}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void sync(branch.branch)}
-                disabled={syncing !== null}
-                className="btn-secondary shrink-0"
-              >
-                {syncing === branch.branch ? <Spinner className="h-3.5 w-3.5" /> : null}
-                {syncing === branch.branch
+              {syncing === defaultBranch ? <Spinner className="h-3.5 w-3.5" /> : null}
+              {syncing === defaultBranch
+                ? status.cloned
                   ? 'Syncing…'
-                  : branch.exists
-                    ? 'Sync'
-                    : 'Clone'}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+                  : 'Cloning…'
+                : status.cloned
+                  ? 'Sync'
+                  : `Clone ${defaultBranch}`}
+            </button>
+          </div>
 
-      {!branches ? (
-        <button
-          type="button"
-          onClick={() => void sync(defaultBranch)}
-          disabled={syncing !== null}
-          className="btn-secondary mt-3"
-        >
-          {syncing === defaultBranch ? <Spinner className="h-3.5 w-3.5" /> : null}
-          {syncing === defaultBranch ? 'Cloning…' : `Clone ${defaultBranch}`}
-        </button>
-      ) : null}
+          <ul className="mt-3 divide-y divide-surface-border/70 border-y border-surface-border/70">
+            {status.branches.map((branch) => (
+              <li
+                key={branch.branch}
+                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3.5"
+              >
+                <div className="min-w-0">
+                  <p className="flex items-center gap-2 font-mono text-callout text-content">
+                    <GitBranch className="h-3.5 w-3.5 shrink-0 text-content-subtle" strokeWidth={1.75} aria-hidden="true" />
+                    {branch.branch}
+                  </p>
+                  <p className="mt-1 text-meta text-content-subtle">
+                    {!branch.exists
+                      ? 'Not on this host — the remote has no such branch, or it has not been fetched.'
+                      : branch.inUse
+                        ? `A task is working on this branch${branch.dirty ? ' with uncommitted changes' : ''}.`
+                        : branch.ahead
+                          ? `${branch.ahead} local commit(s) not on the remote yet.`
+                          : branch.behind === null
+                            ? `At ${branch.commit?.slice(0, 8) ?? 'unknown'}. Sync to compare with the remote.`
+                            : branch.behind === 0
+                              ? `Up to date at ${branch.commit?.slice(0, 8) ?? ''}.`
+                              : `${branch.behind} commit${branch.behind === 1 ? '' : 's'} behind the remote.`}
+                    {branch.lastSyncedAt ? ` · Synced ${relativeTime(branch.lastSyncedAt)}` : ''}
+                  </p>
+                </div>
+                <p className="shrink-0 font-mono text-meta text-content-subtle">
+                  {branch.historyDepth !== null ? `${branch.historyDepth} commits` : ''}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       {syncNotice ? <Outcome tone="success">{syncNotice}</Outcome> : null}
       {syncError ? <Outcome tone="failure">{syncError}</Outcome> : null}

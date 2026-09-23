@@ -150,11 +150,12 @@ const environmentSchema = z.object({
    * clones into its own throwaway workspace, which is the behaviour this
    * deployment has always had.
    *
-   * Set it, and a connected project gets one clone per branch under it that
-   * survives between tasks and can be synced on demand. What that buys is the
-   * ability to read a repository's history instead of only its tip, and a project
-   * page that can answer "how far behind is this?" without waiting for a task to
-   * run. What it costs is customer source code resting on platform disk for as
+   * Set it, and a connected project gets one clone, holding every branch, under
+   * it that survives between tasks and can be synced on demand. What that buys is
+   * the ability to read a repository's history instead of only its tip, a
+   * project page that can answer "how far behind is this?" without waiting for a
+   * task to run, and tasks that take a worktree from that clone instead of
+   * downloading the repository again. What it costs is customer source code resting on platform disk for as
    * long as the project exists - the same retention WORKSPACE_RETAIN_ON_FAILURE
    * refuses by default, accepted deliberately here because a clone that dies with
    * its task cannot be read at all.
@@ -162,17 +163,17 @@ const environmentSchema = z.object({
   PROJECT_CHECKOUT_ROOT: z.string().default(''),
 
   /**
-   * Hand a task the project's clone instead of giving it its own.
+   * Whether a task takes a worktree from the project's clone (ADR-063).
    *
-   * Only meaningful with PROJECT_CHECKOUT_ROOT set, and off by default because
-   * the two disagree about history: a project clone carries the full history a
-   * reader needs, a task workspace is shallow because a task needs only the tip,
-   * and an existing clone cannot be made shallow afterwards. Turning this on
-   * trades that guarantee for not re-downloading the repository on every task.
+   * Only meaningful with PROJECT_CHECKOUT_ROOT set. On by default: that is the
+   * point of keeping the clone - one download per project, and the branch a
+   * task works on chosen from the ones already there, as on a developer's
+   * laptop. `false` is the rollback: every task clones for itself again, exactly
+   * as before ADR-063, while the project clone stays for reading and syncing.
    */
   PROJECT_CHECKOUT_REUSE: z
     .enum(['true', 'false'])
-    .default('false')
+    .default('true')
     .transform((value) => value === 'true'),
 
   /**
