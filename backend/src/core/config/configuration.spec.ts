@@ -290,6 +290,16 @@ describe('loadConfig', () => {
       expect(config.ai.structuredOutputs).toBe(false);
     });
 
+    it('asks a provider again for a schema miss three times by default, and honours the override', () => {
+      // Three means one miss and two retries: enough for a round-robin backend
+      // that answers an empty object twice in a row without stalling the chain.
+      expect(loadConfig(valid).ai.structuredMaxAttempts).toBe(3);
+
+      expect(loadConfig({ ...valid, AI_STRUCTURED_MAX_ATTEMPTS: '1' }).ai.structuredMaxAttempts).toBe(1);
+      expect(() => loadConfig({ ...valid, AI_STRUCTURED_MAX_ATTEMPTS: '0' })).toThrow();
+      expect(() => loadConfig({ ...valid, AI_STRUCTURED_MAX_ATTEMPTS: '6' })).toThrow();
+    });
+
     it('rejects bounds outside their permitted range', () => {
       expect(() => loadConfig({ ...valid, AI_MAX_STEPS: '0' })).toThrow();
       expect(() => loadConfig({ ...valid, AI_MAX_STEPS: '5000' })).toThrow();

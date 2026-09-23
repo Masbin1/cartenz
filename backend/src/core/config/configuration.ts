@@ -102,6 +102,17 @@ const environmentSchema = z.object({
     .default('true')
     .transform((value) => value === 'true'),
 
+  /**
+   * How many times one provider is asked again when it answers with JSON that
+   * does not match the plan's schema before the failover chain moves on.
+   *
+   * Counts the first attempt, so 1 disables retrying. Cheap self-hosted and
+   * round-robin endpoints answer an occasionally empty or malformed object even
+   * at temperature 0; one extra attempt usually fixes it, and two cover the
+   * case where the same gateway backend is hit again.
+   */
+  AI_STRUCTURED_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(3),
+
   AGENT_STEP_DELAY_MS: z.coerce.number().int().min(0).max(60000).default(900),
   AGENT_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
 
@@ -520,6 +531,7 @@ export interface AppConfig {
     readonly baseUrl?: string;
     readonly apiKey?: string;
     readonly structuredOutputs: boolean;
+    readonly structuredMaxAttempts: number;
     readonly maxSteps: number;
     readonly maxToolCalls: number;
     readonly maxOutputTokens: number;
@@ -924,6 +936,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       baseUrl: emptyToUndefined(env.AI_BASE_URL),
       apiKey: emptyToUndefined(env.AI_API_KEY),
       structuredOutputs: env.AI_STRUCTURED_OUTPUTS,
+      structuredMaxAttempts: env.AI_STRUCTURED_MAX_ATTEMPTS,
       maxSteps: env.AI_MAX_STEPS,
       maxToolCalls: env.AI_MAX_TOOL_CALLS,
       maxOutputTokens: env.AI_MAX_OUTPUT_TOKENS,

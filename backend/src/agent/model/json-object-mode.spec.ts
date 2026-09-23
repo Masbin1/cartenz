@@ -30,6 +30,7 @@ const config = {
     maxOutputTokens: 512,
     requestTimeoutMs: 10000,
     structuredOutputs: false,
+    structuredMaxAttempts: 2,
   },
 } as unknown as AppConfig;
 

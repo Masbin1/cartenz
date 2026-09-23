@@ -294,13 +294,15 @@ export class AiSdkModelProvider implements ModelProvider {
       experimental_repairText: async ({ text }: { text: string }) => extractJsonObject(text),
     };
 
-    // One retry, and only for NoObjectGeneratedError: the model answered but the
-    // SDK could not validate the JSON against the schema. At temperature 0 that's
-    // usually a one-off - the same request against the same gateway has come back
-    // clean on the very next attempt in testing. Every other failure (a rejected
-    // key, a missing model, a timeout) is not this and fails on the first try, as
-    // before.
-    const maxAttempts = 2;
+    // Retries only for NoObjectGeneratedError: the model answered but the SDK
+    // could not validate the JSON against the schema. At temperature 0 a single
+    // miss is usually a one-off — the same request against the same gateway has
+    // come back clean on the very next attempt in testing — but the deployment's
+    // cheap round-robin backends answer an empty object often enough that two
+    // attempts still exhausted, failing a task that a third would have passed.
+    // Every other failure (a rejected key, a missing model, a timeout) is not
+    // this and fails on the first try, as before.
+    const maxAttempts = this.config.ai.structuredMaxAttempts;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         // The cast is on the argument rather than the schema field: narrowing the
