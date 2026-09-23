@@ -21,8 +21,13 @@ export interface AgentOrchestrator {
    * Resumes a task suspended at an approval. Called by the approvals module
    * after a decision is recorded; the decision itself is already persisted, so a
    * failure here loses the resumption, not the decision.
+   *
+   * `approvalId` is the identity of the decision. It is not optional in effect:
+   * the job id is derived from it, which is what makes a double enqueue of the
+   * same decision de-duplicate instead of running the workflow twice on one
+   * approval.
    */
-  resume(taskId: string, reason: ResumeReason): Promise<void>;
+  resume(taskId: string, reason: ResumeReason, approvalId: string): Promise<void>;
 
   /**
    * Requests cancellation. Cancellation is cooperative: the workflow observes

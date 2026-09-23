@@ -57,6 +57,14 @@ export interface TaskExecutionSnapshot {
    * task is told apart from a first allocation.
    */
   readonly baseCommit: string | null;
+  /**
+   * The commit this task has already created, once it has created one.
+   *
+   * Saved by the commit step. It is what the push is verified against: a push
+   * that reported success without putting this commit on the remote is a lost
+   * change wearing the costume of a delivered one.
+   */
+  readonly commitHash: string | null;
   readonly odooVersion: string | null;
   /** The project's Odoo edition (ADR-037). Governs which source the agent reads. */
   readonly odooEdition: OdooEdition;
@@ -145,6 +153,7 @@ export class TaskRepository {
         status: agentTasks.status,
         branch: agentTasks.branch,
         baseCommit: agentTasks.baseCommit,
+        commitHash: agentTasks.commitHash,
         plan: agentTasks.plan,
         odooVersion: projects.odooVersion,
         odooEdition: projects.odooEdition,
@@ -270,6 +279,7 @@ export class TaskRepository {
       status: row.status as AgentTaskStatus,
       branch: row.branch,
       baseCommit: row.baseCommit,
+      commitHash: row.commitHash,
       odooVersion: row.odooVersion,
       odooEdition: row.odooEdition as OdooEdition,
       repositoryUrl,

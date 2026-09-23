@@ -138,4 +138,62 @@ describe('on-premise push to the repository own remote', () => {
       }),
     ).rejects.toThrow(/password|credential/i);
   });
+
+  /**
+   * Reading the branch back is what makes a push report true.
+   *
+   * A push whose branch is already at the remote's tip exits 0 and sends
+   * nothing; only the read-back distinguishes it from a delivery. This is the
+   * check `git_push` now runs before a task may say its work reached the
+   * repository.
+   */
+  describe('reading a branch back from the remote', () => {
+    it('returns the commit the remote branch points at', async () => {
+      const remote = await service.remoteBranchCommit(`file://${remotePath}`, 'Staging', {
+        credentialDirectory: sandbox,
+        credential: null,
+      });
+
+      expect(remote).toBe(await remoteHead());
+    });
+
+    it('returns null when the branch does not exist there', async () => {
+      const missing = await service.remoteBranchCommit(`file://${remotePath}`, 'Never-There', {
+        credentialDirectory: sandbox,
+        credential: null,
+      });
+
+      expect(missing).toBeNull();
+    });
+
+    it('tracks a push, so a no-op push and a real one are distinguishable', async () => {
+      const origin = await service.originUrl(projectPath);
+      const before = await service.remoteBranchCommit(origin as string, 'Staging', {
+        credentialDirectory: sandbox,
+        credential: null,
+      });
+
+      await writeFile(join(projectPath, 'second.txt'), 'second\n', 'utf8');
+      await git(projectPath, 'add', '.');
+      await git(projectPath, 'commit', '-m', 'second');
+
+      await service.push({
+        repositoryPath: projectPath,
+        remoteUrl: origin as string,
+        branch: 'Staging',
+        credentialDirectory: sandbox,
+        credential: null,
+      });
+
+      const head = (await run('git', ['rev-parse', 'HEAD'], { cwd: projectPath })).stdout.trim();
+      const after = await service.remoteBranchCommit(origin as string, 'Staging', {
+        credentialDirectory: sandbox,
+        credential: null,
+      });
+
+      expect(before).not.toBe(after);
+      expect(after).toBe(head);
+      expect(after).toBe(await remoteHead());
+    });
+  });
 });

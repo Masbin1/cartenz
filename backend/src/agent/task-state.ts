@@ -92,7 +92,24 @@ const TRANSITIONS: Readonly<Record<AgentTaskStatus, readonly AgentTaskStatus[]>>
   // directly: when GIT_PUSH_ENABLED is false there is no push to approve, and
   // the commit in the workspace is the whole of the result (ADR-021 s1).
   committing: ['waiting_approval', 'pushing', 'completed', 'failed', 'cancelled'],
-  pushing: ['building', 'completed', 'failed', 'cancelled'],
+  /**
+   * `pushing -> waiting_approval` is a backstop, and it has to exist.
+   *
+   * The push gate is normally satisfied before this state is entered: either a
+   * person approved it (committing -> waiting_approval -> pushing) or the
+   * deployment authorised it and recorded the grant (ADR-041). When neither had
+   * happened, the tool gate refused the push *while the task was already in
+   * `pushing`*, and the suspension it attempted was refused here - so the
+   * approval row was written, the job died on a throw, and BullMQ retried the
+   * whole step. The operator saw the same prompt twice or three times for one
+   * push, and the retries are what made a single authorisation look like two.
+   *
+   * A state machine whose refusal kills the run must not be the reason a
+   * legitimate suspension cannot happen. Refusing the edge never prevented the
+   * suspension; it only made it fatal, and hid the disagreement between the
+   * workflow and the gate behind a crash.
+   */
+  pushing: ['building', 'waiting_approval', 'completed', 'failed', 'cancelled'],
   building: ['completed', 'failed', 'cancelled'],
   completed: [],
   failed: [],

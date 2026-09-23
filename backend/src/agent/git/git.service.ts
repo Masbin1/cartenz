@@ -606,6 +606,78 @@ export class GitService {
   }
 
   /**
+   * The commit the remote's branch actually points at, or null when the branch
+   * does not exist there.
+   *
+   * Exists because `git push` exiting 0 is not evidence that anything arrived.
+   * Pushing a branch that is already at the remote's tip prints "Everything
+   * up-to-date" and exits 0, which is indistinguishable from a real push unless
+   * the remote is read back. That is not hypothetical: a task whose commit was
+   * lost with its workspace pushed a branch identical to the remote's, exited 0,
+   * and was reported to the operator as "Branch pushed to the remote repository"
+   * with no change on GitHub anywhere. Reading the remote back is what makes that
+   * report true or false rather than merely plausible.
+   *
+   * The credential is used here exactly as it is for a push, so a private
+   * repository answers.
+   */
+  async remoteBranchCommit(
+    remoteUrl: string,
+    branch: string,
+    options: {
+      readonly credentialDirectory: string;
+      readonly credential: GitCredential | null;
+    },
+  ): Promise<string | null> {
+    const remote = assertSafeRemoteUrl(remoteUrl, {
+      allowLocal: this.config.git.allowLocalRemotes,
+    });
+    const safeBranch = assertSafeRefName(branch);
+
+    const lease = await leaseGitCredential({
+      directory: options.credentialDirectory,
+      credential: options.credential,
+      hostKeyPolicy: this.config.git.sshHostKeyPolicy,
+    });
+
+    const listUrl =
+      remote.scheme === 'https' && options.credential?.kind === 'token'
+        ? `https://${httpsUsername(options.credential, remote.host)}@${remote.host}/${remote.path}`
+        : remote.url;
+
+    try {
+      const result = await this.commands.run(
+        'git',
+        [
+          ...HARDENING_ARGS,
+          'ls-remote',
+          '--refs',
+          '--',
+          listUrl,
+          `${REFS_HEADS}${safeBranch}`,
+        ],
+        {
+          cwd: options.credentialDirectory,
+          env: lease.env,
+          timeoutMs: REMOTE_BRANCH_TIMEOUT_MS,
+        },
+      );
+
+      if (result.exitCode !== 0) {
+        throw new GitCommandError('ls-remote', result.exitCode, summariseFailure(result));
+      }
+
+      const line = result.stdout.split(NEWLINE).find((entry) => entry.trim().length > 0);
+      if (!line) return null;
+
+      const commit = line.split('\t')[0]?.trim() ?? '';
+      return commit.length > 0 ? commit : null;
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /**
    * Fetches one branch from a remote into a local repository, without checking
    * it out. Used ahead of a merge (ADR-057): the workspace is cloned at the
    * *target* branch's tip, and the *source* branch is fetched into it so the

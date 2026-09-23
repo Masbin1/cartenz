@@ -6,7 +6,7 @@ import {
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import { agentTasks, approvals, projects } from '../../core/database/schema';
 import { AuditService } from '../../core/audit/audit.service';
@@ -28,6 +28,30 @@ export interface RequestApprovalInput {
   readonly requiredReason: string;
   readonly context: Record<string, unknown>;
   readonly taskStatus: AgentTaskStatus;
+}
+
+/**
+ * An approval the deployment itself grants, recorded as one.
+ *
+ * A task whose push this deployment performs automatically (ADR-041) still has to
+ * satisfy the tool gate that guards every operation leaving the platform: the
+ * gate reads granted approvals from this table. Until this existed the two
+ * disagreed - the workflow decided no approval was needed and moved the task to
+ * `pushing`, and the gate, seeing no `git_push` row, refused the very push the
+ * workflow had just authorised. The refusal was recorded, the suspension that
+ * followed was illegal from `pushing`, the job died, and BullMQ retried it. Every
+ * retry asked for the approval again, which is why an operator saw the same
+ * `git_push` prompt two and three times for one push.
+ */
+export interface AutoGrantInput {
+  readonly taskId: string;
+  readonly taskReference: string;
+  readonly action: string;
+  readonly requiredReason: string;
+  readonly context: Record<string, unknown>;
+  readonly taskStatus: AgentTaskStatus;
+  /** What authorised it, named in the record. */
+  readonly authorisedBy: string;
 }
 
 /**
@@ -57,6 +81,20 @@ export class ApprovalService {
   ) {}
 
   async request(input: RequestApprovalInput): Promise<void> {
+    /**
+     * Asked once, and only once, for a given action on a given task.
+     *
+     * This used to dedupe against a *pending* row alone, which is not the
+     * property that matters. A granted approval is still a live authorisation -
+     * the permission validator reads every approved row for the task - so asking
+     * again after one was granted is asking a person to authorise what they have
+     * already authorised. It happened because a step that ran twice (a retry
+     * after a failed job) re-requested the push, and the second, third and fourth
+     * prompts were for one push that had been approved at the first.
+     *
+     * A rejection is deliberately not deduped: a rejected task must be able to
+     * ask again, and the row that stands is the newer decision.
+     */
     const [existing] = await this.database.db
       .select({ id: approvals.id, status: approvals.status })
       .from(approvals)
@@ -64,14 +102,15 @@ export class ApprovalService {
         and(
           eq(approvals.taskId, input.taskId),
           eq(approvals.action, input.action as never),
-          eq(approvals.status, 'pending'),
+          inArray(approvals.status, ['pending', 'approved']),
         ),
       )
       .limit(1);
 
     if (existing) {
       this.logger.log(
-        `Approval for ${input.action} on ${input.taskReference} is already pending; not re-requesting.`,
+        `Approval for ${input.action} on ${input.taskReference} is already ` +
+          `${existing.status}; not re-requesting.`,
       );
       return;
     }
@@ -100,6 +139,74 @@ export class ApprovalService {
         taskReference: input.taskReference,
         action: input.action,
         reason: input.requiredReason,
+      },
+    });
+  }
+
+  /**
+   * Records a deployment-granted approval as already approved, so that a task
+   * suspended at this gate resumes on the next loop rather than waiting for a
+   * person to confirm what the deployment already authorised.
+   *
+   * Written as a normal approval row rather than as a bypass, because the row is
+   * what every reader consults: the permission validator, the workflow's
+   * `grantedApprovals`, the approval list shown next to the task, and the audit
+   * trail answering "who authorised this push". A bypass that only the validator
+   * knew about would satisfy the gate while leaving the record saying nobody did.
+   *
+   * Idempotent: an already-decided row for the action is left alone, so a step
+   * that runs twice (a retry) does not create a second grant or disturb a newer
+   * human decision on the same action.
+   */
+  async autoGrant(input: AutoGrantInput): Promise<void> {
+    const [existing] = await this.database.db
+      .select({ id: approvals.id, status: approvals.status })
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.taskId, input.taskId),
+          eq(approvals.action, input.action as never),
+          inArray(approvals.status, ['pending', 'approved']),
+        ),
+      )
+      .limit(1);
+
+    if (existing) {
+      this.logger.log(
+        `Approval for ${input.action} on ${input.taskReference} already ${existing.status}; ` +
+          'the deployment did not grant it again.',
+      );
+      return;
+    }
+
+    const now = new Date();
+    await this.database.db.insert(approvals).values({
+      taskId: input.taskId,
+      action: input.action as never,
+      status: 'approved',
+      requiredReason: input.requiredReason,
+      context: redactMetadata(input.context),
+      requestedAt: now,
+      decidedAt: now,
+    }).onConflictDoNothing();
+
+    await this.events.publish({
+      taskId: input.taskId,
+      taskReference: input.taskReference,
+      type: 'agent_activity',
+      status: 'running',
+      taskStatus: input.taskStatus,
+      message: `${input.action.replace(/_/g, ' ')} was authorised by ${input.authorisedBy}.`,
+      payload: { action: input.action, context: input.context },
+    });
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.APPROVAL_GRANTED,
+      metadata: {
+        taskReference: input.taskReference,
+        action: input.action,
+        reason: input.authorisedBy,
+        automatic: true,
       },
     });
   }
@@ -213,6 +320,7 @@ export class ApprovalService {
     await this.orchestrator.resume(
       taskId,
       decision === 'approved' ? 'approval_granted' : 'approval_rejected',
+      pending.id,
     );
 
     return { id: pending.id, action: pending.action, status: decision };

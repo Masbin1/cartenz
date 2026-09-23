@@ -134,6 +134,24 @@ export const NO_ARGUMENTS_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+export const GIT_PUSH_SCHEMA = {
+  type: 'object',
+  properties: {
+    /**
+     * The commit this task already made, as the task recorded it.
+     *
+     * Supplied by the workflow rather than by a model - `git_push` is not
+     * available to the model at all - so that the tool can refuse to report a
+     * push it cannot account for. Comparing the remote against the local HEAD
+     * alone is not enough: a workspace re-cloned from the remote has that same
+     * HEAD, so a push of nothing looks exactly like a delivery. Comparing both
+     * against the commit the task recorded is what tells them apart.
+     */
+    commit: { type: 'string' },
+  },
+  additionalProperties: false,
+} as const;
+
 export const GIT_BRANCH_SCHEMA = {
   type: 'object',
   properties: {

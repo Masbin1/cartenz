@@ -1,7 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { GitService } from '../../git/git.service';
 import { assertSafeRefName } from '../../git/git-url';
-import { GIT_BRANCH_SCHEMA, GIT_COMMIT_SCHEMA, NO_ARGUMENTS_SCHEMA } from '../tool-schemas';
+import {
+  GIT_BRANCH_SCHEMA,
+  GIT_COMMIT_SCHEMA,
+  GIT_PUSH_SCHEMA,
+  NO_ARGUMENTS_SCHEMA,
+} from '../tool-schemas';
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../../core/secrets/secrets.provider';
 import type { AnyToolDefinition, ToolDefinition, ToolExecutionContext } from '../tool.interface';
 
@@ -159,19 +164,26 @@ export class RealGitTools {
    * The credential is unsealed here, on demand, and passed straight to the git
    * service - never held in the context, a log or a prompt.
    */
-  private readonly gitPush: ToolDefinition<Record<string, never>> = {
+  private readonly gitPush: ToolDefinition<{ commit?: string }> = {
     name: 'git_push',
     description: 'Push the task branch to the connected repository',
     permission: 'git_push',
     modes: ['odoo_sh', 'on_premise'],
     leavesPlatform: true,
     simulated: false,
-    parameters: NO_ARGUMENTS_SCHEMA,
+    parameters: GIT_PUSH_SCHEMA,
     // Never. The push is the one action that leaves the platform, and it is
     // gated on a human approval reached through the lifecycle, not through a loop.
     availableToModel: false,
-    validate: requireObject,
-    execute: async (_input, context) => {
+    validate: (input) => {
+      if (typeof input !== 'object' || input === null) return 'input must be an object';
+      const commit = (input as { commit?: unknown }).commit;
+      if (commit !== undefined && typeof commit !== 'string') {
+        return 'commit must be a string when given';
+      }
+      return null;
+    },
+    execute: async (input, context) => {
       assertRepository(context);
 
       /**
@@ -209,10 +221,60 @@ export class RealGitTools {
         credential,
       });
 
+      const head = await this.git.revParse(context.workspace.repositoryPath, 'HEAD');
+      const remoteCommit = await this.git.remoteBranchCommit(remoteUrl, context.workspace.branch, {
+        credentialDirectory: context.workspace.metadataPath,
+        credential,
+      });
+
+      /**
+       * Three commits must be the same commit before a task may report delivery:
+       * the one the task recorded as its own, the one at the local HEAD, and the
+       * one the remote branch points at.
+       *
+       * `git push` exiting 0 is not evidence that anything arrived. Pushing a
+       * branch whose tip is already the remote's prints "Everything up-to-date"
+       * and exits 0, which is exactly what a push of nothing looks like. That is
+       * not theoretical: a task whose workspace had been re-cloned from the
+       * remote had a HEAD identical to the remote, pushed a changed branch of no
+       * commits, exited 0, and was reported to the operator as pushed - with no
+       * commit on GitHub anywhere.
+       *
+       * The recorded commit is what makes a re-cloned workspace distinguishable
+       * from a working one: both have the same HEAD, but only the workspace that
+       * holds the work also holds the commit the task saved after making it.
+       *
+       * Verification happens here rather than in the workflow because the
+       * credential is unsealed here and never leaves this layer (ADR-021).
+       */
+      if (remoteCommit === null) {
+        throw new Error(
+          `The push reported success but branch ${context.workspace.branch} does not exist ` +
+            'on the remote. Nothing was delivered.',
+        );
+      }
+      if (remoteCommit !== head) {
+        throw new Error(
+          `The push reported success but the remote's ${context.workspace.branch} is at ` +
+            `${remoteCommit.slice(0, 8)}, not the commit this task made (${head.slice(0, 8)}). ` +
+            'Nothing was delivered.',
+        );
+      }
+      if (input.commit && input.commit !== head) {
+        throw new Error(
+          `This workspace holds ${head.slice(0, 8)}, but the task recorded its commit as ` +
+            `${input.commit.slice(0, 8)}. The workspace is not the one that holds this ` +
+            'task\'s work, so pushing from it would deliver nothing.',
+        );
+      }
+
       return {
         branch: result.branch,
         remote: remoteUrl,
         pushed: result.pushed,
+        commit: head,
+        remoteCommit,
+        verified: true,
       };
     },
   };

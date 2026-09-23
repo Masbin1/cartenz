@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join, resolve, sep } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
 import { DatabaseService } from '../../core/database/database.service';
@@ -108,6 +108,15 @@ export interface AllocateWorkspaceInput {
    * working tree already carries the agent's changes) from a fresh start.
    */
   readonly baseCommit: string | null;
+  /**
+   * The commit this task has already made, when it has made one.
+   *
+   * Used to decide whether a workspace left on disk is the *same* workspace
+   * rather than merely a directory at the same path: a reattach is only allowed
+   * when HEAD is this commit, because anything else is a clone that does not hold
+   * the work and pushing from it would push nothing.
+   */
+  readonly expectedCommit?: string | null;
 }
 
 export class WorkspaceQuotaError extends Error {
@@ -176,6 +185,24 @@ export class WorkspaceManager {
     if (input.executionMode === 'odoo_online') {
       return this.allocateOdooOnline(input);
     }
+
+    /**
+     * A workspace this task already has on disk is reused rather than replaced.
+     *
+     * This is the fix for a change that was committed and then lost. A task
+     * suspends at the push approval; the run ends, its workspace was released,
+     * and the resumption - in another job, possibly another process - cloned
+     * afresh from the remote. The clone has the remote's tip, not the commit the
+     * first run made, so the push sent nothing, exited 0 because the branch was
+     * already up to date, and the task was reported as pushed. The work existed
+     * only in the directory that had been deleted.
+     *
+     * The directory is therefore kept while the task is between states (see
+     * `release`), and reattached here. HEAD must be the commit the task recorded,
+     * because a directory that has drifted is not evidence of that work.
+     */
+    const reattached = await this.reattach(input);
+    if (reattached) return reattached;
 
     const workspaceId = `ws-${randomUUID().slice(0, 8)}`;
     const root = join(this.root, `task-${sanitiseSegment(input.taskReference)}-${workspaceId}`);
@@ -316,6 +343,98 @@ export class WorkspaceManager {
       await rm(root, { recursive: true, force: true }).catch(() => undefined);
       throw error;
     }
+  }
+
+  /**
+   * The workspace this task already has on disk, when there is one that still
+   * holds this task's work.
+   *
+   * Read from `agent_workspaces` rather than by re-deriving the directory name,
+   * because the reference is recorded there and a name rebuilt from the task
+   * reference is a guess. Only a row that has not been released is a candidate,
+   * and the directory must still exist.
+   *
+   * When the task has recorded a commit, HEAD must be exactly that commit. A
+   * directory whose HEAD is something else is a different state of the repository
+   * and reusing it would push whatever it happens to contain.
+   */
+  private async reattach(input: AllocateWorkspaceInput): Promise<Workspace | null> {
+    if (!input.repositoryUrl) return null;
+
+    const [row] = await this.database.db
+      .select({
+        workspaceRef: agentWorkspaces.workspaceRef,
+        rootPath: agentWorkspaces.rootPath,
+        branch: agentWorkspaces.branch,
+        baseCommit: agentWorkspaces.baseCommit,
+      })
+      .from(agentWorkspaces)
+      .where(and(eq(agentWorkspaces.taskId, input.taskId), eq(agentWorkspaces.status, 'ready')))
+      .orderBy(desc(agentWorkspaces.createdAt))
+      .limit(1);
+
+    if (!row) return null;
+    if (!row.rootPath.startsWith(this.root)) {
+      this.logger.error(
+        `Workspace ${row.workspaceRef} records a path outside the workspace root; not reusing it`,
+      );
+      return null;
+    }
+
+    const root = row.rootPath;
+    const repositoryPath = join(root, 'repository');
+    const metadataPath = join(root, 'metadata');
+    const logsPath = join(root, 'logs');
+
+    // The clone must still be there and still be a repository.
+    if (!(await this.isGitRepository(repositoryPath))) return null;
+
+    if (input.expectedCommit) {
+      const head = await this.git.revParse(repositoryPath, 'HEAD').catch(() => null);
+      if (head !== input.expectedCommit) {
+        this.logger.warn(
+          `Workspace ${row.workspaceRef} for ${input.taskReference} is at ` +
+            `${head?.slice(0, 8) ?? 'an unreadable commit'}, not the recorded ` +
+            `${input.expectedCommit.slice(0, 8)}; cloning afresh instead of reusing it.`,
+        );
+        return null;
+      }
+    }
+
+    this.logger.log(
+      `Workspace ${row.workspaceRef} reused for ${input.taskReference}: the task's ` +
+        'existing clone still holds its work.',
+    );
+
+    return {
+      workspaceId: row.workspaceRef,
+      taskReference: input.taskReference,
+      root,
+      repositoryPath,
+      metadataPath,
+      logsPath,
+      branch: row.branch,
+      baseBranch: input.defaultBranch,
+      baseCommit: row.baseCommit,
+      repositoryUrl: input.repositoryUrl,
+      odooVersion: input.odooVersion,
+      simulated: false,
+      readOnlyRoots: this.odooSourceRoots(input.odooSourcePaths),
+      learnedHostKey: this.learnedHostKeys.get(row.workspaceRef) ?? null,
+      credentialRef: input.credentialRef,
+      credentialKind: input.credentialKind,
+      sshHostKey: input.sshHostKey,
+      credentialUsername: input.credentialUsername,
+    };
+  }
+
+  /** True when the path exists and is the working tree of a Git repository. */
+  private async isGitRepository(path: string): Promise<boolean> {
+    const info = await stat(join(path, '.git')).catch(() => null);
+    if (!info) return false;
+
+    const head = await this.git.revParse(path, 'HEAD').catch(() => null);
+    return head !== null;
   }
 
   /**

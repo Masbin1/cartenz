@@ -1293,6 +1293,36 @@ export class AgentWorkflow {
         },
       });
 
+      /**
+       * The grant the tool gate reads, written before the task leaves `committing`.
+       *
+       * ADR-041 lets a deployment push development and staging work without a
+       * per-task approval, but the gate guarding every operation that leaves the
+       * platform consults approval *rows*, not this configuration. Deciding here
+       * and not recording it is what made one push produce two or three identical
+       * prompts: the gate refused the push the workflow had just authorised, the
+       * suspension out of `pushing` was illegal, the job died, and each retry
+       * asked again. Recording it makes the two agree, and the record names the
+       * configuration that authorised it, so "who approved this" still has an
+       * answer.
+       */
+      await this.approvals.autoGrant({
+        taskId: snapshot.taskId,
+        taskReference: snapshot.reference,
+        action: 'git_push',
+        requiredReason:
+          'This deployment pushes development and staging work automatically ' +
+          '(GIT_AUTO_PUSH_ON_TASK=true), so the push is authorised by configuration ' +
+          'rather than by a person.',
+        context: {
+          branch: workspace.branch,
+          commit: commit.slice(0, 12),
+          baseBranch: workspace.baseBranch,
+        },
+        taskStatus: 'committing',
+        authorisedBy: 'GIT_AUTO_PUSH_ON_TASK=true',
+      });
+
       await this.narrate(
         snapshot,
         `Pushing ${workspace.branch} to the remote without an approval: this deployment ` +
@@ -1359,19 +1389,45 @@ export class AgentWorkflow {
     if (backupDecision !== null) return backupDecision;
 
     const workspace = await this.acquireWorkspace(snapshot);
-    const result = await this.callTool(snapshot, workspace, 'git_push', {});
+    const result = await this.callTool(snapshot, workspace, 'git_push', {
+      // The commit this task recorded making. The tool refuses to report success
+      // when the branch in this workspace is not that commit.
+      ...(snapshot.commitHash ? { commit: snapshot.commitHash } : {}),
+    });
 
     if (result.status === 'suspended') return false;
     if (result.status !== 'succeeded') {
+      /**
+       * The tool's own words, not a generic sentence.
+       *
+       * A push that was reported as successful by git but did not put this task's
+       * commit on the remote fails here with an explanation naming both commits,
+       * and that explanation is the only thing that tells an operator whether the
+       * work is on GitHub. Replacing it with "The push did not complete" was how a
+       * lost commit stayed invisible.
+       */
+      const detail =
+        typeof result.output.error === 'string' ? ` ${result.output.error}` : '';
+
       return this.tasks.transition(snapshot.taskId, 'pushing', 'failed', {
-        failureReason: 'The push did not complete.',
+        failureReason: `The push did not complete.${detail}`,
       });
     }
 
-    await this.narrate(snapshot, `Pushed ${workspace.branch} to the remote repository.`);
+    const commit =
+      typeof result.output.commit === 'string' ? result.output.commit.slice(0, 8) : null;
+
+    await this.narrate(
+      snapshot,
+      commit
+        ? `Pushed ${workspace.branch} to the remote repository, verified at commit ${commit}.`
+        : `Pushed ${workspace.branch} to the remote repository.`,
+    );
 
     return this.tasks.transition(snapshot.taskId, 'pushing', 'completed', {
-      message: `Branch ${workspace.branch} was pushed to the remote repository.`,
+      message: commit
+        ? `Branch ${workspace.branch} was pushed to the remote repository at commit ${commit}.`
+        : `Branch ${workspace.branch} was pushed to the remote repository.`,
     });
   }
 
@@ -1598,6 +1654,12 @@ export class AgentWorkflow {
         (await this.odooVersions.sourcePathsFor(snapshot.odooVersion, snapshot.odooEdition)) ??
         (await this.odooSettings.sourcePathsFor(snapshot.odooEdition)),
       baseCommit: snapshot.baseCommit,
+      /**
+       * The commit this task already made, if any. It is what tells the
+       * workspace layer that a directory still holding that commit may be
+       * reattached, rather than cloning a tree that does not have the work.
+       */
+      expectedCommit: snapshot.commitHash,
     });
 
     this.workspaces.set(snapshot.taskId, workspace);
@@ -1617,6 +1679,29 @@ export class AgentWorkflow {
     if (!workspace) return;
 
     this.workspaces.delete(taskId);
+
+    /**
+     * A task that has not settled keeps its clone on disk.
+     *
+     * The commit this run made exists nowhere else: it was never pushed, and the
+     * diff saved on the task is a patch, not the commit. Deleting the directory
+     * when a run ends at an approval therefore destroys the work, and the
+     * resumption - a separate job, often a separate process - cloned the remote
+     * afresh, pushed a branch identical to the remote's, exited 0 and reported
+     * success. The workspace row stays `ready` so the resumption reattaches to
+     * this directory instead.
+     *
+     * The directory is removed when the task settles, which is the point at which
+     * nothing further needs it.
+     */
+    if (!isTerminalStatus(status)) {
+      this.logger.log(
+        `Workspace ${workspace.workspaceId} kept for ${taskId}: the task is ${status} and its ` +
+          'commit lives only in that clone.',
+      );
+      return;
+    }
+
     await this.workspaceManager.release(workspace, status === 'failed' ? 'failed' : 'completed');
   }
 

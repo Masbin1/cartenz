@@ -69,13 +69,22 @@ export class QueueAgentOrchestrator implements AgentOrchestrator, OnApplicationS
     this.logger.log(`Queued task ${taskId} for execution`);
   }
 
-  async resume(taskId: string, reason: ResumeReason): Promise<void> {
+  async resume(taskId: string, reason: ResumeReason, approvalId: string): Promise<void> {
     await this.queue.add(
       AGENT_JOB_RESUME,
       { taskId, reason },
-      // The job id includes the reason and a monotonic suffix so that a second
-      // approval on the same task is not de-duplicated against the first.
-      { jobId: `resume-${taskId}-${reason}-${Date.now()}` },
+      /**
+       * Derived from the approval that was decided, not from the clock.
+       *
+       * A date suffix de-duplicates nothing: two enqueues of the same decision
+       * (a retried HTTP request, a UI double-click, two processes both seeing the
+       * row undecided) get different ids and both run, so the workflow entered
+       * twice for one approval. The approval id is the identity of the decision,
+       * so the second enqueue is rejected by BullMQ - and two *different*
+       * approvals on the same task still get two jobs, which is the case the date
+       * suffix was there to protect.
+       */
+      { jobId: `resume-${taskId}-${reason}-${approvalId}` },
     );
     this.logger.log(`Queued task ${taskId} for resumption (${reason})`);
   }
