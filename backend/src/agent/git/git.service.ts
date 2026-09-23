@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { CommandRunner, type CommandResult } from '../../core/process/command-runner.service';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
@@ -295,10 +296,15 @@ export class GitService {
       allowLocal: this.config.git.allowLocalRemotes,
     });
 
-    // Without a credential there is nothing to write, so the lease has no files
-    // and any directory serves as the working directory for a command that does
-    // not read one.
-    const directory = options.credentialDirectory ?? tmpdir();
+    // Without a credential there is nothing to write, so any directory serves as
+    // the working directory for a command that does not read one. With a
+    // credential the files must go somewhere that is ours alone: `mkdtemp` under
+    // the system temp, where `release` is the only thing that deletes them.
+    const directory = options.credentialDirectory
+      ? options.credentialDirectory
+      : options.credential && options.credential.value.length > 0
+        ? await mkdtemp(join(tmpdir(), 'cartenz-ls-remote-'))
+        : tmpdir();
     const lease = await leaseGitCredential({
       directory,
       credential: options.credential ?? null,
@@ -333,6 +339,11 @@ export class GitService {
       return [...new Set(branches)].sort().slice(0, MAX_REMOTE_BRANCHES);
     } finally {
       await lease.release();
+      // Only ours, only when we made it: an explicitly supplied directory
+      // belongs to the caller (and to the tests that assert its contents).
+      if (directory.startsWith(join(tmpdir(), 'cartenz-ls-remote-'))) {
+        await rm(directory, { recursive: true, force: true });
+      }
     }
   }
 
