@@ -33,7 +33,9 @@ import {
 import {
   REPOSITORY_BACKED_PROJECT_TYPES,
   DEFAULT_ODOO_EDITION,
+  GIT_CONNECTION_TYPES,
   type CredentialKind,
+  type GitTransport,
   type OdooEdition,
   type ProjectProvisioningStatus,
   type ProjectType,
@@ -45,7 +47,7 @@ import { redactMetadata } from '../../core/audit/redact';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import { buildProjectSpecification } from './project-specification';
 import { resolveSelectionOrThrow } from './module-selection-sanitiser';
-import { effectiveRepositoryUrl } from './repository-url';
+import { effectiveRepositoryUrl, applyTransportToUrl, transportOfUrl } from './repository-url';
 import {
   buildProvisionedAddonFiles,
   buildScaffoldFiles,
@@ -91,6 +93,7 @@ import type {
   CreateProjectDto,
   ListProjectsQueryDto,
   UpdateProjectDto,
+  UpdateProjectGitAccessDto,
 } from './dto/project.dto';
 
 /**
@@ -444,6 +447,262 @@ export class ProjectsService {
       : null;
 
     return { branches, credentialLabel: label };
+  }
+
+  /**
+   * A project's git transport and credential, as its settings form shows them
+   * (ADR-059).
+   *
+   * Deliberately reports both the stored choice and the *effective* one. A
+   * project with `auto` still uses a concrete transport, and a form that showed
+   * only "auto" would leave the operator unable to tell whether the push about
+   * to run will present a key or a token — which is the question this setting
+   * exists to answer.
+   */
+  async gitAccess(user: AuthenticatedUser, projectId: string) {
+    await this.authz.requireProjectAccess(user, projectId, { includeArchived: true });
+
+    const facts = await this.gitAccessFacts(projectId);
+    const credentials = await this.gitCredentials.list();
+
+    return {
+      repositoryUrl: facts.repositoryUrl,
+      urlTransport: facts.urlTransport,
+      gitTransport: facts.gitTransport,
+      gitCredentialId: facts.gitCredentialId,
+      gitUsername: facts.gitUsername,
+      /** What the next clone or push will actually do, once `auto` is resolved. */
+      effectiveTransport: facts.effectiveTransport,
+      /** Where the credential will come from, in the order it is resolved. */
+      effectiveCredentialSource: facts.credentialSource,
+      effectiveCredentialId: facts.effectiveCredentialId,
+      effectiveCredentialLabel: facts.effectiveCredentialLabel,
+      effectiveCredentialKind: facts.effectiveCredentialKind,
+      /**
+       * True when the credential and the transport cannot work together — the
+       * failure that produced `could not read Username for 'https://github.com'`
+       * on a project whose only credential was an SSH key.
+       */
+      transportMismatch: facts.transportMismatch,
+      /** The deployment default, so the form can say what "use the default" means. */
+      defaultCredentialLabel: credentials.find((row) => row.isDefault)?.label ?? null,
+      availableCredentials: credentials.map((row) => ({
+        id: row.id,
+        label: row.label,
+        credentialKind: row.credentialKind,
+        hosts: row.hosts,
+        isDefault: row.isDefault,
+        enabled: row.enabled,
+      })),
+      /** Whether this project's remote can be reached at all. */
+      hasRepository: facts.repositoryUrl !== null,
+    };
+  }
+
+  /**
+   * Sets a project's transport and credential (ADR-059).
+   *
+   * The URL moves with the transport, in the same write: a saved `https` on a
+   * remote still written as `git@github.com:...` would leave the clone using one
+   * scheme and the operator believing another, and the mismatch is invisible
+   * until a push fails.
+   *
+   * A credential of the wrong kind for the chosen transport is refused outright
+   * rather than stored with a warning. That combination *is* the bug this
+   * setting exists to fix, and a warning on a settings page is read once and
+   * then never again — the operator would find out at the next failed push,
+   * which is where they found out before.
+   */
+  async updateGitAccess(
+    user: AuthenticatedUser,
+    projectId: string,
+    dto: UpdateProjectGitAccessDto,
+  ) {
+    // A remote's credential is an admin's call, at the same rank as the agent
+    // permissions beside it (ADR-055): it decides what a task may reach.
+    await this.authz.requireProjectAccess(user, projectId, { requireAdmin: true });
+
+    const facts = await this.gitAccessFacts(projectId);
+
+    const transport = dto.gitTransport ?? facts.gitTransport;
+    const credentialId =
+      dto.gitCredentialId !== undefined ? dto.gitCredentialId : facts.gitCredentialId;
+    const username = dto.gitUsername !== undefined ? dto.gitUsername : facts.gitUsername;
+
+    if (credentialId) {
+      const named = (await this.gitCredentials.list()).find((row) => row.id === credentialId);
+      if (!named) {
+        throw new BadRequestException('That git credential no longer exists.');
+      }
+      if (!named.enabled) {
+        throw new BadRequestException(
+          `The credential "${named.label}" is disabled, so it cannot be used. Enable it in ` +
+            'Settings, or choose another.',
+        );
+      }
+
+      // Only checked against an explicit transport. Under `auto` the URL decides,
+      // and refusing there would forbid the one case a person cannot avoid: a
+      // project whose credential is set before its remote is.
+      const needed: CredentialKind | null =
+        transport === 'ssh' ? 'ssh_key' : transport === 'https' ? 'token' : null;
+      if (needed && named.credentialKind !== needed) {
+        throw new BadRequestException(
+          `The ${transport.toUpperCase()} transport authenticates with a ` +
+            `${needed === 'ssh_key' ? 'private key' : 'token'}, but "${named.label}" is a ` +
+            `${named.credentialKind === 'ssh_key' ? 'private key' : 'token'}. Register a ` +
+            `${needed === 'ssh_key' ? 'private key' : 'personal access token'} in Settings → Git ` +
+            `credentials, or choose the ${needed === 'ssh_key' ? 'HTTPS' : 'SSH'} transport.`,
+        );
+      }
+    }
+
+    const patch: Record<string, unknown> = {
+      gitTransport: transport,
+      gitCredentialId: credentialId,
+      gitUsername: username,
+      updatedAt: new Date(),
+    };
+
+    /**
+     * The URL is rewritten only when the project actually carries one on its own
+     * row. A project whose URL comes from a connection (ADR-041) has none to
+     * rewrite: that URL belongs to the connection, and editing it here would
+     * change something this screen does not own.
+     */
+    if (facts.ownRepositoryUrl) {
+      patch.repositoryUrl = applyTransportToUrl(facts.ownRepositoryUrl, transport);
+    }
+
+    await this.database.db.update(projects).set(patch).where(eq(projects.id, projectId));
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.PROJECT_UPDATED,
+      projectId,
+      userId: user.userId,
+      metadata: {
+        fields: ['gitTransport', 'gitCredentialId', 'gitUsername'],
+        gitTransport: transport,
+        // An id, never a value: enough for the audit log to answer "which
+        // projects were moved to SSH" without carrying any secret material.
+        gitCredentialId: credentialId,
+      },
+    });
+
+    return this.gitAccess(user, projectId);
+  }
+
+  /**
+   * Everything the git-access reads and writes need, in one place.
+   *
+   * Resolution order for the credential (ADR-059), which mirrors what the task
+   * snapshot does at clone time so the form cannot describe a push that will not
+   * happen:
+   *
+   *  1. this project's own choice, when it has one;
+   *  2. the project's first git connection, which is how every project created
+   *     before this setting existed holds its credential;
+   *  3. the deployment default for the remote's host (ADR-058).
+   */
+  private async gitAccessFacts(projectId: string) {
+    const [project] = await this.database.db
+      .select({
+        repositoryUrl: projects.repositoryUrl,
+        gitTransport: projects.gitTransport,
+        gitCredentialId: projects.gitCredentialId,
+        gitUsername: projects.gitUsername,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+
+    if (!project) throw new NotFoundException('Project not found');
+
+    const connections = await this.database.db
+      .select({
+        connectionType: projectConnections.connectionType,
+        secretRef: projectConnections.secretRef,
+        credentialKind: projectConnections.credentialKind,
+        metadata: projectConnections.metadata,
+      })
+      .from(projectConnections)
+      .where(eq(projectConnections.projectId, projectId))
+      .orderBy(projectConnections.createdAt);
+
+    const repositoryUrl = effectiveRepositoryUrl(project.repositoryUrl, connections);
+    const urlTransport = repositoryUrl ? transportOfUrl(repositoryUrl) : null;
+    const declared = project.gitTransport as GitTransport;
+    const effectiveTransport = declared !== 'auto' ? declared : urlTransport;
+
+    const credentials = await this.gitCredentials.list();
+    const chosen = project.gitCredentialId
+      ? credentials.find((row) => row.id === project.gitCredentialId) ?? null
+      : null;
+
+    const connection = connections.find(
+      (row) =>
+        row.secretRef !== null &&
+        (GIT_CONNECTION_TYPES as readonly string[]).includes(row.connectionType),
+    );
+
+    const defaultForTransport =
+      effectiveTransport === 'ssh'
+        ? credentials.find((row) => row.isDefault && row.credentialKind === 'ssh_key')
+        : effectiveTransport === 'https'
+          ? credentials.find((row) => row.isDefault && row.credentialKind === 'token')
+          : credentials.find((row) => row.isDefault);
+
+    /**
+     * Named so the form can distinguish the three cases: this project chose, the
+     * deployment default applies, or nothing does. `'none'` is the one that
+     * predicts a failed push.
+     */
+    const source: 'project' | 'connection' | 'deployment_default' | 'none' = chosen
+      ? 'project'
+      : connection?.secretRef
+        ? 'connection'
+        : defaultForTransport
+          ? 'deployment_default'
+          : 'none';
+    const effectiveCredentialKind = chosen
+      ? chosen.credentialKind
+      : connection?.secretRef
+        ? (connection.credentialKind as CredentialKind)
+        : (defaultForTransport?.credentialKind ?? null);
+
+    /**
+     * A mismatch is only knowable when both halves are. An HTTPS remote with no
+     * credential at all is not a mismatch — it is a project nobody has given a
+     * token yet, which the push reports on its own terms.
+     */
+    const needed: CredentialKind | null =
+      effectiveTransport === 'ssh' ? 'ssh_key' : effectiveTransport === 'https' ? 'token' : null;
+    const transportMismatch =
+      needed !== null && effectiveCredentialKind !== null && effectiveCredentialKind !== needed;
+
+    return {
+      ownRepositoryUrl: project.repositoryUrl,
+      repositoryUrl,
+      urlTransport,
+      gitTransport: declared,
+      gitCredentialId: project.gitCredentialId,
+      gitUsername: project.gitUsername,
+      effectiveTransport,
+      credentialSource: source,
+      /**
+       * Only a project-level choice names a registered credential by id: a
+       * connection's secret is not itself a row in the registry, and neither is
+       * the deployment default until it is looked up by label below.
+       */
+      effectiveCredentialId: chosen?.id ?? null,
+      effectiveCredentialLabel:
+        chosen?.label ??
+        (connection?.secretRef ? 'This project\'s stored connection' : null) ??
+        defaultForTransport?.label ??
+        null,
+      effectiveCredentialKind,
+      transportMismatch,
+    };
   }
 
   /**

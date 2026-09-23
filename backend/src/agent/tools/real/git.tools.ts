@@ -197,6 +197,7 @@ export class RealGitTools {
             kind: context.workspace.credentialKind,
             value: await this.secrets.read(context.workspace.credentialRef),
             hostKey: context.workspace.sshHostKey,
+            username: context.workspace.credentialUsername,
           }
         : null;
 

@@ -65,6 +65,7 @@ describe('repository write guard', () => {
         credentialRef: null,
         credentialKind: 'token',
         sshHostKey: null,
+        credentialUsername: null,
       },
     };
   });

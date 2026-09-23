@@ -126,6 +126,7 @@ export interface ToolExecutionContext {
     readonly credentialRef: string | null;
     readonly credentialKind: 'token' | 'ssh_key';
     readonly sshHostKey: string | null;
+    readonly credentialUsername: string | null;
   };
 }
 

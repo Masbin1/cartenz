@@ -58,6 +58,14 @@ export interface Workspace {
   readonly credentialKind: 'token' | 'ssh_key';
   /** Recorded host key for the remote, where one is held. */
   readonly sshHostKey: string | null;
+  /**
+   * The account to present with a token over HTTPS (ADR-059). Null means the
+   * host's convention (`x-access-token`, `oauth2`) is used instead.
+   *
+   * Not a secret: it is stored on the project row, reported by the settings API
+   * and shown in the portal. The token it accompanies never is.
+   */
+  readonly credentialUsername: string | null;
 }
 
 export interface AllocateWorkspaceInput {
@@ -74,6 +82,8 @@ export interface AllocateWorkspaceInput {
   readonly credentialKind: 'token' | 'ssh_key';
   /** Recorded host key for the remote, where one is held. */
   readonly sshHostKey: string | null;
+  /** The account to present with a token over HTTPS (ADR-059). */
+  readonly credentialUsername: string | null;
   /**
    * The execution mode this task runs in (ADR-028). Null for a project type with
    * no execution surface.
@@ -212,6 +222,7 @@ export class WorkspaceManager {
         credentialRef: input.credentialRef,
         credentialKind: input.credentialKind,
         sshHostKey: input.sshHostKey,
+        credentialUsername: input.credentialUsername,
       };
     }
 
@@ -226,6 +237,7 @@ export class WorkspaceManager {
             kind: input.credentialKind,
             value: await this.secrets.read(input.credentialRef),
             hostKey: input.sshHostKey,
+            username: input.credentialUsername,
           }
         : null;
 
@@ -295,6 +307,7 @@ export class WorkspaceManager {
         credentialRef: input.credentialRef,
         credentialKind: input.credentialKind,
         sshHostKey: input.sshHostKey,
+        credentialUsername: input.credentialUsername,
       };
     } catch (error) {
       await this.markStatus(workspaceId, 'failed', null, 0, 0, (error as Error).message);
@@ -366,6 +379,7 @@ export class WorkspaceManager {
       credentialRef: null,
       credentialKind: input.credentialKind,
       sshHostKey: null,
+      credentialUsername: null,
     };
   }
 
@@ -505,6 +519,7 @@ export class WorkspaceManager {
       credentialRef: input.credentialRef,
       credentialKind: input.credentialKind,
       sshHostKey: input.sshHostKey,
+      credentialUsername: input.credentialUsername,
     };
   }
 

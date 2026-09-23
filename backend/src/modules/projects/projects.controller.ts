@@ -23,6 +23,7 @@ import {
   RestartProjectDto,
   UpdateAgentPermissionsDto,
   UpdateProjectDto,
+  UpdateProjectGitAccessDto,
 } from './dto/project.dto';
 import { ProjectEnvironmentsService } from './project-environments.service';
 import { AuthorizationService } from '../../core/authz/authorization.service';
@@ -167,6 +168,30 @@ export class ProjectsController {
     @Body() dto: UpdateAgentPermissionsDto,
   ) {
     return this.projects.updateAgentPermissions(user, projectId, dto.permissions);
+  }
+
+  /**
+   * How this project reaches its git remote, and with which credential (ADR-059).
+   *
+   * Its own path rather than fields on PATCH /:projectId because the transport
+   * and the URL move together: saving one without the other is the mismatch this
+   * setting exists to prevent.
+   */
+  @Get(':projectId/git-access')
+  gitAccess(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ) {
+    return this.projects.gitAccess(user, projectId);
+  }
+
+  @Patch(':projectId/git-access')
+  updateGitAccess(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() dto: UpdateProjectGitAccessDto,
+  ) {
+    return this.projects.updateGitAccess(user, projectId, dto);
   }
 
   /**

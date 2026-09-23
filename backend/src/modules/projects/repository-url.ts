@@ -1,4 +1,5 @@
-import { GIT_CONNECTION_TYPES } from '../../core/enums';
+import { GIT_CONNECTION_TYPES, type GitTransport } from '../../core/enums';
+import { assertSafeRemoteUrl, type ParsedRemote } from '../../agent/git/git-url';
 
 /**
  * A project's repository URL, resolved from both places one can be recorded
@@ -83,4 +84,73 @@ export function effectiveRepositoryUrl(
   }
 
   return repositoryUrlFromConnections(connections);
+}
+
+/** The transport a URL's own scheme implies, or null when it cannot be read. */
+export function transportOfUrl(url: string): 'ssh' | 'https' | null {
+  try {
+    return assertSafeRemoteUrl(url, { allowLocal: true }).scheme === 'ssh' ? 'ssh' : 'https';
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Rewrites a remote URL into the form the chosen transport needs (ADR-059).
+ *
+ * The point of the setting is that a person picks "SSH" or "HTTPS" and the URL
+ * follows, rather than having to know that `https://github.com/owner/repo.git`
+ * and `git@github.com:owner/repo.git` are the same repository reached two ways.
+ * Getting that wrong by hand is exactly how a project ends up with an HTTPS
+ * remote and an SSH key.
+ *
+ * Returns the URL unchanged when:
+ *  - the transport is `auto`, which by definition does not override the URL;
+ *  - the URL is already in the requested form (so the rewrite is idempotent and
+ *    a portal that saves the whole object twice does not mangle it);
+ *  - the URL cannot be parsed, or is a local `file://` remote. A URL the parser
+ *    refuses is left exactly as the caller wrote it, so the failure surfaces
+ *    later as a git error naming the real URL rather than as a silently
+ *    invented one.
+ */
+export function applyTransportToUrl(url: string, transport: GitTransport): string {
+  if (transport === 'auto') return url;
+
+  let parsed: ParsedRemote;
+  try {
+    parsed = assertSafeRemoteUrl(url, { allowLocal: true });
+  } catch {
+    return url;
+  }
+
+  if (parsed.isLocal) return url;
+
+  // A non-default port survives the rewrite by keeping the URL untouched, in
+  // either direction: `https://host:port/path` is a different service than
+  // `https://host/path` would silently become, and neither the https nor the
+  // ssh branch below has a way to carry a port over correctly.
+  const port = safePort(parsed.url);
+  if (port) return url;
+
+  if (transport === 'https') {
+    if (parsed.scheme === 'https') return url;
+    return `https://${parsed.host}/${parsed.path}`;
+  }
+
+  // ssh: keeps the URL's own account when it names one (an operator may have a
+  // non-standard deploy user); falls back to `git`, what every major host
+  // expects for a deploy key, when the URL had none to carry over.
+  if (parsed.scheme === 'ssh') return url;
+  const account = parsed.sshUser ?? 'git';
+  return `ssh://${account}@${parsed.host}/${parsed.path}`;
+}
+
+/** The port on a normalised `ssh://`/`https://` URL, or null when it is the default. */
+function safePort(normalisedUrl: string): string | null {
+  try {
+    const port = new URL(normalisedUrl).port;
+    return port.length > 0 ? port : null;
+  } catch {
+    return null;
+  }
 }

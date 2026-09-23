@@ -12,6 +12,17 @@ import {
 } from './git-credentials';
 
 /**
+ * The username to place in a token clone/push URL for a given host (ADR-059).
+ *
+ * A project's own choice wins, so an operator whose host wants a real account
+ * name — a self-hosted GitLab, a Bitbucket app password — is not stuck with
+ * the generic placeholder `tokenUsernameFor` guesses for public hosts.
+ */
+function httpsUsername(credential: GitCredential | null, host: string): string {
+  return credential?.username?.trim() || tokenUsernameFor(host);
+}
+
+/**
  * Git operations (ADR-019).
  *
  * Every invocation goes through CommandRunner, so no git command is ever built as
@@ -180,7 +191,7 @@ export class GitService {
     // key is supplied through GIT_SSH_COMMAND.
     const cloneUrl =
       remote.scheme === 'https' && options.credential?.kind === 'token'
-        ? `https://${tokenUsernameFor(remote.host)}@${remote.host}/${remote.path}`
+        ? `https://${httpsUsername(options.credential, remote.host)}@${remote.host}/${remote.path}`
         : remote.url;
 
     try {
@@ -265,7 +276,7 @@ export class GitService {
 
     const listUrl =
       remote.scheme === 'https' && options.credential?.kind === 'token'
-        ? `https://${tokenUsernameFor(remote.host)}@${remote.host}/${remote.path}`
+        ? `https://${httpsUsername(options.credential, remote.host)}@${remote.host}/${remote.path}`
         : remote.url;
 
     try {
@@ -560,7 +571,7 @@ export class GitService {
 
     const pushUrl =
       remote.scheme === 'https' && options.credential?.kind === 'token'
-        ? `https://${tokenUsernameFor(remote.host)}@${remote.host}/${remote.path}`
+        ? `https://${httpsUsername(options.credential, remote.host)}@${remote.host}/${remote.path}`
         : remote.url;
 
     try {
@@ -622,7 +633,7 @@ export class GitService {
 
     const fetchUrl =
       remote.scheme === 'https' && options.credential?.kind === 'token'
-        ? `https://${tokenUsernameFor(remote.host)}@${remote.host}/${remote.path}`
+        ? `https://${httpsUsername(options.credential, remote.host)}@${remote.host}/${remote.path}`
         : remote.url;
 
     try {

@@ -254,6 +254,19 @@ export const TARGETABLE_ENVIRONMENT_KINDS: readonly EnvironmentKind[] = [
 export const CREDENTIAL_KINDS = ['token', 'ssh_key'] as const;
 
 /**
+ * How a project's git remote is reached (ADR-059).
+ *
+ * A project-level choice rather than a property inferred from the URL, because
+ * the two transports need different credentials and a mismatch fails in a way
+ * that names nothing the operator did: an HTTPS remote with only an SSH key
+ * registered makes `git push` prompt for a username, and the worker has no
+ * terminal to answer on. `auto` is the URL's own scheme, which is what every
+ * project did before this setting existed.
+ */
+export const GIT_TRANSPORTS = ['auto', 'ssh', 'https'] as const;
+export type GitTransport = (typeof GIT_TRANSPORTS)[number];
+
+/**
  * The model providers this deployment may configure (ADR-023).
  *
  * `openai-compatible` is one entry rather than several because that is what it

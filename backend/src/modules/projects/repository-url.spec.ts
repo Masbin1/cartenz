@@ -1,4 +1,9 @@
-import { effectiveRepositoryUrl, repositoryUrlFromConnections } from './repository-url';
+import {
+  applyTransportToUrl,
+  effectiveRepositoryUrl,
+  repositoryUrlFromConnections,
+  transportOfUrl,
+} from './repository-url';
 
 describe('repositoryUrlFromConnections', () => {
   it('reads cloneUrl from a github connection', () => {
@@ -76,5 +81,72 @@ describe('effectiveRepositoryUrl', () => {
   it('returns null when neither the column nor a connection has one', () => {
     expect(effectiveRepositoryUrl(null, [])).toBeNull();
     expect(effectiveRepositoryUrl(undefined, [{ connectionType: 'odoo_api', metadata: {} }])).toBeNull();
+  });
+});
+
+describe('transportOfUrl', () => {
+  it('reads https from an https URL', () => {
+    expect(transportOfUrl('https://github.com/acme/repo.git')).toBe('https');
+  });
+
+  it('reads ssh from both ssh URL forms', () => {
+    expect(transportOfUrl('ssh://git@github.com/acme/repo.git')).toBe('ssh');
+    expect(transportOfUrl('git@github.com:acme/repo.git')).toBe('ssh');
+  });
+
+  it('returns null for an unparseable URL', () => {
+    expect(transportOfUrl('not a url')).toBeNull();
+  });
+});
+
+describe('applyTransportToUrl (ADR-059)', () => {
+  it('leaves the URL untouched under auto', () => {
+    expect(applyTransportToUrl('https://github.com/acme/repo.git', 'auto')).toBe(
+      'https://github.com/acme/repo.git',
+    );
+    expect(applyTransportToUrl('git@github.com:acme/repo.git', 'auto')).toBe(
+      'git@github.com:acme/repo.git',
+    );
+  });
+
+  it('rewrites an ssh URL to https', () => {
+    expect(applyTransportToUrl('git@github.com:acme/repo.git', 'https')).toBe(
+      'https://github.com/acme/repo.git',
+    );
+    expect(applyTransportToUrl('ssh://git@github.com/acme/repo.git', 'https')).toBe(
+      'https://github.com/acme/repo.git',
+    );
+  });
+
+  it('rewrites an https URL to ssh, defaulting the account to git', () => {
+    expect(applyTransportToUrl('https://github.com/acme/repo.git', 'ssh')).toBe(
+      'ssh://git@github.com/acme/repo.git',
+    );
+  });
+
+  it('rewriting to ssh keeps a non-default account from the original URL', () => {
+    expect(applyTransportToUrl('ssh://deploy@github.com/acme/repo.git', 'https')).toBe(
+      'https://github.com/acme/repo.git',
+    );
+  });
+
+  it('is idempotent: a URL already in the requested form is returned unchanged', () => {
+    expect(applyTransportToUrl('https://github.com/acme/repo.git', 'https')).toBe(
+      'https://github.com/acme/repo.git',
+    );
+    expect(applyTransportToUrl('git@github.com:acme/repo.git', 'ssh')).toBe(
+      'git@github.com:acme/repo.git',
+    );
+  });
+
+  it('leaves an unparseable URL exactly as written, for either transport', () => {
+    expect(applyTransportToUrl('not a url', 'https')).toBe('not a url');
+    expect(applyTransportToUrl('not a url', 'ssh')).toBe('not a url');
+  });
+
+  it('leaves a URL with a non-default port untouched rather than mangling the port', () => {
+    expect(applyTransportToUrl('https://example.test:8443/acme/repo.git', 'ssh')).toBe(
+      'https://example.test:8443/acme/repo.git',
+    );
   });
 });

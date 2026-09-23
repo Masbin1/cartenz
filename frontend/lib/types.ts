@@ -12,6 +12,17 @@ export type ProjectType = 'repository' | 'odoo_sh' | 'on_premise' | 'odoo_online
 
 export type ConnectionType = 'github' | 'gitlab' | 'odoo_api' | 'connector';
 
+/** How a project's git remote is reached (ADR-059). */
+export type GitTransport = 'auto' | 'ssh' | 'https';
+
+export const GIT_TRANSPORTS: readonly GitTransport[] = ['auto', 'ssh', 'https'];
+
+export const GIT_TRANSPORT_LABELS: Record<GitTransport, string> = {
+  auto: 'Automatic (from the repository URL)',
+  ssh: 'SSH',
+  https: 'HTTPS',
+};
+
 export type UserRegion = 'indonesia' | 'south_africa' | 'india';
 
 export const USER_REGIONS: readonly UserRegion[] = ['indonesia', 'south_africa', 'india'];
@@ -644,6 +655,49 @@ export interface GitCredential {
 
 export interface GitCredentialList {
   credentials: GitCredential[];
+}
+
+/** A project's git transport and credential choice (ADR-059). */
+export interface ProjectGitAccess {
+  /** The URL as actually used: the project's own, or the connection's. */
+  repositoryUrl: string | null;
+  /** How the URL parses, when there is one to parse. Null for none, or an unparseable value. */
+  urlTransport: 'ssh' | 'https' | null;
+  /** The project's own transport choice. 'auto' defers to `urlTransport`. */
+  gitTransport: GitTransport;
+  /** What transport a push or clone actually uses, resolving 'auto'. */
+  effectiveTransport: 'ssh' | 'https' | null;
+  /** The project's own credential choice, when it has made one. */
+  gitCredentialId: string | null;
+  /** The username to combine with a token credential over HTTPS. */
+  gitUsername: string | null;
+  /** The credential a push or clone actually uses. */
+  effectiveCredentialId: string | null;
+  effectiveCredentialLabel: string | null;
+  effectiveCredentialKind: 'token' | 'ssh_key' | null;
+  /** Where the effective credential came from. */
+  effectiveCredentialSource: 'project' | 'connection' | 'deployment_default' | 'none';
+  /** True when the credential cannot authenticate the effective transport. */
+  transportMismatch: boolean;
+  /** The deployment-wide default's label, for the "use the default" option. */
+  defaultCredentialLabel: string | null;
+  /** Everything selectable, so the form needs no second request. */
+  availableCredentials: {
+    id: string;
+    label: string;
+    credentialKind: 'token' | 'ssh_key';
+    hosts: string[];
+    isDefault: boolean;
+    enabled: boolean;
+  }[];
+  /** Whether the project has a remote at all. */
+  hasRepository: boolean;
+}
+
+export interface UpdateProjectGitAccessDto {
+  gitTransport?: GitTransport;
+  gitCredentialId?: string | null;
+  gitUsername?: string | null;
 }
 
 /** A document attached to a project for the agent to read (ADR-030). */

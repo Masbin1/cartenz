@@ -7,6 +7,7 @@ import type {
   EnvironmentKind,
   GitCredential,
   GitCredentialList,
+  GitTransport,
   ModelProviderId,
   ModelProviderList,
   ModelProviderRow,
@@ -19,6 +20,7 @@ import type {
   ProjectDetail,
   ProjectDocument,
   ProjectDocumentDetail,
+  ProjectGitAccess,
   OdooSettings,
   ProjectEnvironment,
   ProjectPreviewState,
@@ -614,6 +616,29 @@ export const api = {
 
     update: (projectId: string, body: Record<string, unknown>) =>
       request<ProjectDetail>(`/projects/${projectId}`, { method: 'PATCH', body }),
+
+    /**
+     * A project's git transport and credential choice (ADR-059). Read on demand
+     * rather than off the project detail: it is consulted rarely, and only the
+     * settings page cares.
+     */
+    gitAccess: (projectId: string) =>
+      request<ProjectGitAccess>(`/projects/${projectId}/git-access`),
+
+    /**
+     * Sets the transport and the credential. Sending `gitCredentialId: null`
+     * clears the project's own choice so it falls back to the deployment default
+     * again — that is a different intent from leaving the field out, which keeps
+     * whatever is stored.
+     */
+    updateGitAccess: (
+      projectId: string,
+      body: { gitTransport?: GitTransport; gitCredentialId?: string | null; gitUsername?: string | null },
+    ) =>
+      request<ProjectGitAccess>(`/projects/${projectId}/git-access`, {
+        method: 'PATCH',
+        body,
+      }),
 
     updateAgentPermissions: (projectId: string, permissions: Record<string, boolean>) =>
       request<Record<string, boolean>>(`/projects/${projectId}/agent-permissions`, {

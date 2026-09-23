@@ -17,6 +17,7 @@ import {
   CONNECTION_TYPES,
   CREDENTIAL_KINDS,
   ENVIRONMENT_KINDS,
+  GIT_TRANSPORTS,
   ODOO_EDITIONS,
   ODOO_VERSIONS,
   PROJECT_TYPES,
@@ -24,6 +25,7 @@ import {
   type ConnectionType,
   type CredentialKind,
   type EnvironmentKind,
+  type GitTransport,
   type OdooEdition,
   type OdooVersion,
   type ProjectType,
@@ -396,6 +398,38 @@ export class RemoteBranchesDto {
   @IsOptional()
   @IsUUID()
   credentialId?: string;
+}
+
+/**
+ * A project's git transport and credential choice (ADR-059).
+ *
+ * Separate from `UpdateProjectDto` because this touches the remote URL and the
+ * credential reference together — the two have to move as one, or a saved
+ * transport of `https` with an SSH-only credential still attached reproduces
+ * exactly the failure this setting exists to prevent.
+ */
+export class UpdateProjectGitAccessDto {
+  @IsOptional()
+  @IsIn(GIT_TRANSPORTS, {
+    message: `gitTransport must be one of: ${GIT_TRANSPORTS.join(', ')}`,
+  })
+  gitTransport?: GitTransport;
+
+  /**
+   * The registered credential (ADR-058) this project should use. `null` clears
+   * the override and falls back to the project's own connection, then to the
+   * deployment default for the remote's host — sent explicitly rather than
+   * left undefined, so "use the default again" is a real choice on the form.
+   */
+  @IsOptional()
+  @IsUUID()
+  gitCredentialId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  @Transform(trim)
+  gitUsername?: string | null;
 }
 
 /** Query filter for the project list. */

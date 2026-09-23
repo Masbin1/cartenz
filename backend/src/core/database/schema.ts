@@ -14,6 +14,7 @@ import { relations, sql } from 'drizzle-orm';
 import {
   ENVIRONMENT_KINDS,
   CREDENTIAL_KINDS,
+  GIT_TRANSPORTS,
   MODEL_PROVIDER_IDS,
   AGENT_ACTION_STATUSES,
   AGENT_ACTION_TYPES,
@@ -192,6 +193,37 @@ export const projects = pgTable(
     defaultBranch: text('default_branch').notNull().default('main'),
     // Repository URL only. Credentials live behind a connection reference.
     repositoryUrl: text('repository_url'),
+    /**
+     * How git reaches this project's remote (ADR-059): 'auto' (read from the
+     * URL, the behaviour before the column existed), 'ssh' or 'https'.
+     *
+     * Explicit because the two are not interchangeable: an HTTPS remote with
+     * only an SSH key registered makes `git push` ask for a username, and a
+     * process with no terminal cannot answer. The service rewrites
+     * `repository_url` when this is anything but 'auto', so the URL the agent
+     * clones from and the scheme git pushes with never disagree.
+     */
+    gitTransport: text('git_transport', { enum: asEnum(GIT_TRANSPORTS) })
+      .notNull()
+      .default('auto'),
+    /**
+     * The credential this project uses, overriding the ADR-058 deployment
+     * default. A reference into `git_credentials` rather than a copy, so
+     * rotating the registered credential reaches this project without anyone
+     * editing it — the same sharing `project_connections.secret_ref` relies on.
+     *
+     * Null means "no project override": resolution falls back to the project's
+     * own connection, then to the registered default for the remote's host.
+     */
+    gitCredentialId: uuid('git_credential_id').references(() => gitCredentials.id, {
+      onDelete: 'set null',
+    }),
+    /**
+     * The account an HTTPS remote authenticates as, when it is not derived from
+     * the token's owner. Null means the built-in convention
+     * (`x-access-token`), which is what a GitHub App or fine-grained PAT wants.
+     */
+    gitUsername: text('git_username'),
     /**
      * Non-sensitive environment configuration: Odoo addon paths, Python
      * version, target build environment. Never credentials.

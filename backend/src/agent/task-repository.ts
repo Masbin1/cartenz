@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
-import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { DatabaseService } from '../core/database/database.service';
 import { withSequenceRetry } from '../core/database/task-sequence';
 import {
@@ -18,12 +18,15 @@ import { resolveAgentPermissions, type AgentPermission } from '../core/authz/age
 import {
   GIT_CONNECTION_TYPES,
   type AgentTaskKind,
+  type GitTransport,
   type OdooEdition,
   type ProjectType,
 } from '../core/enums';
 import { assertTransition, isTerminalStatus, type AgentTaskStatus } from './task-state';
 import { executionModeFor, type ExecutionMode } from './executors/execution-mode';
 import type { ImplementationPlan, ModifiedFile, TaskTestResults } from './orchestration/agent-plan';
+import { GitCredentialsService } from '../modules/settings/git-credentials.service';
+import { effectiveRepositoryUrl, applyTransportToUrl } from '../modules/projects/repository-url';
 
 /** Everything a workflow step needs about a task, read in one query. */
 export interface TaskExecutionSnapshot {
@@ -69,6 +72,8 @@ export interface TaskExecutionSnapshot {
   readonly credentialKind: 'token' | 'ssh_key';
   /** Recorded host key for the remote, where one is held. */
   readonly sshHostKey: string | null;
+  /** The account to present with a token over HTTPS (ADR-059). */
+  readonly credentialUsername: string | null;
   /**
    * The environment this task targets, and the branch that is (ADR-021).
    *
@@ -124,6 +129,7 @@ export class TaskRepository {
     private readonly database: DatabaseService,
     private readonly events: TaskEventPublisher,
     private readonly audit: AuditService,
+    private readonly gitCredentials: GitCredentialsService,
   ) {}
 
   async snapshot(taskId: string): Promise<TaskExecutionSnapshot> {
@@ -149,6 +155,9 @@ export class TaskRepository {
         localProviderOnly: projects.localProviderOnly,
         environmentConfig: projects.environmentConfig,
         environmentId: agentTasks.environmentId,
+        gitTransport: projects.gitTransport,
+        gitCredentialId: projects.gitCredentialId,
+        gitUsername: projects.gitUsername,
       })
       .from(agentTasks)
       .innerJoin(projects, eq(projects.id, agentTasks.projectId))
@@ -158,32 +167,34 @@ export class TaskRepository {
     if (!row) throw new NotFoundException(`Task ${taskId} not found`);
 
     /**
-     * The credential a clone or a push uses.
+     * The credential a clone or a push uses (ADR-021, ADR-059).
      *
-     * Restricted to connection types that *are* a Git remote (ADR-041). A project can
-     * hold more than one connection - an Odoo Online API key for `odoo_api`, a
-     * repository for `github` - and "the first one with a secret" stops being an
-     * answer once one of them is not a Git credential at all: the push would present
-     * an Odoo API key to GitHub. Among the qualifying connections the oldest wins, as
-     * it did before, so nothing about an existing single-connection project changes.
+     * Resolved in three tiers, in this order:
+     *
+     *  1. The project's own choice, when its settings name one. This is the
+     *     override an operator sets on the project's Git access panel, and it
+     *     wins because it is the most specific statement of intent.
+     *  2. The project's first credential-bearing Git connection. Restricted to
+     *     connection types that *are* a Git remote (ADR-041): a project can hold
+     *     more than one connection - an Odoo Online API key for `odoo_api`, a
+     *     repository for `github` - and "the first one with a secret" stops being
+     *     an answer once one of them is not a Git credential at all, because the
+     *     push would present an Odoo API key to GitHub. Among the qualifying
+     *     connections the oldest wins, as it did before.
+     *  3. The deployment default registered for the remote's host (ADR-058).
+     *
+     * Tier 3 is what makes a project connectable without pasting a key into it:
+     * before it, a project whose remote was reached with the deployment's own
+     * key still had a null `credentialRef` here, and the push ran with no
+     * credential at all - `could not read Username for 'https://github.com'`
+     * when the remote was HTTPS.
      */
-    const [connection] = await this.database.db
-      .select({
-        secretRef: projectConnections.secretRef,
-        credentialKind: projectConnections.credentialKind,
-        sshHostKey: projectConnections.sshHostKey,
-        metadata: projectConnections.metadata,
-      })
-      .from(projectConnections)
-      .where(
-        and(
-          eq(projectConnections.projectId, row.projectId),
-          isNotNull(projectConnections.secretRef),
-          inArray(projectConnections.connectionType, [...GIT_CONNECTION_TYPES]),
-        ),
-      )
-      .orderBy(projectConnections.createdAt)
-      .limit(1);
+    const credential = await this.resolveCredential({
+      projectId: row.projectId,
+      repositoryUrl: row.repositoryUrl,
+      gitCredentialId: row.gitCredentialId,
+      gitUsername: row.gitUsername,
+    });
 
     /**
      * The environment this task targets.
@@ -224,6 +235,23 @@ export class TaskRepository {
     // a local directory runs on-premise) and is reported to the workspace layer.
     const onPremiseProjectPath = readOnPremisePath(row.environmentConfig);
 
+    /**
+     * The URL the workspace clones from and pushes to (ADR-041, ADR-059).
+     *
+     * Resolved from both places a repository URL can be recorded, and then
+     * rewritten to match this project's chosen transport. Reading only
+     * `projects.repository_url` is the ADR-041 mistake in miniature: a project
+     * whose URL lives on its connection looks repository-less here, and the clone
+     * is skipped with "no repository connected" naming an action the operator has
+     * no reason to take. Applying the transport on top is what makes the setting
+     * on the project's Git access panel reach the git command that actually runs.
+     */
+    const repositoryUrl = this.repositoryUrlFor(
+      row.repositoryUrl,
+      credential.connections,
+      row.gitTransport,
+    );
+
     return {
       taskId: row.taskId,
       reference: row.reference,
@@ -234,7 +262,7 @@ export class TaskRepository {
         hasLocalDirectory: onPremiseProjectPath !== null,
         // A connected project with a repository is repo-backed (ADR-050): it
         // clones the branch rather than operating on the local directory.
-        hasRepository: row.repositoryUrl !== null,
+        hasRepository: repositoryUrl !== null,
       }),
       prompt: row.prompt,
       attachedDocumentIds: row.attachedDocumentIds ?? [],
@@ -244,17 +272,26 @@ export class TaskRepository {
       baseCommit: row.baseCommit,
       odooVersion: row.odooVersion,
       odooEdition: row.odooEdition as OdooEdition,
-      repositoryUrl: row.repositoryUrl,
+      repositoryUrl,
       defaultBranch: row.defaultBranch,
-      credentialRef: connection?.secretRef ?? null,
-      credentialKind: (connection?.credentialKind ?? 'token') as 'token' | 'ssh_key',
-      sshHostKey: connection?.sshHostKey ?? null,
+      credentialRef: credential.secretRef,
+      /**
+       * The kind of the credential actually resolved, not the connection's.
+       *
+       * A project using the deployment default has no connection to read it
+       * from, and defaulting to `token` there is what made an SSH-key project
+       * present a token to an SSH remote. The resolver knows which kind it
+       * returned; this reports that.
+       */
+      credentialKind: credential.credentialKind,
+      sshHostKey: credential.sshHostKey,
+      credentialUsername: credential.credentialUsername,
       targetBranch: environment?.branch ?? row.defaultBranch,
       targetEnvironment: environment
         ? { name: environment.name, kind: environment.kind }
         : null,
       onPremiseProjectPath,
-      odooOnlineUrl: readOdooOnlineUrl(connection?.metadata),
+      odooOnlineUrl: readOdooOnlineUrl(credential.connectionMetadata),
       plan: (row.plan as ImplementationPlan | null) ?? null,
       agentPermissions: resolveAgentPermissions(row.agentPermissions),
       localProviderOnly: row.localProviderOnly,
@@ -264,6 +301,117 @@ export class TaskRepository {
         ? { action: lastDecision.action, status: lastDecision.status }
         : null,
     };
+  }
+
+  /**
+   * Resolves the credential a clone or a push uses (ADR-021, ADR-059).
+   *
+   * See `snapshot`'s comment for the three-tier order. This is its own method
+   * because both `snapshot` and a settings read need the same order applied,
+   * and a second implementation is how the two would quietly drift.
+   */
+  private async resolveCredential(input: {
+    readonly projectId: string;
+    readonly repositoryUrl: string | null;
+    readonly gitCredentialId: string | null;
+    /** The project's own username override for a token (ADR-059). */
+    readonly gitUsername: string | null;
+  }): Promise<{
+    readonly secretRef: string | null;
+    readonly credentialKind: 'token' | 'ssh_key';
+    readonly sshHostKey: string | null;
+    readonly credentialUsername: string | null;
+    readonly connectionMetadata: Record<string, unknown> | null;
+    readonly connections: readonly {
+      connectionType: string;
+      metadata: Record<string, unknown> | null;
+    }[];
+  }> {
+    const connections = await this.database.db
+      .select({
+        secretRef: projectConnections.secretRef,
+        credentialKind: projectConnections.credentialKind,
+        sshHostKey: projectConnections.sshHostKey,
+        metadata: projectConnections.metadata,
+        connectionType: projectConnections.connectionType,
+        createdAt: projectConnections.createdAt,
+      })
+      .from(projectConnections)
+      .where(eq(projectConnections.projectId, input.projectId))
+      .orderBy(projectConnections.createdAt);
+
+    // The repository URL's own metadata is read here regardless of which tier
+    // supplies the credential: an Odoo Online URL, in particular, lives on the
+    // connection even when tier 1 or tier 3 is what authenticates the push.
+    const connectionMetadata = connections[0]?.metadata ?? null;
+
+    if (input.gitCredentialId) {
+      const registered = await this.gitCredentials
+        .resolveForHost({ credentialId: input.gitCredentialId })
+        .catch(() => null);
+      if (registered) {
+        return {
+          secretRef: registered.secretRef,
+          credentialKind: registered.kind,
+          sshHostKey: null,
+          credentialUsername: input.gitUsername,
+          connectionMetadata,
+          connections,
+        };
+      }
+      // A project-level choice that no longer resolves (the row was deleted or
+      // disabled after being chosen) falls through to the next tier rather than
+      // failing the whole snapshot - the same recovery a null credential column
+      // always had.
+    }
+
+    const gitConnection = connections.find(
+      (row) =>
+        row.secretRef !== null &&
+        (GIT_CONNECTION_TYPES as readonly string[]).includes(row.connectionType),
+    );
+    if (gitConnection) {
+      return {
+        secretRef: gitConnection.secretRef,
+        credentialKind: gitConnection.credentialKind as 'token' | 'ssh_key',
+        sshHostKey: gitConnection.sshHostKey,
+        credentialUsername: input.gitUsername,
+        connectionMetadata,
+        connections,
+      };
+    }
+
+    const host = input.repositoryUrl ? this.gitCredentials.hostOf(input.repositoryUrl) : null;
+    const registeredDefault = await this.gitCredentials
+      .resolveForHost({ host })
+      .catch(() => null);
+
+    return {
+      secretRef: registeredDefault?.secretRef ?? null,
+      credentialKind: registeredDefault?.kind ?? 'token',
+      sshHostKey: null,
+      credentialUsername: input.gitUsername,
+      connectionMetadata,
+      connections,
+    };
+  }
+
+  /**
+   * The repository URL a clone or a push uses (ADR-041, ADR-059).
+   *
+   * The project's own column when set; otherwise the first Git connection's
+   * metadata (ADR-041). Then rewritten to the project's chosen transport, so a
+   * project set to HTTPS never hands git an `ssh://` remote regardless of which
+   * of the two places recorded it.
+   */
+  private repositoryUrlFor(
+    ownUrl: string | null,
+    connections: readonly { connectionType: string; metadata: Record<string, unknown> | null }[],
+    gitTransport: string,
+  ): string | null {
+    const resolved = effectiveRepositoryUrl(ownUrl, connections);
+    if (!resolved) return null;
+    return applyTransportToUrl(resolved, gitTransport as GitTransport);
   }
 
   async currentStatus(taskId: string): Promise<AgentTaskStatus> {

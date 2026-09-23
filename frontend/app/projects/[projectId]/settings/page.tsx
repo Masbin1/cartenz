@@ -14,9 +14,12 @@ import { ProjectAccessPanel } from '@/components/projects/project-access-panel';
 import type {
   AgentCapabilities,
   EnvironmentKind,
+  GitTransport,
   ProjectDetail,
   ProjectEnvironment,
+  ProjectGitAccess,
 } from '@/lib/types';
+import { GIT_TRANSPORT_LABELS, GIT_TRANSPORTS } from '@/lib/types';
 
 const NEVER_GRANTABLE = ['database_export', 'database_backup'];
 
@@ -55,6 +58,13 @@ export default function ProjectSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [environments, setEnvironments] = useState<ProjectEnvironment[]>([]);
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
+  const [gitAccess, setGitAccess] = useState<ProjectGitAccess | null>(null);
+  const [gitAccessDraft, setGitAccessDraft] = useState<{
+    gitTransport: GitTransport;
+    gitCredentialId: string;
+    gitUsername: string;
+  }>({ gitTransport: 'auto', gitCredentialId: '', gitUsername: '' });
+  const [gitAccessSaving, setGitAccessSaving] = useState(false);
 
   const canEdit = user?.isAdmin ?? false;
 
@@ -143,6 +153,63 @@ export default function ProjectSettingsPage() {
     branch: string;
     kind: EnvironmentKind;
   }>({ name: '', branch: '', kind: 'development' });
+
+  /**
+   * A project's git transport and credential (ADR-059).
+   *
+   * Loaded alongside the page rather than lazily: unlike the branch list, this
+   * panel is the page's whole reason for existing once an operator has a
+   * repository connected, and an empty form would misrepresent a project that
+   * already has a credential.
+   */
+  const loadGitAccess = useCallback(async () => {
+    try {
+      const access = await api.projects.gitAccess(projectId);
+      setGitAccess(access);
+      setGitAccessDraft({
+        gitTransport: access.gitTransport,
+        gitCredentialId: access.gitCredentialId ?? '',
+        gitUsername: access.gitUsername ?? '',
+      });
+    } catch {
+      // The panel stays hidden: it is not the page's primary purpose, and a
+      // project that cannot report its git access has nothing useful to show.
+      setGitAccess(null);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void loadGitAccess();
+  }, [loadGitAccess]);
+
+  /**
+   * Saves the transport and credential.
+   *
+   * An empty selection is sent as `null` rather than omitted, so clearing the
+   * choice actually clears it: the server then falls back to the deployment
+   * default instead of keeping the old value.
+   */
+  const saveGitAccess = async () => {
+    setGitAccessSaving(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const updated = await api.projects.updateGitAccess(projectId, {
+        gitTransport: gitAccessDraft.gitTransport,
+        gitCredentialId: gitAccessDraft.gitCredentialId || null,
+        gitUsername: gitAccessDraft.gitUsername.trim() || null,
+      });
+      setGitAccess(updated);
+      setNotice('Git access updated.');
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError ? caught.message : 'The git access could not be updated.',
+      );
+    } finally {
+      setGitAccessSaving(false);
+    }
+  };
 
   const [branches, setBranches] = useState<string[] | undefined>(undefined);
   const [readingBranches, setReadingBranches] = useState(false);
@@ -559,6 +626,151 @@ export default function ProjectSettingsPage() {
                 {capabilities.git.pushEnabled ? 'Enabled on this server' : 'Disabled on this server'}
               </p>
               <p className="mt-2 text-2xs text-content-subtle">{capabilities.git.pushReason}</p>
+            </div>
+          </section>
+        ) : null}
+
+        {gitAccess ? (
+          <section className="panel mt-5">
+            <div className="panel-header">
+              <h2 className="panel-title">Git access</h2>
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={() => void saveGitAccess()}
+                  disabled={gitAccessSaving}
+                  className="btn-primary py-1 text-2xs"
+                >
+                  {gitAccessSaving ? <Spinner className="h-3 w-3" /> : null}
+                  Save
+                </button>
+              ) : (
+                <span className="text-2xs text-content-subtle">Admin role required to change</span>
+              )}
+            </div>
+
+            <div className="space-y-4 px-4 py-4">
+              <p className="text-xs leading-relaxed text-content-muted">
+                How the agent reaches this repository. A token works over HTTPS; an SSH key
+                works over SSH. The two are not interchangeable, so a project whose remote is
+                HTTPS and whose only credential is an SSH key cannot push.
+              </p>
+
+              <div>
+                <p className="text-2xs text-content-subtle">Repository</p>
+                <p className="mt-0.5 font-mono text-xs">
+                  {gitAccess.repositoryUrl ?? 'No repository connected.'}
+                </p>
+              </div>
+
+              <label className="block">
+                <span className="text-2xs font-medium text-content-muted">Transport</span>
+                <select
+                  value={gitAccessDraft.gitTransport}
+                  disabled={!canEdit}
+                  onChange={(event) =>
+                    setGitAccessDraft((previous) => ({
+                      ...previous,
+                      gitTransport: event.target.value as GitTransport,
+                    }))
+                  }
+                  className="input mt-1 w-full"
+                >
+                  {GIT_TRANSPORTS.map((transport) => (
+                    <option key={transport} value={transport}>
+                      {GIT_TRANSPORT_LABELS[transport]}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-2xs text-content-subtle">
+                  {gitAccess.effectiveTransport
+                    ? `In effect: ${gitAccess.effectiveTransport.toUpperCase()}.` +
+                      (gitAccess.urlTransport &&
+                      gitAccess.effectiveTransport !== gitAccess.urlTransport
+                        ? ' The repository URL is rewritten to match; the stored URL is left alone.'
+                        : '')
+                    : 'Set a repository URL first.'}
+                </p>
+              </label>
+
+              <label className="block">
+                <span className="text-2xs font-medium text-content-muted">Credential</span>
+                <select
+                  value={gitAccessDraft.gitCredentialId}
+                  disabled={!canEdit}
+                  onChange={(event) =>
+                    setGitAccessDraft((previous) => ({
+                      ...previous,
+                      gitCredentialId: event.target.value,
+                    }))
+                  }
+                  className="input mt-1 w-full"
+                >
+                  <option value="">Use the deployment default</option>
+                  {gitAccess.availableCredentials.map((credential) => (
+                    <option key={credential.id} value={credential.id}>
+                      {credential.label} ({credential.credentialKind === 'ssh_key' ? 'SSH key' : 'token'}
+                      {credential.isDefault ? ', default' : ''})
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-2xs text-content-subtle">
+                  {gitAccess.effectiveCredentialLabel
+                    ? `In effect: ${gitAccess.effectiveCredentialLabel} (${gitAccess.effectiveCredentialSource.replace('_', ' ')}).`
+                    : 'No credential is in effect for this project, so a push to a private repository will fail.'}
+                </p>
+              </label>
+
+              <label className="block">
+                {/*
+                  Only meaningful over HTTPS: an SSH remote carries its own user
+                  in the URL, and git ignores this value there.
+                */}
+                <span className="text-2xs font-medium text-content-muted">
+                  Username (HTTPS only)
+                </span>
+                <input
+                  type="text"
+                  value={gitAccessDraft.gitUsername}
+                  disabled={!canEdit}
+                  onChange={(event) =>
+                    setGitAccessDraft((previous) => ({
+                      ...previous,
+                      gitUsername: event.target.value,
+                    }))
+                  }
+                  placeholder="e.g. x-access-token"
+                  className="input mt-1 w-full"
+                />
+                <p className="mt-1.5 text-2xs text-content-subtle">
+                  Left empty, tokens are presented as <code className="font-mono">x-access-token</code>,
+                  which GitHub and GitLab both accept.
+                </p>
+              </label>
+
+              {gitAccess.urlTransport && gitAccess.effectiveTransport &&
+              gitAccess.urlTransport !== gitAccess.effectiveTransport ? (
+                <p className="text-2xs text-state-waiting">
+                  The repository URL is stored as {gitAccess.urlTransport.toUpperCase()} but this
+                  project is set to use {gitAccess.effectiveTransport.toUpperCase()}. The URL is
+                  converted when the agent runs; change the stored URL on the repository form if
+                  you want the two to agree.
+                </p>
+              ) : null}
+
+              {gitAccess.effectiveCredentialSource === 'deployment_default' ? (
+                <p className="text-2xs text-content-subtle">
+                  Falling back to the deployment default from Settings → Git credentials. Pick one
+                  here to give this project its own.
+                </p>
+              ) : null}
+
+              {gitAccess.effectiveCredentialSource === 'none' ? (
+                <p className="text-2xs text-state-failure">
+                  No credential applies to this project. Pushing to a private repository will fail
+                  with a credential prompt the server cannot answer.
+                </p>
+              ) : null}
             </div>
           </section>
         ) : null}

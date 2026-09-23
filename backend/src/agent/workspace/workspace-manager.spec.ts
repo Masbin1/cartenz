@@ -113,6 +113,7 @@ describe('on-premise workspace allocation', () => {
     credentialRef: null,
     credentialKind: 'token',
     sshHostKey: null,
+    credentialUsername: null,
     executionMode: 'on_premise',
     onPremiseProjectPath: projectPath,
     baseCommit: null,

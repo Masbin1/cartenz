@@ -49,6 +49,15 @@ export interface GitCredential {
   readonly value: string;
   /** known_hosts line for the remote, where one is recorded. */
   readonly hostKey?: string | null;
+  /**
+   * The username to present with a token over HTTPS, when the caller knows a
+   * better one than the host's convention (ADR-059).
+   *
+   * Most hosts accept a fixed placeholder — see `tokenUsernameFor` — but a
+   * self-hosted GitLab, a Bitbucket app password or a deploy token all want a
+   * real account name, and a project setting is the only place that is known.
+   */
+  readonly username?: string | null;
 }
 
 export interface GitCredentialLease {

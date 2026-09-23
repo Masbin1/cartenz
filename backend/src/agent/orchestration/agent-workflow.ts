@@ -1586,6 +1586,7 @@ export class AgentWorkflow {
       credentialRef: snapshot.credentialRef,
       credentialKind: snapshot.credentialKind,
       sshHostKey: snapshot.sshHostKey,
+      credentialUsername: snapshot.credentialUsername,
       executionMode: snapshot.executionMode,
       onPremiseProjectPath: snapshot.onPremiseProjectPath,
       // The source the agent may read (ADR-033, ADR-037): the per-version
@@ -1679,6 +1680,7 @@ export class AgentWorkflow {
         credentialRef: workspace.credentialRef,
         credentialKind: workspace.credentialKind,
         sshHostKey: workspace.sshHostKey,
+        credentialUsername: workspace.credentialUsername,
       },
     };
 
