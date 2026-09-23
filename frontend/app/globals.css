@@ -2,75 +2,257 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Colour tokens, as space-separated RGB so Tailwind can apply opacity.
+ * Light is the default. Dark is chosen in the sidebar or follows the system.
+ */
 :root {
+  color-scheme: light;
+
+  --surface: 245 245 247;
+  --surface-raised: 255 255 255;
+  --surface-overlay: 237 237 240;
+  --surface-border: 226 226 231;
+  --surface-strong: 200 200 206;
+
+  --content: 29 29 31;
+  --content-muted: 72 72 77;
+  --content-subtle: 110 110 115;
+
+  --accent: 200 16 46;
+  --accent-hover: 165 13 38;
+
+  --state-running: 37 99 235;
+  --state-waiting: 180 83 9;
+  --state-success: 21 128 61;
+  --state-failure: 200 30 40;
+  --state-idle: 142 142 147;
+}
+
+/*
+ * Dark theme. Applied when the person chose Dark (data-theme="dark" on <html>),
+ * or when they left it on System and the operating system is dark. A choice of
+ * Light (data-theme="light") wins over a dark system setting. See lib/theme.ts.
+ */
+:root[data-theme='dark'] {
   color-scheme: dark;
+
+  --surface: 17 17 19;
+  --surface-raised: 26 26 29;
+  --surface-overlay: 38 38 42;
+  --surface-border: 46 46 51;
+  --surface-strong: 72 72 78;
+
+  --content: 245 245 247;
+  --content-muted: 190 190 196;
+  --content-subtle: 142 142 150;
+
+  --accent: 232 52 76;
+  --accent-hover: 246 84 105;
+
+  --state-running: 96 150 250;
+  --state-waiting: 240 170 60;
+  --state-success: 74 200 120;
+  --state-failure: 248 100 100;
+  --state-idle: 120 120 128;
 }
 
-body {
-  @apply bg-surface text-content antialiased;
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --surface: 17 17 19;
+    --surface-raised: 26 26 29;
+    --surface-overlay: 38 38 42;
+    --surface-border: 46 46 51;
+    --surface-strong: 72 72 78;
+
+    --content: 245 245 247;
+    --content-muted: 190 190 196;
+    --content-subtle: 142 142 150;
+
+    --accent: 232 52 76;
+    --accent-hover: 246 84 105;
+
+    --state-running: 96 150 250;
+    --state-waiting: 240 170 60;
+    --state-success: 74 200 120;
+    --state-failure: 248 100 100;
+    --state-idle: 120 120 128;
+  }
 }
 
-/* A dense interface needs a scrollbar that does not dominate a narrow column. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #2a323d transparent;
-}
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
 
-*::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
+  body {
+    @apply bg-surface text-body text-content antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
+  }
 
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: rgb(var(--accent));
+  }
 
-*::-webkit-scrollbar-thumb {
-  background-color: #2a323d;
-  border-radius: 5px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
+  ::selection {
+    background: rgb(var(--accent) / 0.16);
+  }
 
-/* Focus is always visible: the workspace is keyboard-driven. */
-:focus-visible {
-  @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-surface;
+  /* Focus is always visible: the workspace is keyboard-driven. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/60 ring-offset-2 ring-offset-surface;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--surface-strong)) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--surface-strong));
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
 @layer components {
+  /* ---- Layout -------------------------------------------------------- */
+
+  /** A page's content column. Readable by default; `page-wide` for workspaces. */
+  .page {
+    @apply mx-auto w-full max-w-[1120px] px-4 py-8 sm:px-8 lg:px-12 lg:py-12;
+  }
+
+  .page-wide {
+    @apply mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8;
+  }
+
+  .page-narrow {
+    @apply mx-auto w-full max-w-[720px] px-4 py-8 sm:px-8 lg:py-12;
+  }
+
+  /* ---- Surfaces ------------------------------------------------------ */
+
+  /**
+   * A contained group. Lightweight: a hairline border on the raised surface,
+   * no shadow. Use only when the content genuinely needs containment.
+   */
   .panel {
-    @apply rounded-lg border border-surface-border bg-surface-raised;
+    @apply rounded-card border border-surface-border bg-surface-raised;
   }
 
   .panel-header {
-    @apply flex items-center justify-between border-b border-surface-border px-4 py-3;
+    @apply flex items-center justify-between gap-4 px-5 pb-3 pt-5 sm:px-6;
   }
+
+  .panel-body {
+    @apply px-5 pb-5 sm:px-6 sm:pb-6;
+  }
+
+  .divider {
+    @apply border-t border-surface-border;
+  }
+
+  /* ---- Typography ---------------------------------------------------- */
 
   .panel-title {
-    @apply text-2xs font-semibold uppercase tracking-widest text-content-subtle;
+    @apply text-headline text-content;
   }
 
+  .section-title {
+    @apply text-title text-content;
+  }
+
+  /** A small label above a value or a group. Sentence case, never shouted. */
+  .eyebrow {
+    @apply text-meta font-medium text-content-subtle;
+  }
+
+  .meta {
+    @apply text-meta text-content-subtle;
+  }
+
+  .mono-meta {
+    @apply font-mono text-caption text-content-subtle;
+  }
+
+  .link {
+    @apply font-medium text-accent underline-offset-4 transition-colors hover:underline;
+  }
+
+  .link-quiet {
+    @apply text-content-muted underline-offset-4 transition-colors hover:text-content hover:underline;
+  }
+
+  /** Inline code and identifiers. */
+  .code-chip {
+    @apply rounded-md bg-surface-overlay px-1.5 py-0.5 font-mono text-caption text-content-muted;
+  }
+
+  /* ---- Forms --------------------------------------------------------- */
+
   .field-label {
-    @apply mb-1.5 block text-xs font-medium text-content-muted;
+    @apply mb-2 block text-callout font-medium text-content;
+  }
+
+  .field-hint {
+    @apply mt-1.5 text-meta text-content-subtle;
+  }
+
+  .field-error {
+    @apply mt-1.5 text-meta text-state-failure;
   }
 
   .field-input {
-    @apply w-full rounded-md border border-surface-border bg-surface px-3 py-2 text-sm
-      text-content placeholder:text-content-subtle focus:border-accent focus:outline-none;
+    @apply w-full rounded-control border border-surface-border bg-surface-raised px-3.5 py-2.5
+      text-body text-content transition-colors placeholder:text-content-subtle
+      hover:border-surface-strong focus:border-accent focus:outline-none focus:ring-4
+      focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60;
   }
+
+  /* ---- Buttons ------------------------------------------------------- */
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm
-      font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex h-10 select-none items-center justify-center gap-2 whitespace-nowrap
+      rounded-control px-4 text-callout font-medium transition-colors
+      disabled:cursor-not-allowed disabled:opacity-50;
   }
 
+  /** The one dominant action on a screen. */
   .btn-primary {
     @apply btn bg-accent text-white hover:bg-accent-hover;
   }
 
   .btn-secondary {
-    @apply btn border border-surface-border bg-surface-overlay text-content
-      hover:border-content-subtle;
+    @apply btn border border-surface-border bg-surface-raised text-content
+      hover:border-surface-strong hover:bg-surface-overlay;
+  }
+
+  .btn-ghost {
+    @apply btn text-content-muted hover:bg-surface-overlay hover:text-content;
   }
 
   /**
@@ -78,11 +260,49 @@ body {
    * red button invites the click it is warning about.
    */
   .btn-danger {
-    @apply btn border border-state-failure/50 bg-state-failure/10 text-state-failure
-      hover:border-state-failure hover:bg-state-failure/20;
+    @apply btn border border-state-failure/30 bg-transparent text-state-failure
+      hover:border-state-failure/60 hover:bg-state-failure/5;
   }
 
-  .btn-ghost {
-    @apply btn text-content-muted hover:bg-surface-overlay hover:text-content;
+  /** Compact size; combine with a variant, e.g. `btn-secondary btn-sm`. */
+  .btn-sm {
+    @apply h-8 rounded-lg px-3 text-meta;
+  }
+
+  .icon-btn {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-control text-content-muted
+      transition-colors hover:bg-surface-overlay hover:text-content
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /* ---- Lists --------------------------------------------------------- */
+
+  /** A row in an open list: generous height, a hover fill, no border of its own. */
+  .list-row {
+    @apply flex items-center gap-4 rounded-xl px-4 py-3.5 transition-colors hover:bg-surface-overlay/70;
+  }
+
+  /* ---- Tables -------------------------------------------------------- */
+
+  .data-table {
+    @apply w-full border-collapse text-left text-callout;
+  }
+
+  .data-table th {
+    @apply border-b border-surface-border px-4 pb-3 text-meta font-medium text-content-subtle;
+  }
+
+  .data-table td {
+    @apply border-b border-surface-border/70 px-4 py-3.5 align-middle;
+  }
+
+  .data-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  /* ---- Feedback ------------------------------------------------------ */
+
+  .skeleton {
+    @apply animate-pulse rounded-md bg-surface-overlay;
   }
 }

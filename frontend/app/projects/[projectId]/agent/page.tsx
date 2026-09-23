@@ -1,15 +1,31 @@
 'use client';
 
-import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  ArrowUp,
+  FileText,
+  Image as ImageIcon,
+  MessagesSquare,
+  Paperclip,
+  Plus,
+  Sparkles,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { useRequireAuth } from '@/lib/auth';
 import { ApiError, api } from '@/lib/api';
 import { useTaskStream } from '@/lib/use-task-stream';
 import { AppShell } from '@/components/ui/app-shell';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { StatusDot } from '@/components/ui/status-dot';
 import { Alert } from '@/components/ui/alert';
+import { BackLink } from '@/components/ui/page';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Skeleton, SkeletonRows, SkeletonText } from '@/components/ui/skeleton';
+import { CartenzMark } from '@/components/ui/cartenz-mark';
 import { ActivityTimeline } from '@/components/agent/activity-timeline';
 import { ChatMarkdown } from '@/components/agent/chat-markdown';
 import { PlanView } from '@/components/agent/plan-view';
@@ -34,10 +50,18 @@ import type {
 /**
  * The AI agent workspace: the primary working surface of the platform.
  *
- * Three panes. Left is project context and the conversation list; centre is the
- * conversation itself — the prompt, the thread of requests and answers, the
- * agent activity stream and the plan; right is the selected request's status,
- * its file changes and its test results.
+ * Three columns. Left is a quiet list of conversations; centre is the
+ * conversation itself and the primary focus — the thread of requests and
+ * answers, a pending approval, the composer, then the agent activity stream, the
+ * preview, the diff and the plan; right is the selected request's status, its
+ * file changes and its test results. Below 1280px the task column moves under
+ * the conversation, and on a phone everything stacks with the conversation and
+ * composer first and the conversation list last.
+ *
+ * This is the one deliberately denser, tool-like screen in the portal, so the
+ * header is compact: the project name at title size with a back link, rather
+ * than a display-size page title, because vertical space here belongs to the
+ * conversation.
  *
  * History is per *conversation*, not per request (ADR-046). Submitting a second
  * prompt continues the session you are in rather than opening a new entry in the
@@ -74,6 +98,8 @@ export default function AgentWorkspacePage() {
   const [documents, setDocuments] = useState<ProjectDocument[]>([]);
   const [attachedIds, setAttachedIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
+  /** Whether the composer's document list is expanded. Presentation only. */
+  const [attachOpen, setAttachOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { events, connected } = useTaskStream(selectedTaskId);
@@ -388,461 +414,638 @@ export default function AgentWorkspacePage() {
 
   const active = useMemo(() => (task ? isActiveStatus(task.status) : false), [task]);
 
+  /**
+   * Both "new conversation" controls (the list header and the conversation
+   * header) take the same path: close the open conversation, clear the draft
+   * and return focus to the prompt, so the next request opens a new one.
+   */
+  const startNewConversation = () => {
+    openConversation(null);
+    setPrompt('');
+    promptRef.current?.focus();
+  };
+
+  const attachedDocuments = documents.filter((document) => attachedIds.has(document.id));
+
   if (loading || !user) return <PageLoading />;
-  if (!project) return <PageLoading label="Loading workspace" />;
+  // The session is known, so the page frame can exist: hold the workspace's
+  // shape while the project loads rather than replacing it with a spinner.
+  if (!project) return <WorkspaceSkeleton error={error} />;
 
   return (
     <AppShell>
-      <div className="mx-auto grid max-w-[1600px] gap-4 px-5 py-5 lg:grid-cols-[260px_minmax(0,1fr)_320px]">
-        {/* LEFT: project context and task history */}
-        <aside className="space-y-4">
-          <div className="panel">
-            <div className="panel-header">
-              <h2 className="panel-title">Project</h2>
-              <Link
-                href={`/projects/${project.id}`}
-                className="text-2xs text-accent hover:underline"
-              >
-                Detail
-              </Link>
-            </div>
-            <div className="px-4 py-3">
-              <p className="truncate text-sm font-semibold">{project.name}</p>
-              <dl className="mt-2.5 space-y-1 text-2xs">
-                <div className="flex justify-between gap-2">
-                  <dt className="text-content-subtle">Odoo</dt>
-                  <dd>{project.odooVersion ?? 'Not set'}</dd>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <dt className="text-content-subtle">Base branch</dt>
-                  <dd className="font-mono">{project.defaultBranch}</dd>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <dt className="text-content-subtle">Repository</dt>
-                  <dd>{project.repositoryUrl ? 'Connected' : 'None'}</dd>
-                </div>
-              </dl>
-            </div>
-          </div>
+      <div className="page-wide">
+        {/*
+          Compact header: the project name at title size rather than display
+          size, because this is a working surface and vertical space belongs to
+          the conversation. The facts the old project panel carried sit in one
+          quiet line beneath it.
+        */}
+        <header className="mb-8 animate-rise-in">
+          <BackLink href={`/projects/${project.id}`} label="Project overview" />
+          <p className="eyebrow">Agent workspace</p>
+          <h1 className="mt-0.5 truncate text-title text-content">{project.name}</h1>
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-content-subtle">
+            <span>{project.odooVersion ? `Odoo ${project.odooVersion}` : 'Odoo version not set'}</span>
+            <span aria-hidden="true">·</span>
+            <span>
+              Base branch{' '}
+              <span className="font-mono text-caption text-content-muted">{project.defaultBranch}</span>
+            </span>
+            <span className="hidden sm:inline" aria-hidden="true">
+              ·
+            </span>
+            <span className="hidden sm:inline">
+              {project.repositoryUrl ? 'Repository connected' : 'No repository'}
+            </span>
+          </p>
+        </header>
 
-          <div className="panel">
-            <div className="panel-header">
-              <h2 className="panel-title">Conversations</h2>
-              <button
-                type="button"
-                onClick={() => {
-                  openConversation(null);
-                  setPrompt('');
-                  promptRef.current?.focus();
-                }}
-                disabled={submitting}
-                className="btn-ghost px-2 py-1 text-2xs"
-                title="Start a new conversation. The next request opens it."
-              >
-                + New
-              </button>
-            </div>
-            {sessions.length === 0 ? (
-              <p className="px-4 py-5 text-2xs text-content-subtle">
-                No conversations yet. Submit a prompt to start the first.
-              </p>
-            ) : (
-              <ul className="max-h-[52vh] divide-y divide-surface-border overflow-y-auto">
-                {sessions.map((entry) => {
-                  const selected = entry.id === sessionId;
-                  return (
-                    <li key={entry.id}>
-                      <button
-                        type="button"
-                        onClick={() => openConversation(entry.id)}
-                        className={`w-full px-3.5 py-2.5 text-left transition-colors ${
-                          selected ? 'bg-surface-overlay' : 'hover:bg-surface-overlay/60'
-                        }`}
-                      >
-                        <span className="line-clamp-2 text-2xs leading-relaxed">
-                          {entry.title ?? entry.latestPrompt ?? 'Untitled conversation'}
-                        </span>
-                        <div className="mt-1.5 flex items-center justify-between gap-2">
-                          <span className="text-2xs text-content-subtle">
-                            {entry.taskCount} request{entry.taskCount === 1 ? '' : 's'} ·{' '}
-                            {relativeTime(entry.lastActivityAt)}
-                          </span>
-                          {entry.latestStatus ? (
-                            <StatusBadge status={entry.latestStatus} />
-                          ) : null}
-                        </div>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </aside>
-
-        {/* CENTRE: the conversation — prompt, thread, activity, plan */}
-        <section className="space-y-4">
-          {thread.length > 0 ? (
-            <div className="panel">
-              <div className="panel-header">
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <h2 className="panel-title">Conversation</h2>
-                  <span className="truncate text-2xs text-content-subtle">
-                    {openSession?.title ?? 'Current'}
-                  </span>
-                </div>
-                <span className="shrink-0 text-2xs text-content-subtle">
-                  {thread.length} request{thread.length === 1 ? '' : 's'}
-                </span>
-              </div>
-
-              {/*
-                The thread. Each turn is the prompt as asked and, for a chat
-                task, the answer beneath it. Selecting a turn is what the
-                activity stream and the right-hand inspector follow, so a person
-                can scroll back to an earlier request and still see its run.
-              */}
-              <div className="max-h-[52vh] space-y-3 overflow-y-auto px-4 py-3">
-                {thread.map((turn) => {
-                  const selected = turn.id === selectedTaskId;
-                  return (
-                    <div key={turn.id} className="space-y-2">
-                      <button
-                        type="button"
-                        onClick={() => selectTurn(turn.id)}
-                        className={`ml-auto block max-w-[85%] rounded-2xl rounded-tr-sm px-4 py-2.5 text-left transition-colors ${
-                          selected
-                            ? 'bg-accent/15 ring-1 ring-accent/40'
-                            : 'bg-surface-raised hover:bg-surface-overlay'
-                        }`}
-                      >
-                        <p className="whitespace-pre-wrap text-xs leading-relaxed">
-                          {turn.prompt}
-                        </p>
-                        <div className="mt-1.5 flex items-center justify-end gap-2">
-                          <span className="font-mono text-2xs text-content-subtle">
-                            {turn.reference}
-                          </span>
-                          <StatusBadge status={turn.status} />
-                        </div>
-                      </button>
-
-                      {turn.kind === 'chat' && turn.answer ? (
-                        <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-surface-overlay px-4 py-3">
-                          <ChatMarkdown content={turn.answer} />
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-                <div ref={threadEndRef} />
-              </div>
-            </div>
-          ) : null}
-
-          <form onSubmit={submitPrompt} className="panel p-4">
-            <label htmlFor="prompt" className="panel-title mb-2 block">
-              Development request
-            </label>
-            <div className="mb-2 flex items-center gap-2">
-              <span className="text-2xs text-content-subtle">Mode</span>
-              <div
-                role="group"
-                aria-label="Task mode"
-                className="flex overflow-hidden rounded-md border border-surface-border"
-              >
+        <div className="grid gap-12 lg:grid-cols-[232px_minmax(0,1fr)] lg:gap-8 xl:grid-cols-[248px_minmax(0,1fr)_340px] xl:gap-10">
+          {/* LEFT: conversation history. Last on a phone, where the conversation comes first. */}
+          <aside
+            aria-label="Conversations"
+            className="order-last min-w-0 lg:order-none lg:row-span-2 xl:row-span-1"
+          >
+            <div className="lg:sticky lg:top-6">
+              <div className="mb-2 flex items-center justify-between gap-2 pl-3">
+                <h2 className="text-callout font-semibold text-content">Conversations</h2>
                 <button
                   type="button"
-                  onClick={() => setKind('change')}
+                  onClick={startNewConversation}
                   disabled={submitting}
-                  aria-pressed={kind === 'change'}
-                  className={`px-3 py-1 text-2xs font-medium transition-colors ${
-                    kind === 'change'
-                      ? 'bg-accent text-white'
-                      : 'bg-transparent text-content-muted hover:text-content'
-                  }`}
+                  className="icon-btn h-8 w-8"
+                  aria-label="New conversation"
+                  title="Start a new conversation. The next request opens it."
                 >
-                  Change
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setKind('chat')}
-                  disabled={submitting}
-                  aria-pressed={kind === 'chat'}
-                  className={`px-3 py-1 text-2xs font-medium transition-colors ${
-                    kind === 'chat'
-                      ? 'bg-accent text-white'
-                      : 'bg-transparent text-content-muted hover:text-content'
-                  }`}
-                >
-                  Chat
+                  <Plus className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
                 </button>
               </div>
-            </div>
-            <textarea
-              id="prompt"
-              ref={promptRef}
-              rows={3}
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={(event) => {
-                // Submit on Ctrl/Cmd+Enter: the field is multi-line, so Enter
-                // must insert a newline rather than sending.
-                if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                  void submitPrompt(event as unknown as React.FormEvent);
-                }
-              }}
-              onPaste={(event) => void handlePaste(event)}
-              placeholder="Add a customer reference field to Sales Order and Invoice."
-              className="field-input resize-none"
-            />
-            {kind === 'chat' ? (
-              <p className="mt-2 text-2xs leading-relaxed text-content-subtle">
-                Chat reads the project and answers in natural language. Writing a file will ask for
-                your approval first.
-              </p>
-            ) : null}
 
-            <div className="mt-3 border-t border-surface-border pt-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-2xs font-medium text-content-subtle">
-                  Attach documents or images — {attachedIds.size} selected
-                </span>
-                <label className="btn-ghost cursor-pointer px-2 py-1 text-2xs">
-                  {uploading ? 'Uploading…' : 'Upload file'}
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".md,.markdown,.txt,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/gif"
-                    onChange={handleUpload}
-                    disabled={uploading}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-
-              {documents.length === 0 ? (
-                <p className="text-2xs text-content-muted">
-                  No documents yet. Upload a PRD and the agent will read it when you submit a
-                  request.
-                </p>
+              {sessions.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon={MessagesSquare}
+                  title="No conversations yet"
+                  description="Send a request to start the first one."
+                />
               ) : (
-                <ul className="space-y-1">
-                  {documents.map((document) => (
-                    <li
-                      key={document.id}
-                      className="flex items-center justify-between gap-2 rounded px-2 py-1 hover:bg-surface-raised"
-                    >
-                      <label className="flex min-w-0 cursor-pointer items-center gap-2 text-2xs">
-                        <input
-                          type="checkbox"
-                          checked={attachedIds.has(document.id)}
-                          onChange={() => toggleDocument(document.id)}
-                          className="accent-[var(--color-accent)]"
-                        />
-                        <span className="truncate font-mono">{document.filename}</span>
-                        {document.mimeType.startsWith('image/') ? (
-                          <span className="shrink-0 rounded bg-accent/10 px-1 text-[10px] uppercase tracking-wide text-accent">
-                            image
+                <ul className="-mx-1 max-h-[40vh] space-y-0.5 overflow-y-auto px-1 py-1 lg:max-h-[calc(100vh-13rem)]">
+                  {sessions.map((entry) => {
+                    const selected = entry.id === sessionId;
+                    return (
+                      <li key={entry.id}>
+                        <button
+                          type="button"
+                          onClick={() => openConversation(entry.id)}
+                          aria-current={selected ? 'true' : undefined}
+                          className={`w-full rounded-xl px-3 py-2.5 text-left transition-colors ${
+                            selected
+                              ? 'bg-surface-raised ring-1 ring-surface-border'
+                              : 'hover:bg-surface-overlay/70'
+                          }`}
+                        >
+                          <span
+                            className={`line-clamp-2 text-callout ${
+                              selected ? 'font-medium text-content' : 'text-content-muted'
+                            }`}
+                          >
+                            {entry.title ?? entry.latestPrompt ?? 'Untitled conversation'}
                           </span>
-                        ) : null}
-                        <span className="shrink-0 text-content-muted">
-                          {Math.max(1, Math.round(document.byteSize / 1024))} KB
-                        </span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => removeDocument(document.id)}
-                        className="shrink-0 text-content-muted hover:text-content"
-                        title="Delete document"
-                      >
-                        ×
-                      </button>
-                    </li>
-                  ))}
+                          <span className="mt-1 flex items-center justify-between gap-2">
+                            <span className="truncate text-meta text-content-subtle">
+                              {entry.taskCount} request{entry.taskCount === 1 ? '' : 's'} ·{' '}
+                              {relativeTime(entry.lastActivityAt)}
+                            </span>
+                            {entry.latestStatus ? (
+                              <StatusBadge status={entry.latestStatus} className="shrink-0" />
+                            ) : null}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
-              <p className="mt-1.5 text-2xs text-content-muted">
-                Markdown, plain text, PDF, DOCX and images (PNG, JPEG, WebP, GIF). Documents up
-                to 10 MiB, images up to 5 MiB. You can also paste a screenshot straight into the
-                box above.
-              </p>
             </div>
-            {environments.length > 0 ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <label htmlFor="environment" className="text-2xs text-content-subtle">
-                  Target
-                </label>
-                <select
-                  id="environment"
-                  value={environmentId}
-                  onChange={(event) => setEnvironmentId(event.target.value)}
-                  disabled={submitting}
-                  className="field-input w-auto py-1 text-xs"
-                >
-                  {environments
-                    .filter((environment) => environment.kind !== 'production')
-                    .map((environment) => (
-                      <option key={environment.id} value={environment.id}>
-                        {environment.name} ({environment.branch})
-                      </option>
-                    ))}
-                </select>
-                {selectedEnvironment ? (
-                  <EnvironmentKindBadge kind={selectedEnvironment.kind} />
-                ) : null}
-                {productionEnvironments.length > 0 ? (
-                  <span className="text-2xs text-content-subtle">
-                    {productionEnvironments.map((environment) => environment.branch).join(', ')} is
-                    production and cannot be targeted.
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
+          </aside>
 
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <p className="text-2xs text-content-subtle">
-                  The agent analyses the project, produces a plan and waits for your approval before
-                  changing anything.
-                  {capabilities && !capabilities.git.pushEnabled
-                    ? ' This server cannot push: the branch stays in the workspace for you to review.'
-                    : null}
-                </p>
+          {/* CENTRE: the conversation, then the run's narration and its review. */}
+          <div className="min-w-0 space-y-12">
+            <section aria-labelledby="conversation-title" className="space-y-6">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 id="conversation-title" className="truncate text-headline text-content">
+                    {sessionId ? (openSession?.title ?? 'Current conversation') : 'New conversation'}
+                  </h2>
+                  {thread.length > 0 ? (
+                    <p className="meta mt-0.5">
+                      {thread.length} request{thread.length === 1 ? '' : 's'}
+                    </p>
+                  ) : null}
+                </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    openConversation(null);
-                    setPrompt('');
-                    promptRef.current?.focus();
-                  }}
+                  onClick={startNewConversation}
                   disabled={submitting || !sessionId}
-                  className="btn-ghost shrink-0 px-2 py-1 text-2xs"
+                  className="btn-ghost btn-sm shrink-0"
                   title={
                     sessionId
                       ? 'Start a new conversation. The next request opens it.'
                       : 'The next request will already start a new conversation'
                   }
                 >
-                  {sessionId ? 'New conversation' : 'New conversation (next request)'}
+                  <Plus className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                  <span className="hidden sm:inline">
+                    {sessionId ? 'New conversation' : 'New conversation (next request)'}
+                  </span>
+                  <span className="sm:hidden">New</span>
                 </button>
               </div>
-              <button type="submit" disabled={submitting} className="btn-primary shrink-0">
-                {submitting ? <Spinner /> : null}
-                {submitting ? 'Submitting' : 'Submit request'}
-              </button>
-            </div>
-          </form>
 
-          {error ? <Alert tone="error">{error}</Alert> : null}
+              {/*
+                The thread. Each turn is the prompt as asked and, for a chat
+                task, the answer beneath it. Selecting a turn is what the
+                activity stream and the task column follow, so a person can
+                scroll back to an earlier request and still see its run.
 
-          {task?.pendingApproval ? (
-            <ApprovalPanel
-              approval={task.pendingApproval}
-              onDecide={decide}
-              canDecide={canDecide}
-            />
-          ) : null}
+                The person's turns sit to the right on a raised surface; the
+                agent's answers sit to the left as plain prose, so the two are
+                told apart by position and surface rather than by colour.
+              */}
+              {thread.length > 0 ? (
+                <div className="-mx-2 max-h-[60vh] space-y-6 overflow-y-auto px-2 py-1">
+                  {thread.map((turn) => {
+                    const selected = turn.id === selectedTaskId;
+                    return (
+                      <div key={turn.id} className="space-y-4">
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => selectTurn(turn.id)}
+                            aria-pressed={selected}
+                            className={`block max-w-[90%] rounded-2xl rounded-br-md bg-surface-raised px-4 py-3 text-left transition-colors sm:max-w-[80%] ${
+                              selected
+                                ? 'ring-2 ring-accent/30'
+                                : 'ring-1 ring-surface-border hover:ring-surface-strong'
+                            }`}
+                          >
+                            <span className="block whitespace-pre-wrap break-words text-body text-content">
+                              {turn.prompt}
+                            </span>
+                            <span className="mt-2 flex items-center justify-end gap-3">
+                              <span className="mono-meta hidden sm:inline">{turn.reference}</span>
+                              <StatusBadge status={turn.status} />
+                            </span>
+                          </button>
+                        </div>
 
-          {task?.hasDiff && selectedTaskId ? (
-            <PreviewPanel projectId={projectId} taskId={selectedTaskId} hasDiff={task.hasDiff} />
-          ) : null}
+                        {turn.kind === 'chat' && turn.answer ? (
+                          <div className="flex max-w-[95%] gap-3 sm:max-w-[88%]">
+                            <span
+                              className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-raised ring-1 ring-surface-border"
+                              aria-hidden="true"
+                            >
+                              <CartenzMark size={14} />
+                            </span>
+                            <div className="min-w-0 flex-1 pt-0.5">
+                              <ChatMarkdown content={turn.answer} />
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  <div ref={threadEndRef} />
+                </div>
+              ) : sessionId ? (
+                // A conversation is open but its requests have not arrived yet.
+                <div className="space-y-4">
+                  <Skeleton className="ml-auto h-16 w-3/5 rounded-2xl" />
+                  <SkeletonText lines={3} className="max-w-xl" />
+                </div>
+              ) : (
+                <EmptyState
+                  compact
+                  icon={Sparkles}
+                  title="Start a conversation"
+                  description="Describe a change to the project, or switch to Chat to ask a question about it."
+                />
+              )}
 
-          <div className="panel">
-            <div className="panel-header">
-              <div className="flex items-center gap-2.5">
-                <h2 className="panel-title">Agent activity</h2>
-                {task ? (
-                  <span className="font-mono text-2xs text-content-subtle">{task.reference}</span>
-                ) : null}
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="flex items-center gap-1.5 text-2xs text-content-subtle">
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full ${
-                      connected ? 'bg-state-success' : 'bg-state-idle'
-                    }`}
+              {task?.pendingApproval ? (
+                <ApprovalPanel
+                  approval={task.pendingApproval}
+                  onDecide={decide}
+                  canDecide={canDecide}
+                />
+              ) : null}
+
+              {/*
+                The composer: one raised container holding the request, the
+                documents attached to it and, in its footer, the quiet options
+                (mode, attachments, target) beside the single Send action.
+              */}
+              <div>
+                <form
+                  onSubmit={submitPrompt}
+                  className="rounded-card border border-surface-border bg-surface-raised transition-colors focus-within:border-accent/50 focus-within:ring-4 focus-within:ring-accent/10"
+                >
+                  <label htmlFor="prompt" className="sr-only">
+                    Development request
+                  </label>
+                  <textarea
+                    id="prompt"
+                    ref={promptRef}
+                    rows={3}
+                    value={prompt}
+                    onChange={(event) => setPrompt(event.target.value)}
+                    onKeyDown={(event) => {
+                      // Submit on Ctrl/Cmd+Enter: the field is multi-line, so Enter
+                      // must insert a newline rather than sending.
+                      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                        void submitPrompt(event as unknown as React.FormEvent);
+                      }
+                    }}
+                    onPaste={(event) => void handlePaste(event)}
+                    placeholder="Add a customer reference field to Sales Order and Invoice."
+                    className="block min-h-[6.5rem] w-full resize-none rounded-t-card bg-transparent px-4 pb-2 pt-4 text-body text-content placeholder:text-content-subtle focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:px-5"
                   />
-                  {connected ? 'Live' : 'Offline'}
-                </span>
-                {task && active ? (
-                  <button type="button" onClick={() => void cancel()} className="btn-ghost px-2 py-1 text-2xs">
-                    Cancel task
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div className="max-h-[46vh] overflow-y-auto">
-              <ActivityTimeline events={events} />
-            </div>
-          </div>
 
-          {task?.hasDiff ? (
-            <div className="panel">
-              <div className="panel-header">
-                <div className="flex items-center gap-2.5">
-                  <h2 className="panel-title">Review diff</h2>
-                  {task.diffStats ? (
-                    <span className="font-mono text-2xs">
-                      <span className="text-content-subtle">
-                        {task.diffStats.filesChanged} file
-                        {task.diffStats.filesChanged === 1 ? '' : 's'}
-                      </span>{' '}
-                      <span className="text-state-success">+{task.diffStats.linesAdded}</span>{' '}
-                      <span className="text-state-failure">-{task.diffStats.linesRemoved}</span>
-                    </span>
+                  {attachedDocuments.length > 0 ? (
+                    <ul className="flex flex-wrap gap-2 px-4 pb-3 sm:px-5" aria-label="Attached documents">
+                      {attachedDocuments.map((document) => (
+                        <li
+                          key={document.id}
+                          className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-surface-overlay py-1 pl-2.5 pr-1 text-content-muted"
+                        >
+                          <DocumentIcon mimeType={document.mimeType} />
+                          <span className="min-w-0 truncate font-mono text-caption">{document.filename}</span>
+                          <button
+                            type="button"
+                            onClick={() => toggleDocument(document.id)}
+                            className="rounded-md p-0.5 text-content-subtle transition-colors hover:bg-surface-raised hover:text-content"
+                            aria-label={`Detach ${document.filename}`}
+                          >
+                            <X className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+
+                  {attachOpen ? (
+                    <div className="animate-rise-in border-t border-surface-border px-4 py-4 sm:px-5">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <p className="text-callout font-medium text-content">
+                          Documents and images{' '}
+                          <span className="font-normal text-content-subtle">
+                            · {attachedIds.size} selected
+                          </span>
+                        </p>
+                        <label className="btn-ghost btn-sm shrink-0 cursor-pointer">
+                          {uploading ? (
+                            <Spinner className="h-3.5 w-3.5" />
+                          ) : (
+                            <Upload className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                          )}
+                          {uploading ? 'Uploading…' : 'Upload file'}
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".md,.markdown,.txt,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/gif"
+                            onChange={handleUpload}
+                            disabled={uploading}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+
+                      {documents.length === 0 ? (
+                        <p className="text-callout text-content-muted">
+                          No documents yet. Upload a PRD and the agent will read it when you send a
+                          request.
+                        </p>
+                      ) : (
+                        <ul className="-mx-2 max-h-56 space-y-0.5 overflow-y-auto">
+                          {documents.map((document) => (
+                            <li
+                              key={document.id}
+                              className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-overlay/70"
+                            >
+                              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+                                <input
+                                  type="checkbox"
+                                  checked={attachedIds.has(document.id)}
+                                  onChange={() => toggleDocument(document.id)}
+                                />
+                                <DocumentIcon mimeType={document.mimeType} />
+                                <span className="min-w-0 truncate font-mono text-caption text-content">
+                                  {document.filename}
+                                </span>
+                                {document.mimeType.startsWith('image/') ? (
+                                  <span className="hidden shrink-0 text-meta text-content-subtle sm:inline">
+                                    Image
+                                  </span>
+                                ) : null}
+                                <span className="shrink-0 text-meta tabular-nums text-content-subtle">
+                                  {Math.max(1, Math.round(document.byteSize / 1024))} KB
+                                </span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => removeDocument(document.id)}
+                                className="icon-btn h-7 w-7 shrink-0 hover:text-state-failure"
+                                title="Delete document"
+                                aria-label={`Delete ${document.filename}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="field-hint mt-3">
+                        Markdown, plain text, PDF, DOCX and images (PNG, JPEG, WebP, GIF). Documents up
+                        to 10 MiB, images up to 5 MiB. You can also paste a screenshot straight into the
+                        request.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  <div className="flex flex-wrap items-center gap-2 border-t border-surface-border px-3 py-2.5 sm:px-4">
+                    <div
+                      role="group"
+                      aria-label="Task mode"
+                      className="flex rounded-lg bg-surface-overlay p-0.5"
+                    >
+                      <ModeButton
+                        active={kind === 'change'}
+                        disabled={submitting}
+                        onClick={() => setKind('change')}
+                      >
+                        Change
+                      </ModeButton>
+                      <ModeButton
+                        active={kind === 'chat'}
+                        disabled={submitting}
+                        onClick={() => setKind('chat')}
+                      >
+                        Chat
+                      </ModeButton>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setAttachOpen((open) => !open)}
+                      aria-expanded={attachOpen}
+                      className={`btn-ghost btn-sm ${attachOpen ? 'bg-surface-overlay text-content' : ''}`}
+                      title="Attach documents or images"
+                    >
+                      <Paperclip className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                      <span className="hidden sm:inline">Attach</span>
+                      {attachedIds.size > 0 ? (
+                        <span className="tabular-nums text-content">{attachedIds.size}</span>
+                      ) : null}
+                    </button>
+
+                    {environments.length > 0 ? (
+                      <div className="flex min-w-0 items-center gap-2">
+                        <label htmlFor="environment" className="sr-only text-meta text-content-subtle sm:not-sr-only">
+                          Target
+                        </label>
+                        <select
+                          id="environment"
+                          value={environmentId}
+                          onChange={(event) => setEnvironmentId(event.target.value)}
+                          disabled={submitting}
+                          className="h-8 max-w-[11rem] truncate rounded-lg border border-surface-border bg-surface-raised px-2 text-meta text-content transition-colors hover:border-surface-strong focus:outline-none disabled:opacity-60 sm:max-w-[14rem]"
+                        >
+                          {environments
+                            .filter((environment) => environment.kind !== 'production')
+                            .map((environment) => (
+                              <option key={environment.id} value={environment.id}>
+                                {environment.name} ({environment.branch})
+                              </option>
+                            ))}
+                        </select>
+                        {selectedEnvironment ? (
+                          <EnvironmentKindBadge kind={selectedEnvironment.kind} />
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    <div className="ml-auto flex items-center gap-3">
+                      <span className="hidden text-caption text-content-subtle md:inline">
+                        ⌘ or Ctrl + Enter
+                      </span>
+                      <button type="submit" disabled={submitting} className="btn-primary btn-sm">
+                        {submitting ? (
+                          <Spinner className="h-3.5 w-3.5" />
+                        ) : (
+                          <ArrowUp className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                        )}
+                        {submitting ? 'Sending' : 'Send'}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+
+                <div className="mt-3 space-y-1 px-1 text-meta text-content-subtle">
+                  {kind === 'chat' ? (
+                    <p>
+                      Chat reads the project and answers in plain language. Writing a file asks for
+                      your approval first.
+                    </p>
+                  ) : null}
+                  <p>
+                    The agent analyses the project, produces a plan and waits for your approval
+                    before changing anything.
+                    {capabilities && !capabilities.git.pushEnabled
+                      ? ' This server cannot push: the branch stays in the workspace for you to review.'
+                      : null}
+                  </p>
+                  {environments.length > 0 && productionEnvironments.length > 0 ? (
+                    <p>
+                      {productionEnvironments.map((environment) => environment.branch).join(', ')} is
+                      production and cannot be targeted.
+                    </p>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setDiffOpen((open) => !open)}
-                  className="btn-ghost px-2 py-1 text-2xs"
-                >
-                  {diffOpen ? 'Hide' : 'Show'}
-                </button>
               </div>
 
-              {diffOpen ? (
-                <div className="max-h-[60vh] overflow-y-auto px-4 py-3">
-                  {diff === null ? (
-                    <p className="py-6 text-center text-xs text-content-subtle">Loading the diff</p>
-                  ) : diff.patch ? (
-                    <>
-                      <p className="mb-3 font-mono text-2xs text-content-subtle">
-                        {diff.branch} against {diff.baseCommit?.slice(0, 12)}
-                      </p>
-                      <DiffViewer
-                        patch={diff.patch}
-                        truncated={diff.stats?.patchTruncated ?? false}
-                      />
-                    </>
-                  ) : (
-                    <p className="py-6 text-center text-xs text-content-subtle">
-                      No diff was recorded for this task.
-                    </p>
-                  )}
+              {error ? <Alert tone="error">{error}</Alert> : null}
+            </section>
+
+            {/* A scrolling log beside other content: the one region here that is boxed. */}
+            <section aria-labelledby="activity-title" className="panel overflow-hidden">
+              <div className="panel-header">
+                <div className="flex min-w-0 items-baseline gap-3">
+                  <h2 id="activity-title" className="text-headline text-content">
+                    Activity
+                  </h2>
+                  {task ? (
+                    <span className="mono-meta hidden truncate sm:inline">{task.reference}</span>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-          ) : null}
+                <StatusDot tone={connected ? 'success' : 'idle'} size="small" className="shrink-0">
+                  {connected ? 'Live' : 'Offline'}
+                </StatusDot>
+              </div>
+              <div className="max-h-[46vh] overflow-y-auto border-t border-surface-border">
+                <ActivityTimeline events={events} />
+              </div>
+            </section>
 
-          {task?.plan ? <PlanView plan={task.plan} /> : null}
-        </section>
+            {task?.hasDiff && selectedTaskId ? (
+              <PreviewPanel projectId={projectId} taskId={selectedTaskId} hasDiff={task.hasDiff} />
+            ) : null}
 
-        {/* RIGHT: task status, files, tests, approvals */}
-        <aside>
-          <div className="panel">
-            <div className="panel-header">
-              <h2 className="panel-title">Task</h2>
-              {task ? (
-                <span className="text-2xs text-content-subtle">
-                  {relativeTime(task.createdAt)}
-                </span>
+            {task?.hasDiff ? (
+              <section aria-labelledby="diff-title">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 id="diff-title" className="text-headline text-content">
+                      Review changes
+                    </h2>
+                    {task.diffStats ? (
+                      <p className="mt-1 flex flex-wrap items-center gap-x-2 text-meta text-content-subtle">
+                        <span>
+                          {task.diffStats.filesChanged} file
+                          {task.diffStats.filesChanged === 1 ? '' : 's'}
+                        </span>
+                        <span className="font-mono text-caption tabular-nums">
+                          <span className="text-state-success">+{task.diffStats.linesAdded}</span>{' '}
+                          <span className="text-state-failure">-{task.diffStats.linesRemoved}</span>
+                        </span>
+                      </p>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDiffOpen((open) => !open)}
+                    aria-expanded={diffOpen}
+                    className="btn-secondary btn-sm"
+                  >
+                    {diffOpen ? 'Hide diff' : 'Show diff'}
+                  </button>
+                </div>
+
+                {diffOpen ? (
+                  <div className="mt-5 animate-fade-in">
+                    {diff === null ? (
+                      <SkeletonText lines={6} />
+                    ) : diff.patch ? (
+                      <>
+                        <p className="mono-meta mb-3 break-all">
+                          {diff.branch} against {diff.baseCommit?.slice(0, 12)}
+                        </p>
+                        <div className="max-h-[70vh] overflow-y-auto">
+                          <DiffViewer
+                            patch={diff.patch}
+                            truncated={diff.stats?.patchTruncated ?? false}
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <p className="py-6 text-center text-callout text-content-subtle">
+                        No diff was recorded for this task.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {task?.plan ? <PlanView plan={task.plan} /> : null}
+          </div>
+
+          {/* RIGHT: the selected request's outcome. Under the conversation below 1280px. */}
+          <aside aria-labelledby="request-title" className="min-w-0 lg:col-start-2 xl:col-start-auto">
+            <div className="mb-5 flex items-center justify-between gap-3">
+              <h2 id="request-title" className="text-headline text-content">
+                Request
+              </h2>
+              {task && active ? (
+                <button type="button" onClick={() => void cancel()} className="btn-secondary btn-sm">
+                  Cancel task
+                </button>
               ) : null}
             </div>
             <TaskInspector task={task} />
+          </aside>
+        </div>
+      </div>
+    </AppShell>
+  );
+}
+
+/** One side of the Change / Chat mode control in the composer footer. */
+function ModeButton({
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      className={`rounded-md px-2.5 py-1 text-meta font-medium transition-colors disabled:cursor-not-allowed ${
+        active
+          ? 'bg-surface-raised text-content ring-1 ring-surface-border'
+          : 'text-content-muted hover:text-content'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function DocumentIcon({ mimeType }: { mimeType: string }) {
+  const Icon = mimeType.startsWith('image/') ? ImageIcon : FileText;
+  return <Icon className="h-4 w-4 shrink-0 text-content-subtle" strokeWidth={1.75} aria-hidden="true" />;
+}
+
+/**
+ * The workspace's shape while the project loads: header, conversation list,
+ * thread and composer as placeholders, so nothing jumps when it arrives. A
+ * load failure is shown in place, since the project will not arrive.
+ */
+function WorkspaceSkeleton({ error }: { error: string | null }) {
+  return (
+    <AppShell>
+      <div className="page-wide">
+        <div className="mb-8 space-y-3">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-7 w-72 max-w-full" />
+          <Skeleton className="h-3.5 w-96 max-w-full" />
+        </div>
+        {error ? (
+          <div className="mb-8">
+            <Alert tone="error">{error}</Alert>
           </div>
-        </aside>
+        ) : null}
+        <div className="grid gap-12 lg:grid-cols-[232px_minmax(0,1fr)] lg:gap-8 xl:grid-cols-[248px_minmax(0,1fr)_340px] xl:gap-10">
+          <div className="order-last lg:order-none">
+            <SkeletonRows rows={5} />
+          </div>
+          <div className="space-y-6">
+            <Skeleton className="ml-auto h-16 w-3/5 rounded-2xl" />
+            <SkeletonText lines={4} className="max-w-xl" />
+            <Skeleton className="h-40 w-full rounded-card" />
+          </div>
+          <div className="hidden xl:block">
+            <SkeletonText lines={6} />
+          </div>
+        </div>
       </div>
     </AppShell>
   );

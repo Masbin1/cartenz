@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Alert } from '@/components/ui/alert';
-import { Spinner } from '@/components/ui/spinner';
+import { Disclosure } from '@/components/ui/disclosure';
+import { SkeletonRows } from '@/components/ui/skeleton';
 
 /**
  * ADR-056. The catalogue entry the picker works with, mirroring the backend's
@@ -117,8 +119,8 @@ export function ModulePicker({
   const categories = useMemo(() => {
     if (!catalogue) return [];
     const seen = new Set<string>();
-    for (const module of catalogue) {
-      if (module.category) seen.add(module.category);
+    for (const entry of catalogue) {
+      if (entry.category) seen.add(entry.category);
     }
     return [...seen].sort();
   }, [catalogue]);
@@ -166,39 +168,48 @@ export function ModulePicker({
 
   if (!catalogue) {
     return (
-      <div className="panel flex items-center gap-2 px-4 py-6 text-xs text-content-muted">
-        <Spinner />
-        Reading the module catalogue…
+      <div className="panel p-5 sm:p-6" aria-busy="true">
+        <p className="mb-4 text-callout text-content-muted">Reading the module catalogue…</p>
+        <SkeletonRows rows={4} className="-mx-4" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-3">
-      <div className="panel">
-        <div className="flex flex-wrap items-end gap-3 border-b border-surface-border px-4 py-3">
-          <div className="min-w-[12rem] flex-1">
-            <label htmlFor="module-search" className="field-label">
-              Search
+    <div className="space-y-4">
+      {/*
+       * Contained: the list scrolls, and its filters and counts act on it
+       * together, beside the rest of the form.
+       */}
+      <div className="panel overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-surface-border p-4 sm:flex-row sm:items-center">
+          <div className="relative min-w-0 flex-1">
+            <label htmlFor="module-search" className="sr-only">
+              Search modules
             </label>
+            <Search
+              className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-content-subtle"
+              strokeWidth={1.75}
+              aria-hidden="true"
+            />
             <input
               id="module-search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              className="field-input py-1.5 text-xs"
-              placeholder="sale, inventory, accounting…"
+              className="field-input py-2 pl-10 text-callout"
+              placeholder="Search: sale, inventory, accounting…"
             />
           </div>
 
-          <div className="min-w-[10rem]">
-            <label htmlFor="module-category" className="field-label">
+          <div className="flex items-center gap-4">
+            <label htmlFor="module-category" className="sr-only">
               Category
             </label>
             <select
               id="module-category"
               value={category}
               onChange={(event) => setCategory(event.target.value)}
-              className="field-input py-1.5 text-xs"
+              className="field-input min-w-0 flex-1 py-2 text-callout sm:w-48 sm:flex-none"
             >
               <option value="">All categories</option>
               {categories.map((name) => (
@@ -207,67 +218,79 @@ export function ModulePicker({
                 </option>
               ))}
             </select>
-          </div>
 
-          <label className="flex items-center gap-2 pb-1.5 text-xs text-content-muted">
-            <input
-              type="checkbox"
-              checked={appsOnly}
-              onChange={(event) => setAppsOnly(event.target.checked)}
-            />
-            Apps only
-          </label>
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-callout text-content-muted">
+              <input
+                type="checkbox"
+                checked={appsOnly}
+                onChange={(event) => setAppsOnly(event.target.checked)}
+              />
+              Apps only
+            </label>
+          </div>
         </div>
 
-        <div className="max-h-72 overflow-y-auto">
+        <div className="max-h-80 overflow-y-auto p-1.5">
           {visible.length === 0 ? (
-            <p className="px-4 py-6 text-xs text-content-muted">
+            <p className="px-4 py-8 text-center text-callout text-content-muted">
               No module matches these filters.
             </p>
           ) : (
-            visible.map((module) => (
-              <label
-                key={module.technicalName}
-                className="flex cursor-pointer items-start gap-3 border-b border-surface-border px-4 py-2 last:border-b-0 hover:bg-surface-overlay"
-              >
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={value.includes(module.technicalName)}
-                  onChange={() => toggle(module.technicalName)}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-xs font-medium">{module.name}</span>
-                  <span className="block font-mono text-2xs text-content-subtle">
-                    {module.technicalName}
-                    {module.category ? ` · ${module.category}` : ''}
+            visible.map((module) => {
+              const checked = value.includes(module.technicalName);
+              return (
+                <label
+                  key={module.technicalName}
+                  className={`flex cursor-pointer items-center gap-3.5 rounded-lg px-3 py-2.5 transition-colors ${
+                    checked ? 'bg-accent-subtle' : 'hover:bg-surface-overlay/70'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 shrink-0"
+                    checked={checked}
+                    onChange={() => toggle(module.technicalName)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-callout font-medium text-content">
+                      {module.name}
+                    </span>
+                    <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-meta text-content-subtle">
+                      <span className="truncate font-mono text-caption">{module.technicalName}</span>
+                      {module.category ? (
+                        <span className="hidden truncate sm:inline">· {module.category}</span>
+                      ) : null}
+                    </span>
                   </span>
-                </span>
-              </label>
-            ))
+                </label>
+              );
+            })
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-surface-border px-4 py-2 text-2xs text-content-subtle">
+        <div className="flex flex-col gap-1 border-t border-surface-border px-4 py-3 text-meta text-content-subtle sm:flex-row sm:items-center sm:justify-between">
           <span>
             {visible.length} shown · {catalogue.length} available
           </span>
           <span>
-            {value.length} selected
+            <span className="font-medium text-content">{value.length} selected</span>
             {impliedOnly.length > 0 ? ` · ${resolved.length} installed with dependencies` : ''}
           </span>
         </div>
       </div>
 
       {impliedOnly.length > 0 ? (
-        <div className="panel px-4 py-3">
-          <p className="text-2xs font-medium text-content-muted">
-            Pulled in automatically ({impliedOnly.length})
+        <Disclosure
+          summary="Pulled in automatically"
+          hint={`${impliedOnly.length} module${impliedOnly.length === 1 ? '' : 's'}`}
+        >
+          <p className="text-meta text-content-subtle">
+            Required by the modules you selected, so they are installed with them.
           </p>
-          <p className="mt-1.5 font-mono text-2xs leading-relaxed text-content-subtle">
+          <p className="mt-2 font-mono text-caption leading-relaxed text-content-muted">
             {impliedOnly.join(', ')}
           </p>
-        </div>
+        </Disclosure>
       ) : null}
     </div>
   );

@@ -14,11 +14,13 @@ import type { Components } from 'react-markdown';
  * layers, and this one renders text only.
  *
  * Component overrides restyle each element into the portal's own tokens rather
- * than pulling in a typography plugin, so an answer matches the rest of the UI.
+ * than pulling in a typography plugin, so an answer matches the rest of the UI:
+ * body text at a comfortable reading size and line height, headings on the type
+ * scale, code in overlay wells, inline identifiers as code chips.
  */
 export function ChatMarkdown({ content }: { content: string }) {
   return (
-    <div className="chat-markdown text-sm leading-relaxed text-content">
+    <div className="chat-markdown min-w-0 break-words text-body leading-7 text-content">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {content}
       </ReactMarkdown>
@@ -27,50 +29,64 @@ export function ChatMarkdown({ content }: { content: string }) {
 }
 
 const markdownComponents: Components = {
-  h1: ({ children }) => <h1 className="mb-2 mt-4 text-base font-semibold text-content">{children}</h1>,
-  h2: ({ children }) => <h2 className="mb-2 mt-4 text-sm font-semibold text-content">{children}</h2>,
-  h3: ({ children }) => <h3 className="mb-1.5 mt-3 text-sm font-semibold text-content">{children}</h3>,
-  p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0">{children}</p>,
-  ul: ({ children }) => <ul className="my-1.5 list-disc space-y-0.5 pl-5">{children}</ul>,
-  ol: ({ children }) => <ol className="my-1.5 list-decimal space-y-0.5 pl-5">{children}</ol>,
-  li: ({ children }) => <li>{children}</li>,
+  h1: ({ children }) => (
+    <h1 className="mb-2 mt-6 text-headline text-content first:mt-0">{children}</h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="mb-2 mt-5 text-body font-semibold text-content first:mt-0">{children}</h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="mb-1.5 mt-4 text-callout font-semibold text-content first:mt-0">{children}</h3>
+  ),
+  p: ({ children }) => <p className="my-3 first:mt-0 last:mb-0">{children}</p>,
+  ul: ({ children }) => (
+    <ul className="my-3 list-disc space-y-1.5 pl-5 marker:text-content-subtle first:mt-0 last:mb-0">
+      {children}
+    </ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="my-3 list-decimal space-y-1.5 pl-5 marker:text-content-subtle first:mt-0 last:mb-0">
+      {children}
+    </ol>
+  ),
+  li: ({ children }) => <li className="pl-1">{children}</li>,
   strong: ({ children }) => <strong className="font-semibold text-content">{children}</strong>,
   em: ({ children }) => <em>{children}</em>,
   a: ({ href, children }) => (
-    <a href={href} className="text-accent underline decoration-accent/40 hover:decoration-accent">
+    <a href={href} className="link underline decoration-accent/30 hover:decoration-accent">
       {children}
     </a>
   ),
   code: ({ children, className }) =>
     className?.includes('language-') ? (
-      <code className="font-mono text-xs">{children}</code>
+      <code className="font-mono text-caption">{children}</code>
     ) : (
-      <code className="rounded bg-surface-overlay px-1.5 py-0.5 font-mono text-xs text-content">
-        {children}
-      </code>
+      <code className="code-chip break-words">{children}</code>
     ),
+  // A fenced block without a language arrives as a plain `code` and would take
+  // the inline chip styling; the well resets it so every block looks the same.
   pre: ({ children }) => (
-    <pre className="my-2 overflow-x-auto rounded-lg bg-surface-overlay p-3 font-mono text-xs leading-relaxed">
+    <pre className="my-4 overflow-x-auto rounded-xl bg-surface-overlay px-4 py-3.5 font-mono text-caption leading-relaxed text-content first:mt-0 last:mb-0 [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-content">
       {children}
     </pre>
   ),
   blockquote: ({ children }) => (
-    <blockquote className="my-2 border-l-2 border-surface-border pl-3 text-content-subtle">
+    <blockquote className="my-4 border-l-2 border-surface-strong pl-4 text-content-muted">
       {children}
     </blockquote>
   ),
-  hr: () => <hr className="my-3 border-surface-border" />,
+  hr: () => <hr className="my-6 border-surface-border" />,
   table: ({ children }) => (
-    <div className="my-2 overflow-x-auto">
-      <table className="w-full border-collapse text-xs">{children}</table>
+    <div className="my-4 overflow-x-auto rounded-xl border border-surface-border">
+      <table className="w-full border-collapse text-callout [&_tbody_tr:last-child>td]:border-b-0">{children}</table>
     </div>
   ),
   th: ({ children }) => (
-    <th className="border border-surface-border bg-surface-overlay px-2 py-1 text-left font-semibold">
+    <th className="border-b border-surface-border bg-surface-overlay/60 px-3 py-2 text-left text-meta font-medium text-content-muted">
       {children}
     </th>
   ),
   td: ({ children }) => (
-    <td className="border border-surface-border px-2 py-1 align-top">{children}</td>
+    <td className="border-b border-surface-border/70 px-3 py-2.5 align-top">{children}</td>
   ),
 };

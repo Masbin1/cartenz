@@ -57,3 +57,4 @@ with the condition under which it is retired.
 | [ADR-055](ADR-055-per-project-on-host-models-only.md) | A per-project "on-host models only" flag | Accepted |
 | [ADR-056](ADR-056-module-selection-at-project-creation.md) | Module selection at project creation | Accepted |
 | [ADR-057](ADR-057-merge-to-main-and-project-restart.md) | Merge staging into main, and restart the running instance | Accepted |
+| [ADR-061](ADR-061-calm-content-first-portal-design.md) | A calm, content-first portal design | Accepted |
