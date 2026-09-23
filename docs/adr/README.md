@@ -60,3 +60,4 @@ with the condition under which it is retired.
 | [ADR-060](ADR-060-one-approval-per-push-and-verified-delivery.md) | One approval per push, and a push is not delivered until it is verified | Accepted |
 | [ADR-061](ADR-061-calm-content-first-portal-design.md) | A calm, content-first portal design | Accepted |
 | [ADR-062](ADR-062-task-pulls-its-branch.md) | A task can pull the branch it works on, and "nothing new" is a success | Accepted |
+| [ADR-063](ADR-063-project-local-checkout.md) | A connected project keeps a local clone that syncs on request | Accepted |

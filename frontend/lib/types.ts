@@ -740,3 +740,40 @@ export interface ProjectPreviewState {
   reason: string | null;
   preview: PreviewSummary | null;
 }
+
+/**
+ * The local clone this host keeps for a project (ADR-063).
+ *
+ * `behind` is deliberately nullable: it is read from the local
+ * remote-tracking ref, so it is the truth as of the last sync, and a checkout
+ * that has never been compared says so rather than claiming to be current.
+ */
+export interface CheckoutBranchState {
+  branch: string;
+  path: string;
+  exists: boolean;
+  commit: string | null;
+  remoteCommit: string | null;
+  behind: number | null;
+  dirty: boolean;
+  historyDepth: number | null;
+  lastSyncedAt: string | null;
+}
+
+export interface CheckoutStatus {
+  enabled: boolean;
+  reason: string | null;
+  root: string | null;
+  branches: CheckoutBranchState[];
+}
+
+export interface CheckoutSyncResult {
+  branch: string;
+  outcome: 'cloned' | 'up_to_date' | 'fast_forwarded' | 'refused' | 'failed';
+  commit: string | null;
+  behind: number | null;
+  historyDepth: number | null;
+  modules: number | null;
+  message: string;
+  durationMs: number;
+}

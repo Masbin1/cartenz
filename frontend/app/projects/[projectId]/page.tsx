@@ -20,6 +20,7 @@ import { Skeleton, SkeletonRows, SkeletonText } from '@/components/ui/skeleton';
 import { PROJECT_TYPE_LABELS, humanise, relativeTime } from '@/lib/format';
 import type {
   BackupSummary,
+  CheckoutStatus,
   ProjectDetail,
   ProjectProvisioningInfo,
   ProjectRestartInfo,
@@ -214,6 +215,10 @@ export default function ProjectDetailPage() {
                 repositoryUrl={project.repositoryUrl}
                 isAdmin={user.isAdmin}
               />
+            ) : null}
+
+            {project.repositoryUrl ? (
+              <CheckoutPanel projectId={project.id} defaultBranch={project.defaultBranch} />
             ) : null}
 
             {project.memory ? (
@@ -846,6 +851,153 @@ const BACKUP_TONE: Record<BackupSummary['status'], StatusTone> = {
   failed: 'failure',
   running: 'running',
 };
+
+/**
+ * The long-lived local clone this host keeps of a connected project's
+ * repository (ADR-063): a second source, so this project's code on this host
+ * matches what is on GitHub or odoo.sh without waiting for a task to fetch it.
+ *
+ * Loads on mount so a person opening the page immediately sees whether the
+ * local clone is behind, not only after pressing a button - that gap (a branch
+ * updated upstream, not reflected here) is exactly the confusion this panel
+ * exists to close.
+ */
+function CheckoutPanel({
+  projectId,
+  defaultBranch,
+}: {
+  projectId: string;
+  defaultBranch: string;
+}) {
+  const [status, setStatus] = useState<CheckoutStatus | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const result = await api.projects.checkoutStatus(projectId);
+      setStatus(result);
+      setLoadError(null);
+    } catch (caught) {
+      setLoadError(caught instanceof ApiError ? caught.message : 'Could not read the local clone.');
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (loadError) {
+    return (
+      <Section size="small" title="Local clone">
+        <Outcome tone="failure">{loadError}</Outcome>
+      </Section>
+    );
+  }
+
+  if (!status) return null;
+
+  if (!status.enabled) {
+    return (
+      <Section size="small" title="Local clone">
+        <p className="text-callout text-content-muted">
+          {status.reason ?? 'Local clones are not enabled on this deployment.'}
+        </p>
+      </Section>
+    );
+  }
+
+  const sync = async (branch: string) => {
+    setSyncing(branch);
+    setSyncError(null);
+    setSyncNotice(null);
+    try {
+      const result = await api.projects.syncCheckout(projectId, branch);
+      setSyncNotice(result.message);
+      await load();
+    } catch (caught) {
+      setSyncError(caught instanceof ApiError ? caught.message : 'The sync could not run.');
+    } finally {
+      setSyncing(null);
+    }
+  };
+
+  const branches = status.branches.length > 0 ? status.branches : null;
+
+  return (
+    <Section
+      size="small"
+      title="Local clone"
+      description={
+        status.root ? `Kept on this host under ${status.root}.` : undefined
+      }
+    >
+      {!branches ? (
+        <p className="text-callout text-content-muted">
+          Not cloned yet. Sync the {defaultBranch} branch to bring the code onto this host.
+        </p>
+      ) : (
+        <ul className="divide-y divide-surface-border/70 border-y border-surface-border/70">
+          {branches.map((branch) => (
+            <li
+              key={branch.branch}
+              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3.5"
+            >
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 font-mono text-callout text-content">
+                  <GitBranch className="h-3.5 w-3.5 shrink-0 text-content-subtle" strokeWidth={1.75} aria-hidden="true" />
+                  {branch.branch}
+                </p>
+                <p className="mt-1 text-meta text-content-subtle">
+                  {!branch.exists
+                    ? 'Never cloned.'
+                    : branch.dirty
+                      ? 'Local changes present — sync refused to avoid losing them.'
+                      : branch.behind === null
+                        ? `At ${branch.commit?.slice(0, 8) ?? 'unknown'}. Sync to compare with the remote.`
+                        : branch.behind === 0
+                          ? `Up to date at ${branch.commit?.slice(0, 8) ?? ''}.`
+                          : `${branch.behind} commit${branch.behind === 1 ? '' : 's'} behind the remote.`}
+                  {branch.lastSyncedAt ? ` · Synced ${relativeTime(branch.lastSyncedAt)}` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void sync(branch.branch)}
+                disabled={syncing !== null}
+                className="btn-secondary shrink-0"
+              >
+                {syncing === branch.branch ? <Spinner className="h-3.5 w-3.5" /> : null}
+                {syncing === branch.branch
+                  ? 'Syncing…'
+                  : branch.exists
+                    ? 'Sync'
+                    : 'Clone'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!branches ? (
+        <button
+          type="button"
+          onClick={() => void sync(defaultBranch)}
+          disabled={syncing !== null}
+          className="btn-secondary mt-3"
+        >
+          {syncing === defaultBranch ? <Spinner className="h-3.5 w-3.5" /> : null}
+          {syncing === defaultBranch ? 'Cloning…' : `Clone ${defaultBranch}`}
+        </button>
+      ) : null}
+
+      {syncNotice ? <Outcome tone="success">{syncNotice}</Outcome> : null}
+      {syncError ? <Outcome tone="failure">{syncError}</Outcome> : null}
+    </Section>
+  );
+}
 
 /**
  * The per-client backups (ADR-054): a restorable snapshot of the database, the

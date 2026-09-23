@@ -144,6 +144,38 @@ const environmentSchema = z.object({
     .transform((value) => value === 'true'),
 
   /**
+   * Where a connected project's long-lived clone lives (`PROJECT_CHECKOUT_ROOT`).
+   *
+   * Empty - the default - means nothing outlives its task: every task still
+   * clones into its own throwaway workspace, which is the behaviour this
+   * deployment has always had.
+   *
+   * Set it, and a connected project gets one clone per branch under it that
+   * survives between tasks and can be synced on demand. What that buys is the
+   * ability to read a repository's history instead of only its tip, and a project
+   * page that can answer "how far behind is this?" without waiting for a task to
+   * run. What it costs is customer source code resting on platform disk for as
+   * long as the project exists - the same retention WORKSPACE_RETAIN_ON_FAILURE
+   * refuses by default, accepted deliberately here because a clone that dies with
+   * its task cannot be read at all.
+   */
+  PROJECT_CHECKOUT_ROOT: z.string().default(''),
+
+  /**
+   * Hand a task the project's clone instead of giving it its own.
+   *
+   * Only meaningful with PROJECT_CHECKOUT_ROOT set, and off by default because
+   * the two disagree about history: a project clone carries the full history a
+   * reader needs, a task workspace is shallow because a task needs only the tip,
+   * and an existing clone cannot be made shallow afterwards. Turning this on
+   * trades that guarantee for not re-downloading the repository on every task.
+   */
+  PROJECT_CHECKOUT_REUSE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+
+  /**
    * On-premise execution (ADR-028).
    *
    * ON_PREMISE_ROOT is the base directory under which on-premise projects live,
@@ -355,7 +387,18 @@ const environmentSchema = z.object({
   ODOO_SOURCE_PATHS: z.string().default(''),
 
   // Git. Shallow by default: a task needs a branch and a diff, not history.
-  GIT_CLONE_DEPTH: z.coerce.number().int().min(1).max(1000).default(1),
+  /**
+   * How much history a clone takes.
+   *
+   * 0 means the whole history, which is what a deployment that wants the agent to
+   * be able to reason about why code looks the way it does should use: a shallow
+   * clone carries one commit and no past. A positive value is the number of
+   * commits to fetch - the depth a task needs, and nothing more.
+   *
+   * The default stays 1 because it is the cheapest, and a deployment that only
+   * ever changes files at the tip never notices the difference.
+   */
+  GIT_CLONE_DEPTH: z.coerce.number().int().min(0).max(1000).default(1),
   GIT_AUTHOR_NAME: z.string().min(1).default('LinkedERP AI Agent'),
   GIT_AUTHOR_EMAIL: z.string().email().default('ai-agent@linkederp.com'),
   /**
@@ -568,6 +611,16 @@ export interface AppConfig {
     readonly readOnlyPaths: readonly string[];
   };
   /**
+   * One clone per project, kept between tasks (`PROJECT_CHECKOUT_ROOT`).
+   *
+   * `root` null means disabled, which is the default: no clone outlives its task.
+   */
+  readonly checkouts: {
+    readonly root: string | null;
+    /** Hand a task the project's checkout rather than cloning its own. */
+    readonly reuse: boolean;
+  };
+  /**
    * Provisioning a real Odoo instance for a "Create with AI" project (ADR-039).
    */
   readonly provisioning: {
@@ -757,6 +810,14 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   // first task that targets the misconfigured directory.
   if (env.ON_PREMISE_ROOT && !isAbsolute(env.ON_PREMISE_ROOT)) {
     throw new ConfigurationError(['ON_PREMISE_ROOT must be an absolute path.']);
+  }
+  // Validated at boot rather than at the first sync: a relative or misspelled
+  // checkout root would otherwise be discovered as an empty directory listing on
+  // a project page that claims the code is current.
+  if (env.PROJECT_CHECKOUT_ROOT.trim().length > 0 && !isAbsolute(env.PROJECT_CHECKOUT_ROOT)) {
+    throw new ConfigurationError([
+      'PROJECT_CHECKOUT_ROOT must be an absolute path when set.',
+    ]);
   }
   const readOnlyPaths = splitPaths(env.ON_PREMISE_READ_ONLY_PATHS);
   for (const path of readOnlyPaths) {
@@ -969,6 +1030,10 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     onPremise: {
       root: emptyToUndefined(env.ON_PREMISE_ROOT) ?? null,
       readOnlyPaths,
+    },
+    checkouts: {
+      root: emptyToUndefined(env.PROJECT_CHECKOUT_ROOT) ?? null,
+      reuse: env.PROJECT_CHECKOUT_REUSE,
     },
     provisioning: {
       enabled: env.PROJECT_PROVISIONING_ENABLED,

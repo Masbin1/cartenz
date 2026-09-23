@@ -211,6 +211,16 @@ export class GitService {
     });
     const branch = assertSafeRefName(options.branch);
     const depth = options.depth ?? this.config.git.cloneDepth;
+    /**
+     * `depth` of 0 or less means the whole history, which is what a request for
+     * a full clone asks for either way.
+     *
+     * A shallow clone is enough for a task, which only needs the tip, but not for
+     * reading: an agent asked why a file looks the way it does cannot answer from
+     * one commit, and neither can a reviewer. `GIT_CLONE_DEPTH=0` is therefore a
+     * supported value rather than a misconfiguration.
+     */
+    const fullHistory = options.full === true || depth <= 0;
 
     const lease = await leaseGitCredential({
       directory: options.credentialDirectory,
@@ -236,7 +246,7 @@ export class GitService {
           '--single-branch',
           '--no-recurse-submodules',
           '--no-tags',
-          ...(options.full ? [] : [`--depth=${depth}`]),
+          ...(fullHistory ? [] : [`--depth=${depth}`]),
           `--branch=${branch}`,
           // Everything after `--` is an operand, so neither the URL nor the
           // destination can be read as an option even if validation is bypassed.
@@ -437,6 +447,64 @@ export class GitService {
       throw new GitCommandError('rev-parse --abbrev-ref HEAD', result.exitCode, summariseFailure(result));
     }
     return result.stdout.trim();
+  }
+
+  /**
+   * A ref's commit, or null when it does not resolve.
+   *
+   * The null-returning counterpart of `revParse`, for the callers that ask about
+   * a ref which may legitimately not exist yet - a remote branch before the first
+   * fetch, a cache directory before the first clone. Those are questions about
+   * state, not failures, and an exception would make the caller's ordinary path
+   * the catch block.
+   */
+  async headOf(repositoryPath: string, ref: string): Promise<string | null> {
+    const result = await this.run(repositoryPath, ['rev-parse', '--verify', `${ref}^{commit}`]);
+    return result.exitCode === 0 ? result.stdout.trim() : null;
+  }
+
+  /** Whether `ref` exists in this repository. */
+  async hasRef(repositoryPath: string, ref: string): Promise<boolean> {
+    return (await this.headOf(repositoryPath, ref)) !== null;
+  }
+
+  /**
+   * How many commits are reachable from `to` and not from `from`.
+   *
+   * The number of commits a branch is behind or ahead, depending on which way
+   * round the range is given. Reported to a person, so it must be a count of
+   * commits rather than a boolean "differs": "3 commits behind" tells an operator
+   * whether to look now or later, and "out of date" does not.
+   *
+   * Returns null when the two refs share no history at all (a shallow clone whose
+   * boundary the range crosses, a rewritten remote), because that is not a count
+   * and reporting it as one - 0, most likely - would say "up to date" about a
+   * branch that cannot be compared.
+   */
+  async countCommits(repositoryPath: string, from: string, to: string): Promise<number | null> {
+    return this.countWithArgs(repositoryPath, ['rev-list', '--count', `${from}..${to}`]);
+  }
+
+  /**
+   * How much history this repository has: every commit reachable from `ref`.
+   *
+   * Read to tell a full clone from a shallow one, which is the difference
+   * ADR-063 is about - a checkout exists to be read, and `git log` over one
+   * commit answers nothing. Null when the count cannot be taken.
+   */
+  async countReachable(repositoryPath: string, ref: string): Promise<number | null> {
+    return this.countWithArgs(repositoryPath, ['rev-list', '--count', ref]);
+  };
+
+  private async countWithArgs(
+    repositoryPath: string,
+    args: readonly string[],
+  ): Promise<number | null> {
+    const result = await this.run(repositoryPath, [...args]);
+    if (result.exitCode !== 0) return null;
+
+    const count = Number.parseInt(result.stdout.trim(), 10);
+    return Number.isFinite(count) ? count : null;
   }
 
   async revParse(repositoryPath: string, ref: string): Promise<string> {

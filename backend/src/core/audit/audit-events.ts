@@ -147,6 +147,18 @@ export const AUDIT_EVENTS = {
   PROJECT_BACKUP_CREATED: 'project.backup_created',
   PROJECT_BACKUP_FAILED: 'project.backup_failed',
 
+  /**
+   * A project's repository was cloned to this host, or its local clone was
+   * brought up to date with the remote (ADR-063).
+   *
+   * Its own event rather than a task's: this is the platform holding a project's
+   * source outside any task, and what it recorded - which branch, which commit,
+   * how far behind - is what makes the local copy's staleness answerable later.
+   */
+  PROJECT_CHECKOUT_SYNCED: 'project.checkout_synced',
+  /** The local clone was read back and the project's memory rewritten from it. */
+  PROJECT_CHECKOUT_ANALYSED: 'project.checkout_analysed',
+
   /** The per-version Odoo source catalog was changed (ADR-045). */
   ODOO_VERSION_REPOSITORY_CREATED: 'odoo_version_repository.created',
   ODOO_VERSION_REPOSITORY_UPDATED: 'odoo_version_repository.updated',

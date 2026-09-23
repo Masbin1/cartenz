@@ -17,6 +17,8 @@ import type {
   PendingApprovalSummary,
   ProjectAccessMember,
   BackupSummary,
+  CheckoutStatus,
+  CheckoutSyncResult,
   ProjectDetail,
   ProjectDocument,
   ProjectDocumentDetail,
@@ -613,6 +615,26 @@ export const api = {
         reason: string | null;
         modules: { name: string; state: string }[];
       }>(`/projects/${projectId}/installed-modules`),
+
+    /**
+     * The local clone this host keeps for a project (ADR-063). The GET reads
+     * disk only, so `behind` is as of the last sync and the page says so; `sync`
+     * is the call that reaches the remote.
+     */
+    checkoutStatus: (projectId: string) =>
+      request<CheckoutStatus>(`/projects/${projectId}/checkout`),
+
+    syncCheckout: (projectId: string, branch: string | null) =>
+      request<CheckoutSyncResult>(`/projects/${projectId}/checkout/sync`, {
+        method: 'POST',
+        body: { branch },
+      }),
+
+    analyzeCheckout: (projectId: string, branch: string | null) =>
+      request<{ branch: string | null; modules: number | null; message: string }>(
+        `/projects/${projectId}/checkout/analyze`,
+        { method: 'POST', body: { branch } },
+      ),
 
     update: (projectId: string, body: Record<string, unknown>) =>
       request<ProjectDetail>(`/projects/${projectId}`, { method: 'PATCH', body }),

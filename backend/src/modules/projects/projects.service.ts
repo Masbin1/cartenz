@@ -71,6 +71,7 @@ import type {
 } from './project-provisioning.queue';
 import { ProjectDeploymentService, technicalNameFromOnPremisePath } from './project-deployment.service';
 import { ProjectMergeService } from './project-merge.service';
+import { ProjectCheckoutService } from './project-checkout.service';
 import {
   GitHubRepositoryService,
   type GitHubConnectionResult,
@@ -169,6 +170,7 @@ export class ProjectsService {
     private readonly githubRepositories: GitHubRepositoryService,
     private readonly deployment: ProjectDeploymentService,
     private readonly merge: ProjectMergeService,
+    private readonly checkouts: ProjectCheckoutService,
   ) {}
   /**
    * Brings a project's provisioned instance up to date with its repository
@@ -1054,7 +1056,43 @@ export class ProjectsService {
         })
       : null;
 
+    /**
+     * A connected project's code is brought down to this host now (ADR-063).
+     *
+     * After the response is assembled, and best-effort: the project exists and is
+     * usable whether or not the clone succeeds, and a repository that is
+     * unreachable or needs a credential nobody has yet must not turn a successful
+     * connection into a failed request. The failure is logged and recorded, and
+     * the project page offers the same sync as a button.
+     */
+    await this.warmCheckout(project.id, user.userId, project.name);
+
     return github ? { ...this.present(project), github } : this.present(project);
+  }
+
+  /**
+   * Clones the default branch locally, when this deployment keeps local clones.
+   *
+   * One branch, not all of them: a project may declare several environments and
+   * cloning each would make connecting a project cost as many full clones as it
+   * has branches, on a request a person is waiting for. The rest are one press
+   * away on the project page, and `PROJECT_CHECKOUT_REUSE` decides whether the
+   * clone is used by tasks or only read.
+   */
+  private async warmCheckout(projectId: string, userId: string, projectName: string): Promise<void> {
+    if (!this.checkouts.enabled) return;
+
+    try {
+      const result = await this.checkouts.sync(projectId, userId);
+      this.logger.log(
+        `Local clone for "${projectName}": ${result.outcome} — ${result.message}`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Local clone for "${projectName}" could not be prepared: ${(error as Error).message}. ` +
+          'The project is unaffected; the project page can retry the sync.',
+      );
+    }
   }
 
   /**
