@@ -164,6 +164,19 @@ function movesOn(error: unknown): boolean {
   if (name === 'TimeoutError') return true;
 
   /**
+   * A provider that marked its own failure retryable is saying "this instance
+   * could not answer, ask another" - a rate limit, a timeout, an upstream that
+   * returned nothing usable. That is precisely the case the chain exists for, so
+   * it moves on rather than surfacing the failure.
+   *
+   * Read from the domain error's own flag, which is why the flag has to survive
+   * the provider's own error mapping: a retryable error that arrives re-wrapped
+   * without `retryable` set is indistinguishable here from a malformed request,
+   * and the chain stops on the one member that was only temporarily down.
+   */
+  if (error instanceof ModelProviderError && error.retryable) return true;
+
+  /**
    * A schema mismatch used to end the chain here, on the reasoning that the next
    * provider would answer the same way. That holds between raw model endpoints
    * and does not hold across kinds: an agent-backed endpoint answers a large

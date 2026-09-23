@@ -1031,6 +1031,27 @@ export class AgentWorkflow {
     // The state machine has no implementing -> completed edge (ADR-018), so the
     // task passes through `testing`, where the chat branch completes it at once:
     // a conversation with nothing to land has nothing to validate, commit or push.
+    //
+    // But a chat with no answer and nothing written has no deliverable at all.
+    // The empty-answer guard on the model provider (ai-sdk-model-provider.ts)
+    // and the failover chain reading it (failover-model-provider.ts) exist to
+    // stop this upstream, by treating "answered nothing" as a retryable failure
+    // that moves to the next provider - so reaching here with an empty answer
+    // means every provider in the chain either agreed there was nothing to say,
+    // or the loop halted early (budget, a denial) before producing one. Either
+    // way, "completed" with a blank answer is the outcome task_355199 hit: no
+    // error anywhere, an event log reading "Answered.", and nothing for the
+    // person to read. Reported as a failure for the same reason an unchanged
+    // working tree is: a visible failure is recoverable, a silent non-answer
+    // is not.
+    if (answer.length === 0) {
+      return this.tasks.transition(snapshot.taskId, 'implementing', 'failed', {
+        failureReason: outcome.haltReason
+          ? `The agent produced no answer: ${outcome.haltReason}.`
+          : 'The agent reported completion but produced no answer.',
+      });
+    }
+
     return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
       message: `Answered in ${outcome.steps} step(s) across ${outcome.toolCalls} tool call(s).`,
     });

@@ -402,6 +402,44 @@ export class AiSdkModelProvider implements ModelProvider {
         haltReason = `the step budget of ${request.maxSteps} was exhausted`;
       }
 
+      /**
+       * An upstream that answers HTTP 200 with an empty closing message is not a
+       * platform failure by any check above - no thrown error, no timeout, no
+       * schema mismatch - so without this it is reported as a normal finish with
+       * an empty `summary`. The caller (chat loop, implementation loop) then has
+       * nothing to save or narrate and the task completes as if the model had
+       * simply chosen not to answer. Observed against a gateway that load-balances
+       * one model name across several upstreams: one of them returns
+       * `content: ""` with a normal finish, so the same task succeeds or returns
+       * nothing depending on which upstream the request landed on.
+       *
+       * Caught here, at the one place this provider's response is still in hand,
+       * rather than by every caller re-deriving "empty is wrong" from a value
+       * with no memory of why it is empty. Retryable and reported as a real
+       * provider fault so `FailoverModelProvider` moves on to the next member of
+       * the chain instead of the task completing with nothing.
+       *
+       * The condition is the FINAL step, not the whole run: a step that called a
+       * tool and said nothing is normal, and the bug is a closing step that
+       * neither called a tool nor produced text. A run halted for a budget or an
+       * approval is exempt - it legitimately has nothing more to say.
+       */
+      const finalStep = result.steps?.at(-1);
+      const finalStepWasEmpty =
+        (finalStep?.toolCalls?.length ?? 0) === 0 && (result.text ?? '').trim().length === 0;
+
+      if (!haltReason && finalStepWasEmpty) {
+        throw new ModelProviderError(
+          this.id,
+          'The model returned an empty response with no tool calls and no halt reason ' +
+            '(an upstream answered but said nothing).',
+          true,
+          undefined,
+          false,
+          this.model,
+        );
+      }
+
       return {
         value: { summary: result.text ?? '', toolCalls, haltReason },
         usage: {
@@ -426,6 +464,15 @@ export class AiSdkModelProvider implements ModelProvider {
    * retrying the latter wastes a task's budget to reach the same answer.
    */
   private toProviderError(error: unknown): ModelProviderError {
+    /**
+     * Already a domain error: re-wrapping it loses the `retryable` and
+     * `schemaMismatch` flags that this class exists to carry, and those are
+     * exactly what the failover chain reads to decide whether to move on. A
+     * guard inside the loop that throws ModelProviderError has already said what
+     * it meant; passing it through unchanged is what keeps that meaning.
+     */
+    if (error instanceof ModelProviderError) return error;
+
     const message = error instanceof Error ? error.message : String(error);
     const name = error instanceof Error ? error.name : '';
     const status = readStatusCode(error);

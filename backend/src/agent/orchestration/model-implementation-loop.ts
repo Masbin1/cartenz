@@ -178,11 +178,26 @@ export class ModelImplementationLoop {
         // included because acting on it requires knowing what was wrong - a
         // missing required argument and a forbidden capability are both denials,
         // and only one of them is worth another attempt.
+        //
+        // A malformed-request denial (permission-validator's `invalid request for
+        // ...` prefix) is always the caller's mistake, never policy: the fix is in
+        // the model's own next call, not a different approach. Telling it "try a
+        // different approach" here is how a fixable typo turned into "the platform
+        // is blocking me" - the model correctly read that it should not repeat the
+        // SAME broken call, and wrongly concluded that meant giving up rather than
+        // calling the tool again with the one field corrected.
+        const correctable = outcome.denialReason?.startsWith('invalid request for') ?? false;
+
         return {
           result: {
             status: 'denied',
             message: outcome.denialReason
-              ? `The platform refused this call: ${outcome.denialReason}`
+              ? correctable
+                ? `${name} was refused: ${outcome.denialReason}. This is a request you can fix, ` +
+                  `not a forbidden action - call ${name} again right now with that argument ` +
+                  'corrected. Do not skip this file, do not report the platform as blocking you, ' +
+                  'and do not finish until the corrected call has succeeded.'
+                : `The platform refused this call: ${outcome.denialReason}`
               : 'The platform refused this call. Do not retry it or work around it.',
             detail: outcome.output,
           },
