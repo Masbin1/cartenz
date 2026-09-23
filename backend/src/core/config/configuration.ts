@@ -80,8 +80,21 @@ const environmentSchema = z.object({
    * These are what stop a task running until something else stops it. A loop that
    * exhausts any of them fails with the reason stated rather than continuing.
    */
-  AI_MAX_STEPS: z.coerce.number().int().min(1).max(50).default(12),
-  AI_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(200).default(30),
+  /**
+   * Implementation-loop budgets.
+   *
+   * A flash-class model exploring an unfamiliar repository before it writes
+   * anything reaches 12 steps and 30 tool calls routinely — observed on a
+   * 13-module Odoo project where the model spent every step reading and then
+   * had no budget left to make a single edit, failing the task as "the step
+   * budget of 12 was exhausted". The budgets exist to stop a loop that is not
+   * making progress, not to cap an ordinary task: a normal change uses 4-10
+   * steps, so the ceiling is set well above that. The tool-call budget is
+   * raised alongside it — tightening one while leaving the other merely moves
+   * which message the failure carries.
+   */
+  AI_MAX_STEPS: z.coerce.number().int().min(1).max(200).default(30),
+  AI_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(500).default(60),
   AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(64000).default(8000),
   AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5000).max(600000).default(120000),
   /** 0 for the most deterministic output, which is what a code change wants. */

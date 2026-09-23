@@ -274,8 +274,8 @@ describe('loadConfig', () => {
     it('applies the documented model call bounds', () => {
       const config = loadConfig(valid);
 
-      expect(config.ai.maxSteps).toBe(12);
-      expect(config.ai.maxToolCalls).toBe(30);
+      expect(config.ai.maxSteps).toBe(30);
+      expect(config.ai.maxToolCalls).toBe(60);
       expect(config.ai.maxOutputTokens).toBe(8000);
       expect(config.ai.requestTimeoutMs).toBe(120000);
       // Zero, because a code change wants the most deterministic output.

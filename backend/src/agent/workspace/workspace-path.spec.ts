@@ -237,6 +237,14 @@ describe('workspace path containment', () => {
       ).rejects.toThrow(/traverses upwards/i);
     });
 
+    it('resolves the read-only root itself, not an empty path', async () => {
+      // A model listing `odoo` (the prefix on its own, no trailing segment)
+      // used to strip the prefix down to "" and fail with "Refused the path
+      // \"\": it is empty" — a refusal that named a path the model never sent.
+      const resolved = await resolveReadPath(workspace, roots, 'odoo');
+      expect(resolved).toBe(baseDir);
+    });
+
     it('refuses a write that names a read-only prefix', () => {
       expect(() => assertNotReadOnlyPath(roots, 'odoo/addons/x.py')).toThrow(
         /read-only shared path/i,

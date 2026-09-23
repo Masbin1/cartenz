@@ -238,6 +238,15 @@ export async function resolveReadPath(
   const match = readOnlyRootFor(readOnlyRoots, requested);
   if (match) {
     const relative = requested.slice(match.prefix.length).replace(/^[/\\]+/, '');
+    // The request NAMED the read-only root itself (`addons`, `odoo`). Stripping
+    // the prefix leaves "", which the assertion below refuses as "it is empty"
+    // — reporting back a path the model never sent (observed: `list_directory
+    // "addons"` answered with `Refused the path "": it is empty`) and spending a
+    // step of the task's budget on a refusal that carries no information. The
+    // root itself is a listable directory, so "." is what was meant.
+    if (relative === '') {
+      return resolveExistingPath(match.path, '.');
+    }
     return resolveExistingPath(match.path, relative);
   }
   return resolveExistingPath(root, requested);

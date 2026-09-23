@@ -302,13 +302,49 @@ export class AiSdkModelProvider implements ModelProvider {
     // attempts still exhausted, failing a task that a third would have passed.
     // Every other failure (a rejected key, a missing model, a timeout) is not
     // this and fails on the first try, as before.
+    //
+    // A retry is not a reroll of the same question. At temperature 0 the same
+    // request tends to produce the same bad answer, which is why three identical
+    // attempts still exhausted against these endpoints. Each retry after the
+    // first carries what was actually wrong — the text the model sent, truncated
+    // — and tells it to emit one JSON object and nothing else. The schema is
+    // restated by jsonObjectInstruction in every attempt; what changes is that
+    // the model is told its previous answer was unusable.
     const maxAttempts = this.config.ai.structuredMaxAttempts;
+    let lastText = '';
+
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const attemptInput =
+        attempt === 1
+          ? input
+          : this.buildInput(
+              [
+                ...request.parts,
+                {
+                  label: 'Your previous answer was not usable',
+                  untrusted: false,
+                  content:
+                    'Your previous reply could not be parsed as the JSON object this ' +
+                    'request requires, so the task has not started. ' +
+                    (lastText
+                      ? `What you sent began: ${lastText.slice(0, 400)}\n\n`
+                      : 'You sent nothing. ') +
+                    'Reply now with ONE JSON object that matches the required shape ' +
+                    'exactly. No prose before or after it, no markdown fence, no ' +
+                    'partial object, and every required field present.',
+                },
+              ],
+              randomUUID().slice(0, 8),
+            );
+
       try {
         // The cast is on the argument rather than the schema field: narrowing the
         // field alone makes TypeScript select a different overload and reject the
         // whole call.
-        const result = (await generateObject(options as never)) as unknown as {
+        const result = (await generateObject({
+          ...options,
+          ...attemptInput,
+        } as never)) as unknown as {
           object: unknown;
           usage?: { inputTokens?: number; outputTokens?: number };
         };
@@ -327,6 +363,7 @@ export class AiSdkModelProvider implements ModelProvider {
       } catch (error) {
         const canRetry = attempt < maxAttempts && NoObjectGeneratedError.isInstance(error);
         if (!canRetry) throw this.toProviderError(error);
+        lastText = NoObjectGeneratedError.isInstance(error) ? (error.text ?? '') : '';
         this.logger.warn(
           `${this.id}/${this.model} produced a response that did not match the schema; ` +
             `retrying (attempt ${attempt + 1}/${maxAttempts})`,
@@ -521,6 +558,26 @@ export class AiSdkModelProvider implements ModelProvider {
       return status === 429
         ? `${this.id} rate limited the request.${suffix}`
         : `${this.id} was unavailable.${suffix}`;
+    }
+
+    /**
+     * The model answered; the platform could not accept the answer. Neither
+     * sentence below is true of it: this is not a rejected request and not a
+     * rejected key, and the failure report said exactly that — "Priority 1
+     * (deepseek): openai-compatible rejected the request" — while the log line
+     * directly above said "No object generated: could not parse the response".
+     * The person reading the failure was sent after a credential problem that
+     * does not exist.
+     *
+     * By this point `error` is never already a ModelProviderError — the caller
+     * returns one straight through before reaching here — so this checks the
+     * SDK's own error type instead.
+     */
+    if (NoObjectGeneratedError.isInstance(error) || (error as Error)?.name === 'ZodError') {
+      return (
+        `${this.id} answered, but not in the JSON this platform needs for a plan` +
+        `${detail ? ` (the provider said: ${detail})` : ''}.`
+      );
     }
 
     switch (status) {
