@@ -219,6 +219,9 @@ export class ChatLoop {
     return this.registry
       .all()
       .filter((tool) => tool.availableToModel)
+      // A pull is a change-request operation; the validator refuses it in a
+      // chat, so offering it would only spend the model's budget on a refusal.
+      .filter((tool) => tool.name !== 'git_pull')
       .filter(
         (tool) =>
           tool.modes === undefined ||

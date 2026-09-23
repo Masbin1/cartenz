@@ -85,3 +85,6 @@ frontend/.next.broken-root-*/
 
 # Renamed-aside root-owned trees awaiting a root rm (see docs runbooks)
 *.broken-root-*/
+# A pre-redesign Next.js build moved aside by the build script; same rule as
+# above, different name. 127 MiB of output that is not part of the platform.
+frontend/.next.pre-redesign-*/

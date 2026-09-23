@@ -136,6 +136,37 @@ export interface GitPushResult {
   readonly branch: string;
 }
 
+export interface GitPullResult {
+  /** `up_to_date` is a successful pull with nothing to take. */
+  readonly outcome: 'up_to_date' | 'fast_forwarded';
+  readonly branch: string;
+  readonly before: string;
+  readonly after: string;
+  readonly remoteCommit: string;
+  readonly commits: number;
+  readonly files: readonly string[];
+  readonly filesChanged: number;
+}
+
+/**
+ * A pull the platform refused to make, before or without moving the branch.
+ *
+ * Thrown rather than returned as a result because neither outcome it names is
+ * a pull: `dirty` means the request was made at the wrong moment, `diverged`
+ * means the histories no longer share a future. The execution layer records the
+ * thrown message as the tool's failure, which is what a person and the model
+ * both read.
+ */
+export class GitPullRefusedError extends Error {
+  constructor(
+    readonly kind: 'dirty' | 'diverged',
+    detail: string,
+  ) {
+    super(`The pull was refused: ${detail}`);
+    this.name = 'GitPullRefusedError';
+  }
+}
+
 export class GitCommandError extends Error {
   constructor(
     readonly command: string,
@@ -733,6 +764,154 @@ export class GitService {
     } finally {
       await lease.release();
     }
+  }
+
+  /**
+   * Brings the checked-out branch up to date with a branch on the remote, by
+   * fast-forward only (the `git_pull` tool).
+   *
+   * Fetch, then `merge --ff-only`, and nothing else - no rebase, no merge
+   * commit, no `-X theirs`. A pull that cannot fast-forward (the local branch
+   * has commits the remote does not, or the remote was rewritten) is refused by
+   * git itself with the working tree untouched, and reported as that refusal.
+   * Resolving a divergence is a decision about whose work wins, and no person
+   * is in this loop to make it.
+   *
+   * A working tree with uncommitted changes is refused before anything is
+   * fetched. git would fast-forward around unrelated local edits, but a pull
+   * that sometimes proceeds and sometimes refuses depending on which files the
+   * remote touched is harder to reason about than one that always wants a clean
+   * tree - and the implementation instruction asks for the pull first.
+   *
+   * The fetch refspec is forced (`+`) so a remote-tracking ref that the remote
+   * rewrote is still updated; whether the *branch* may follow it is then decided
+   * by the fast-forward check, which is the check that matters.
+   *
+   * Shallow clones are fine: verified against a depth-1 clone, a fetch brings
+   * the new commits down to the shallow boundary and the fast-forward succeeds,
+   * and a diverged history is refused exactly as in a full clone.
+   */
+  async pullFastForward(
+    repositoryPath: string,
+    remoteUrl: string,
+    branch: string,
+    options: {
+      readonly credentialDirectory: string;
+      readonly credential: GitCredential | null;
+    },
+  ): Promise<GitPullResult> {
+    const remote = assertSafeRemoteUrl(remoteUrl, {
+      allowLocal: this.config.git.allowLocalRemotes,
+    });
+    const safeBranch = assertSafeRefName(branch);
+    const trackingRef = `refs/remotes/origin/${safeBranch}`;
+
+    const status = await this.status(repositoryPath);
+    if (!status.clean) {
+      throw new GitPullRefusedError(
+        'dirty',
+        `the working tree has uncommitted changes in ${status.entries.length} file(s), ` +
+          'so nothing was pulled. Pull before changing files.',
+      );
+    }
+
+    const before = await this.revParse(repositoryPath, 'HEAD');
+
+    const lease = await leaseGitCredential({
+      directory: options.credentialDirectory,
+      credential: options.credential,
+      hostKeyPolicy: this.config.git.sshHostKeyPolicy,
+    });
+
+    const fetchUrl =
+      remote.scheme === 'https' && options.credential?.kind === 'token'
+        ? `https://${httpsUsername(options.credential, remote.host)}@${remote.host}/${remote.path}`
+        : remote.url;
+
+    try {
+      const fetched = await this.commands.run(
+        'git',
+        [
+          ...HARDENING_ARGS,
+          'fetch',
+          '--quiet',
+          '--no-tags',
+          '--',
+          fetchUrl,
+          `+refs/heads/${safeBranch}:${trackingRef}`,
+        ],
+        { cwd: repositoryPath, env: lease.env, timeoutMs: this.config.process.maxTimeoutMs },
+      );
+
+      if (fetched.exitCode !== 0) {
+        throw new GitCommandError('fetch', fetched.exitCode, summariseFailure(fetched));
+      }
+    } finally {
+      await lease.release();
+    }
+
+    const remoteCommit = await this.revParse(repositoryPath, trackingRef);
+
+    if (remoteCommit === before) {
+      return {
+        outcome: 'up_to_date',
+        branch: safeBranch,
+        before,
+        after: before,
+        remoteCommit,
+        commits: 0,
+        files: [],
+        filesChanged: 0,
+      };
+    }
+
+    const merged = await this.run(repositoryPath, [
+      'merge',
+      '--ff-only',
+      '--no-edit',
+      '--quiet',
+      trackingRef,
+      '--',
+    ]);
+
+    if (merged.exitCode !== 0) {
+      // Whatever git's reason - diverged history, unrelated histories after a
+      // rewrite - the branch has not moved, and saying so is the result.
+      const current = await this.revParse(repositoryPath, 'HEAD').catch(() => before);
+      if (current !== before) {
+        throw new GitCommandError('merge --ff-only', merged.exitCode, summariseFailure(merged));
+      }
+      throw new GitPullRefusedError(
+        'diverged',
+        `${safeBranch} cannot be fast-forwarded to the remote (${remoteCommit.slice(0, 8)}): ` +
+          `${summariseFailure(merged)}. The branch was left at ${before.slice(0, 8)}; ` +
+          'the local and remote histories have diverged and must be reconciled by a person.',
+      );
+    }
+
+    const after = await this.revParse(repositoryPath, 'HEAD');
+
+    const counted = await this.run(repositoryPath, ['rev-list', '--count', `${before}..${after}`]);
+    const commits = counted.exitCode === 0 ? Number.parseInt(counted.stdout.trim(), 10) || 0 : 0;
+
+    const names = await this.run(repositoryPath, [
+      'diff', '--name-only', '--no-color', '--no-ext-diff', before, after, '--',
+    ]);
+    const allFiles =
+      names.exitCode === 0
+        ? names.stdout.split(NEWLINE).map((line) => line.trim()).filter((line) => line.length > 0)
+        : [];
+
+    return {
+      outcome: 'fast_forwarded',
+      branch: safeBranch,
+      before,
+      after,
+      remoteCommit,
+      commits,
+      files: allFiles.slice(0, 200),
+      filesChanged: allFiles.length,
+    };
   }
 
   /**

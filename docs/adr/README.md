@@ -57,4 +57,6 @@ with the condition under which it is retired.
 | [ADR-055](ADR-055-per-project-on-host-models-only.md) | A per-project "on-host models only" flag | Accepted |
 | [ADR-056](ADR-056-module-selection-at-project-creation.md) | Module selection at project creation | Accepted |
 | [ADR-057](ADR-057-merge-to-main-and-project-restart.md) | Merge staging into main, and restart the running instance | Accepted |
+| [ADR-060](ADR-060-one-approval-per-push-and-verified-delivery.md) | One approval per push, and a push is not delivered until it is verified | Accepted |
 | [ADR-061](ADR-061-calm-content-first-portal-design.md) | A calm, content-first portal design | Accepted |
+| [ADR-062](ADR-062-task-pulls-its-branch.md) | A task can pull the branch it works on, and "nothing new" is a success | Accepted |

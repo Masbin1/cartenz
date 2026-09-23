@@ -179,6 +179,12 @@ export const GIT_COMMIT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+export const GIT_PULL_SCHEMA = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+} as const;
+
 export const VALIDATION_SCHEMA = {
   type: 'object',
   properties: {

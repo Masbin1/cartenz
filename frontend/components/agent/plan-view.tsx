@@ -40,24 +40,31 @@ export function PlanView({ plan }: { plan: ImplementationPlan }) {
       <div className="mt-8 grid gap-8 sm:grid-cols-2">
         <div className="min-w-0">
           <h3 className="text-callout font-semibold text-content">Files to change</h3>
-          <ul className="mt-2.5 space-y-1.5">
-            {plan.filesToModify.map((file) => (
-              <li key={file.path} className="flex min-w-0 gap-2 font-mono text-caption">
-                <span
-                  className={`shrink-0 ${
-                    file.change === 'added'
-                      ? 'text-state-success'
-                      : file.change === 'deleted'
-                        ? 'text-state-failure'
-                        : 'text-state-running'
-                  }`}
-                >
-                  {file.change === 'added' ? '+' : file.change === 'deleted' ? '-' : '~'}
-                </span>
-                <span className="min-w-0 break-all text-content">{file.path}</span>
-              </li>
-            ))}
-          </ul>
+          {plan.filesToModify.length === 0 ? (
+            <p className="mt-2.5 text-callout text-content-muted">
+              No files change. This request does something else — pulling the branch, for
+              instance — and the plan is the whole of it.
+            </p>
+          ) : (
+            <ul className="mt-2.5 space-y-1.5">
+              {plan.filesToModify.map((file) => (
+                <li key={file.path} className="flex min-w-0 gap-2 font-mono text-caption">
+                  <span
+                    className={`shrink-0 ${
+                      file.change === 'added'
+                        ? 'text-state-success'
+                        : file.change === 'deleted'
+                          ? 'text-state-failure'
+                          : 'text-state-running'
+                    }`}
+                  >
+                    {file.change === 'added' ? '+' : file.change === 'deleted' ? '-' : '~'}
+                  </span>
+                  <span className="min-w-0 break-all text-content">{file.path}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div className="min-w-0">

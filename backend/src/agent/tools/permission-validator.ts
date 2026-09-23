@@ -112,6 +112,17 @@ export class ToolPermissionValidator {
       };
     }
 
+    // A pull belongs to a change request, not a conversation. A chat task's
+    // workspace is a throwaway clone whose changes are read back as the chat's
+    // own writes (ADR-053): pulled commits would be mistaken for an approved
+    // edit and committed as one. Refused here rather than trusted to the prompt.
+    if (context.taskKind === 'chat' && tool.name === 'git_pull') {
+      return {
+        outcome: 'denied',
+        reason: 'git_pull is available in a change request, not in a conversation',
+      };
+    }
+
     if (tool.leavesPlatform) {
       const approvalAction = approvalActionForTool(tool.name);
 

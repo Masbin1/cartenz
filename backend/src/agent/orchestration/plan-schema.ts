@@ -49,7 +49,17 @@ export const implementationPlanSchema = z.object({
     .nullable()
     .describe('The Odoo series the repository targets, or null if it could not be determined.'),
   steps: z.array(planStepSchema).min(1).max(12),
-  filesToModify: z.array(plannedFileChangeSchema).min(1).max(20),
+  /**
+   * `min(0)`, deliberately (git-pull feature).
+   *
+   * A request that is purely a git operation - "pull the latest changes" - has
+   * no file to name. Requiring at least one here is what forced a model asked
+   * for exactly that to invent a placeholder file and a fabricated reason for
+   * it, which a person then approved and the implementation model correctly
+   * refused to write. Empty is the honest answer for a plan with nothing to
+   * change on disk.
+   */
+  filesToModify: z.array(plannedFileChangeSchema).min(0).max(20),
   validation: z
     .array(z.string().max(100))
     .min(1)

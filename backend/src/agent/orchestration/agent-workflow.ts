@@ -867,6 +867,52 @@ export class AgentWorkflow {
 
     if (modified.length === 0) {
       /**
+       * A pull that reported success is work, even though it changed no file.
+       *
+       * "Pull the latest changes" is a request whose whole result is that the
+       * branch moved - or that there was nothing to move, which is the same
+       * success. The diff is empty in both cases, so the gate below would read a
+       * fulfilled request as a model that did nothing and fail the task, which is
+       * exactly what happened: the model correctly refused to invent a file
+       * change and was failed for it.
+       *
+       * The task completes here rather than moving on to commit and push: there
+       * is nothing to commit, and pushing would be a no-op the platform would
+       * then have to report as a delivery (ADR-060).
+       */
+      if (outcome.pulled) {
+        const { outcome: pull, branch, commits } = outcome.pulled;
+
+        await this.tasks.saveDiffStats(snapshot.taskId, {
+          filesChanged: 0,
+          linesAdded: 0,
+          linesRemoved: 0,
+          patchTruncated: false,
+          toolCalls: outcome.toolCalls,
+          pull: { outcome: pull, branch, commits },
+        });
+
+        await this.narrate(
+          snapshot,
+          pull === 'up_to_date'
+            ? `${branch} was already up to date with the remote; nothing to pull.`
+            : `Pulled ${commits} commit(s) into ${branch}. No file in this plan needed changing.`,
+        );
+
+        // Straight to testing rather than committing: there is nothing to
+        // commit, and validation is where a repository task settles when it has
+        // no commit to make - which is exactly how a chat task completes (see
+        // `completeChat`). The edge out of `implementing` exists for that reason
+        // and this is the same shape of task.
+        return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
+          message:
+            pull === 'up_to_date'
+              ? `${branch} is already at the remote tip. There was nothing new to pull.`
+              : `Pulled ${commits} commit(s) into ${branch}. Nothing further was asked for.`,
+        });
+      }
+
+      /**
        * The model reported completion but changed nothing.
        *
        * Reported as a failure rather than passed on, because the alternative is a
@@ -1052,6 +1098,9 @@ export class AgentWorkflow {
       });
     }
 
+    // Same exit as a change task that changed nothing: the repository lifecycle
+    // owns `implementing -> testing`, so a conversation that only answered uses
+    // it instead of completing here.
     return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
       message: `Answered in ${outcome.steps} step(s) across ${outcome.toolCalls} tool call(s).`,
     });
@@ -1138,6 +1187,25 @@ export class AgentWorkflow {
     if (workspace.simulated) {
       return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
         message: 'Validation passed. No repository is connected, so no commit was made.',
+      });
+    }
+
+    /**
+     * Nothing to commit, so nothing to push: the task is done.
+     *
+     * A pull-only request reaches here with a clean tree and no file change to
+     * commit, and the previous behaviour fell through to `git_commit`, which
+     * stages nothing and fails with "nothing to commit" - a task failed for
+     * having done exactly what was asked. `git status` is the authority on
+     * whether there is anything to commit, and it is the same call the commit
+     * itself would make implicitly.
+     */
+    const status = await this.git.status(workspace.repositoryPath);
+    if (status.clean) {
+      return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
+        message:
+          'The working tree is unchanged: there is nothing to commit or push. ' +
+          'Any work this task did was on the branch itself.',
       });
     }
 
