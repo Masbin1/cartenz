@@ -4,6 +4,7 @@ import { projectConnections } from '../../core/database/schema';
 import { GIT_CONNECTION_TYPES, type GitTransport } from '../../core/enums';
 import type { GitCredentialsService } from '../../modules/settings/git-credentials.service';
 import { applyTransportToUrl, effectiveRepositoryUrl } from '../../modules/projects/repository-url';
+import type { GitCredential } from './git-credentials';
 
 /**
  * Everything needed to reach a project's repository: the URL to use and the
@@ -154,4 +155,30 @@ export async function resolveProjectGitAccess(
     credentialKind: registeredDefault?.kind ?? 'token',
     sshHostKey: null,
   });
+}
+
+/**
+ * Turns a resolved access into the credential a git invocation presents, or
+ * null when no tier supplied a secret.
+ *
+ * Shared so a caller cannot resolve the access and then forget to hand the
+ * credential to git: the per-project branch probe did exactly that, and
+ * `ls-remote` ran anonymously against an SSH remote whose key was configured -
+ * `Permission denied (publickey)` on a project every other operation reached.
+ */
+export async function readProjectGitCredential(
+  secrets: { read(ref: string): Promise<string> },
+  access: Pick<
+    ProjectGitAccess,
+    'secretRef' | 'credentialKind' | 'sshHostKey' | 'credentialUsername'
+  >,
+): Promise<GitCredential | null> {
+  if (!access.secretRef) return null;
+
+  return {
+    kind: access.credentialKind,
+    value: await secrets.read(access.secretRef),
+    hostKey: access.sshHostKey,
+    username: access.credentialUsername,
+  };
 }

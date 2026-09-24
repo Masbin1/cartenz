@@ -81,6 +81,10 @@ import { TERMINAL_TASK_STATUSES } from '../../agent/task-state';
 import { assertSafeRemoteUrl, UnsafeRemoteUrlError } from '../../agent/git/git-url';
 import { GitService } from '../../agent/git/git.service';
 import {
+  readProjectGitCredential,
+  resolveProjectGitAccess,
+} from '../../agent/git/project-git-access';
+import {
   databaseFromUrl,
   instanceRootOf,
   OdooOnlineClient,
@@ -762,6 +766,9 @@ export class ProjectsService {
         projectType: projects.projectType,
         repositoryUrl: projects.repositoryUrl,
         environmentConfig: projects.environmentConfig,
+        gitCredentialId: projects.gitCredentialId,
+        gitUsername: projects.gitUsername,
+        gitTransport: projects.gitTransport,
       })
       .from(projects)
       .where(eq(projects.id, projectId))
@@ -769,16 +776,27 @@ export class ProjectsService {
 
     if (!project) throw new NotFoundException('Project not found');
 
-    // ADR-041's lesson, same as pull/merge/restart: a platform-created
-    // repository lives as a connection, not in the project's own column.
-    const connections = await this.database.db
-      .select({
-        connectionType: projectConnections.connectionType,
-        metadata: projectConnections.metadata,
-      })
-      .from(projectConnections)
-      .where(eq(projectConnections.projectId, projectId));
-    const repositoryUrl = effectiveRepositoryUrl(project.repositoryUrl, connections);
+    /**
+     * The same resolution the checkout, the task clone and the push use
+     * (ADR-059): the project's chosen credential, else its Git connection's
+     * secret, else the deployment default for the host — and the URL with the
+     * project's transport applied. Probing anonymously here is what produced
+     * `Permission denied (publickey)` on a project whose Git access was correctly
+     * configured: every other git operation presented the key, this one did not.
+     * It also reads the URL from the connection when the column is empty
+     * (ADR-041), which the previous inline query did as well.
+     */
+    const access = await resolveProjectGitAccess(
+      { database: this.database, gitCredentials: this.gitCredentials },
+      {
+        projectId,
+        repositoryUrl: project.repositoryUrl,
+        gitCredentialId: project.gitCredentialId,
+        gitUsername: project.gitUsername,
+        gitTransport: project.gitTransport,
+      },
+    );
+    const repositoryUrl = access.repositoryUrl;
 
     if (project.projectType === 'on_premise' && !repositoryUrl) {
       const path = readOnPremisePath(project.environmentConfig);
@@ -794,7 +812,9 @@ export class ProjectsService {
       throw new BadRequestException('This project has no repository to read branches from.');
     }
 
-    return { branches: await this.readRemoteBranches(repositoryUrl) };
+    const credential = await readProjectGitCredential(this.secrets, access);
+
+    return { branches: await this.readRemoteBranches(repositoryUrl, credential) };
   }
 
   /**
