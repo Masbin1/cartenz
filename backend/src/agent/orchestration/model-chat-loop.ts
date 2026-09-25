@@ -99,7 +99,8 @@ export interface ChatLoopOutcome {
  * the model reads the repository through tools and answers a question in plain
  * language. A write tool is offered but is gated behind the `chat_edit`
  * approval by the permission validator, so a chat task that writes suspends into
- * `waiting_approval` exactly as a change task does.
+ * `waiting_approval` exactly as a change task does. On `odoo_online` the same
+ * rule covers a record write, through the `odoo_record_write` action.
  */
 @Injectable()
 export class ChatLoop {
@@ -175,7 +176,9 @@ export class ChatLoop {
     };
 
     const result = await provider.runToolLoop({
-      system: `${system}\n\n${CHAT_INSTRUCTION}`,
+      system: `${system}\n\n${CHAT_INSTRUCTION}${
+        input.executionMode === 'odoo_online' ? `\n\n${ODOO_ONLINE_CHAT_INSTRUCTION}` : ''
+      }`,
       parts: this.buildParts(input),
       tools,
       execute,
@@ -300,4 +303,44 @@ const CHAT_INSTRUCTION = [
   '',
   'Finish with a plain-language answer to the question. If you would change',
   'something, say what and where.',
+].join('\n');
+
+/**
+ * What a chat adds when the project is an Odoo Online instance (ADR-064).
+ *
+ * The instruction above assumes a repository. On this mode there is none, and the
+ * request people actually bring here is a data one - "buatkan sample data
+ * product", "add ten demo customers". Without this, a model reading the generic
+ * instruction answers that it has no such tool, which is what task_397329 hit.
+ */
+const ODOO_ONLINE_CHAT_INSTRUCTION = [
+  '# This project',
+  'This is an Odoo Online instance. There is no repository and no source code here,',
+  'so nothing above about files, modules or commits applies. What you have instead:',
+  '',
+  'Schema and views, on the live instance:',
+  '- odoo_list_models, odoo_list_fields: read the schema. No approval needed.',
+  '- odoo_create_field, odoo_add_field_to_view: create customization.',
+  '',
+  'Data, on the live instance:',
+  '- odoo_search_records: find existing records. Reading needs the project to grant',
+  '  database_record_read.',
+  '- odoo_create_records: create records, e.g. sample products on product.template',
+  '  or demo customers on res.partner. Needs database_record_write.',
+  '- odoo_update_records: change existing records, by id.',
+  '',
+  'How to answer a data request:',
+  '- If asked to create sample or demo data, actually do it. Look at the model\'s',
+  '  fields first with odoo_list_fields and use only fields that exist, so a required',
+  '  field is not left empty. Then create. A sample product needs at least a name;',
+  '  list_price, type and categ_id are worth setting when they exist.',
+  '- Creating or updating records pauses the task for the person\'s approval, and it',
+  '  resumes by itself once they decide - so make the call rather than describing it.',
+  '- It is a live customer instance, and it is not a sandbox. Create what was asked',
+  '  for and nothing else. Do not delete: no delete tool exists here, and none is',
+  '  needed for sample data.',
+  '- Records of users, groups, access rules and the ir.* models are not reachable at',
+  '  all. If a request needs one, explain that instead of trying.',
+  '- Report what you actually made, with the ids the tool returned. Never claim to',
+  '  have created a record without one.',
 ].join('\n');

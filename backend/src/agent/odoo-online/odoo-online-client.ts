@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { recordModelRefusal } from './odoo-record-surface';
 
 /**
- * The Odoo Online execution surface (ADR-028): no filesystem, no Git, no clone.
+ * The Odoo Online execution surface (ADR-028, extended by ADR-064): no
+ * filesystem, no Git, no clone.
  *
  * Customization happens through the Odoo JSON-RPC API, driven with the project's
  * credentials (URL, database, login and API key). This is the same mechanism Odoo
@@ -9,18 +11,35 @@ import { Injectable, Logger } from '@nestjs/common';
  * the form - and it was verified against a live Odoo Online instance rather than
  * assumed: the API key authenticates and creates fields and inherited views.
  *
- * The client exposes only the customization surface. Business records
- * (`res.partner`, `sale.order` rows and so on) are never read or written here;
- * the model allow-list below is what enforces the data-blind posture for this
- * mode, in code rather than by prompt.
+ * Record data (`product.template`, `res.partner` rows and so on) is reachable
+ * too, since ADR-064: this mode's whole reason to exist is often "make me some
+ * sample data" or "add these five customers", and a client that could never
+ * write a record could never do that. What stays fixed here rather than left to
+ * the tool layer is the *shape* of a record call - only `search_read`,
+ * `search_count`, `create` and `write` reach a model at all, `unlink` and
+ * `execute` do not exist on this client - because a client method is a smaller,
+ * more auditable boundary than trusting every caller to ask for the right thing.
+ * Which models and how many records is the record surface's job
+ * (`odoo-record-surface.ts`), reached through the tool and permission layers, not
+ * this file.
  */
 
-/** The JSON-RPC models the client may touch. Customization metadata only. */
+/** The JSON-RPC models the client may touch for customization. Metadata only. */
 const CUSTOMIZATION_MODELS = new Set([
   'ir.model',
   'ir.model.fields',
   'ir.ui.view',
 ]);
+
+/**
+ * The record methods the client may address to a business model.
+ *
+ * A fixed list rather than "whatever the caller asks for": `unlink` is absent
+ * deliberately (deleting customer records is not sample data, and nothing in this
+ * mode asks for it), as is `execute` - a method that runs arbitrary server-side
+ * code is the whole allow-list defeated in one call.
+ */
+const RECORD_METHODS = new Set(['search_read', 'search_count', 'create', 'write']);
 
 export interface OdooOnlineCredentials {
   /** Instance root, e.g. `https://vania-uat123.odoo.com`. Must be https. */
@@ -229,6 +248,67 @@ export class OdooOnlineClient {
   }
 
   /**
+   * Record reads, restricted to the record surface (ADR-064).
+   *
+   * The model is checked again here although the tool validated it first: the
+   * client is the last point before the network, and a caller added later that
+   * forgets the tool-level check must still fail closed.
+   */
+  async searchRecords(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    domain: unknown[],
+    fields: readonly string[],
+    limit: number,
+  ): Promise<Record<string, unknown>[]> {
+    return (await this.recordCall(credentials, uid, model, 'search_read', [domain], {
+      fields: [...fields],
+      limit,
+    })) as Record<string, unknown>[];
+  }
+
+  /** How many records match, so a model can report totals without reading rows. */
+  async countRecords(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    domain: unknown[],
+  ): Promise<number> {
+    return (await this.recordCall(credentials, uid, model, 'search_count', [domain])) as number;
+  }
+
+  /**
+   * Creates records in one call, returning the ids Odoo assigned.
+   *
+   * Odoo 17+ accepts a list of value dicts to `create` and returns a list of ids;
+   * older versions returned a single id for a single dict. Both are normalised to
+   * an array so a caller never has to know which it is talking to.
+   */
+  async createRecords(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    records: readonly Record<string, unknown>[],
+  ): Promise<number[]> {
+    const result = await this.recordCall(credentials, uid, model, 'create', [[...records]]);
+    if (Array.isArray(result)) return result as number[];
+    if (typeof result === 'number') return [result];
+    throw new OdooRpcError(`create on ${model} returned no ids`);
+  }
+
+  /** Writes the same values to existing records. Odoo answers `true`. */
+  async updateRecords(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    ids: readonly number[],
+    values: Record<string, unknown>,
+  ): Promise<boolean> {
+    return (await this.recordCall(credentials, uid, model, 'write', [[...ids], values])) === true;
+  }
+
+  /**
    * Generic execute_kw, restricted to the customization allow-list.
    *
    * `kwargs` is a seventh element of the RPC argument list, not a trailing entry
@@ -248,10 +328,47 @@ export class OdooOnlineClient {
     if (!CUSTOMIZATION_MODELS.has(model)) {
       throw new OdooRpcError(
         `The model "${model}" is not part of the customization surface. ` +
-          'The Odoo Online agent may only read and write schema and views, never business records.',
+          'Schema and view changes go through ir.model, ir.model.fields and ir.ui.view only.',
       );
     }
 
+    return this.executeKw(credentials, uid, model, method, args, kwargs);
+  }
+
+  /**
+   * execute_kw against a business model, for the record surface (ADR-064).
+   *
+   * Two checks, both before anything leaves the platform: the method must be one
+   * of the four record methods, and the model must be outside the protected set
+   * (users, groups, `ir.*` and the rest in `odoo-record-surface.ts`).
+   */
+  private async recordCall(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    method: string,
+    args: unknown[],
+    kwargs: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    if (!RECORD_METHODS.has(method)) {
+      throw new OdooRpcError(`The record method "${method}" is not permitted on Odoo Online.`);
+    }
+    const refusal = recordModelRefusal(model);
+    if (refusal) {
+      throw new OdooRpcError(`Refused: ${refusal}.`);
+    }
+
+    return this.executeKw(credentials, uid, model, method, args, kwargs);
+  }
+
+  private async executeKw(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    method: string,
+    args: unknown[],
+    kwargs: Record<string, unknown>,
+  ): Promise<unknown> {
     return this.request(credentials, 'object', 'execute_kw', [
       credentials.db,
       uid,

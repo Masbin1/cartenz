@@ -10,19 +10,35 @@ import {
 import {
   ODOO_ADD_FIELD_TO_VIEW_SCHEMA,
   ODOO_CREATE_FIELD_SCHEMA,
+  ODOO_CREATE_RECORDS_SCHEMA,
   ODOO_LIST_FIELDS_SCHEMA,
   ODOO_LIST_MODELS_SCHEMA,
+  ODOO_SEARCH_RECORDS_SCHEMA,
+  ODOO_UPDATE_RECORDS_SCHEMA,
 } from '../tool-schemas';
+import {
+  DEFAULT_READ_FIELDS,
+  effectiveReadLimit,
+  validateCreateRecords,
+  validateSearchRecords,
+  validateUpdateRecords,
+} from '../../odoo-online/odoo-record-surface';
 import type { AnyToolDefinition, ToolDefinition, ToolExecutionContext } from '../tool.interface';
 
 /**
- * The Odoo Online tools (ADR-028).
+ * The Odoo Online tools (ADR-028, ADR-064).
  *
  * These are the whole tool surface for `odoo_online` - no filesystem, no Git, no
  * shell. Each resolves the project's sealed Odoo Online credentials, then drives
- * the customization surface (schema and views) through the JSON-RPC client. The
- * data-blind posture holds because the client only permits `ir.model`,
- * `ir.model.fields` and `ir.ui.view`; business records are unreachable here.
+ * the instance through the JSON-RPC client:
+ *
+ * - customization (schema and views) under `odoo_customize`;
+ * - records - sample data, demo customers, price updates - under
+ *   `database_record_read` and `database_record_write`, both off by default and
+ *   set per project. A record write in a chat pauses for the `chat_edit`
+ *   approval (permission-validator.ts); in a change task the approved plan is
+ *   the approval. Users, groups, `ir.*` and other configuration models are never
+ *   a record target, whatever the permissions say (odoo-record-surface.ts).
  */
 
 function readString(record: Record<string, unknown>, key: string): string | null {
@@ -44,6 +60,9 @@ export class OdooOnlineTools {
       this.listFields,
       this.createField,
       this.addFieldToView,
+      this.searchRecords,
+      this.createRecords,
+      this.updateRecords,
     ];
   }
 
@@ -185,6 +204,84 @@ export class OdooOnlineTools {
         input.after,
       );
       return { model: input.model, field: input.field, after: input.after, viewId };
+    },
+  };
+
+  private readonly searchRecords: ToolDefinition<{
+    model: string;
+    domain?: unknown[];
+    fields?: string[];
+    limit?: number;
+  }> = {
+    name: 'odoo_search_records',
+    description: 'Search records of an Odoo model and read selected fields',
+    permission: 'database_record_read',
+    modes: ['odoo_online'],
+    leavesPlatform: false,
+    simulated: false,
+    parameters: ODOO_SEARCH_RECORDS_SCHEMA,
+    availableToModel: true,
+    validate: validateSearchRecords,
+    execute: async (input, context) => {
+      const credentials = await this.resolveCredentials(context);
+      const uid = await this.client.authenticate(credentials);
+      const domain = input.domain ?? [];
+      const fields = input.fields?.length ? input.fields : [...DEFAULT_READ_FIELDS];
+      const limit = effectiveReadLimit(input.limit);
+      const [records, total] = await Promise.all([
+        this.client.searchRecords(credentials, uid, input.model, domain, fields, limit),
+        this.client.countRecords(credentials, uid, input.model, domain),
+      ]);
+      return { model: input.model, total, returned: records.length, records };
+    },
+  };
+
+  private readonly createRecords: ToolDefinition<{
+    model: string;
+    records: Record<string, unknown>[];
+  }> = {
+    name: 'odoo_create_records',
+    description: 'Create records (e.g. sample products or customers) on the live Odoo instance',
+    permission: 'database_record_write',
+    modes: ['odoo_online'],
+    leavesPlatform: true,
+    simulated: false,
+    parameters: ODOO_CREATE_RECORDS_SCHEMA,
+    availableToModel: true,
+    validate: validateCreateRecords,
+    execute: async (input, context) => {
+      const credentials = await this.resolveCredentials(context);
+      const uid = await this.client.authenticate(credentials);
+      const ids = await this.client.createRecords(credentials, uid, input.model, input.records);
+      return { model: input.model, created: ids.length, ids };
+    },
+  };
+
+  private readonly updateRecords: ToolDefinition<{
+    model: string;
+    ids: number[];
+    values: Record<string, unknown>;
+  }> = {
+    name: 'odoo_update_records',
+    description: 'Update field values on existing records of the live Odoo instance',
+    permission: 'database_record_write',
+    modes: ['odoo_online'],
+    leavesPlatform: true,
+    simulated: false,
+    parameters: ODOO_UPDATE_RECORDS_SCHEMA,
+    availableToModel: true,
+    validate: validateUpdateRecords,
+    execute: async (input, context) => {
+      const credentials = await this.resolveCredentials(context);
+      const uid = await this.client.authenticate(credentials);
+      const ok = await this.client.updateRecords(
+        credentials,
+        uid,
+        input.model,
+        input.ids,
+        input.values,
+      );
+      return { model: input.model, updated: ok ? input.ids.length : 0, ids: input.ids };
     },
   };
 }

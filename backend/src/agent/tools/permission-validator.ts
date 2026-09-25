@@ -140,6 +140,18 @@ export class ToolPermissionValidator {
       }
 
       if (!context.grantedApprovals.includes(approvalAction)) {
+        // A change task on Odoo Online has already had its plan approved, and a
+        // record write there is what that plan described (ADR-064). Asking again
+        // mid-implementation would re-run the loop from the start after the
+        // second decision - on a live instance, where the first half already ran.
+        if (
+          approvalAction === 'odoo_record_write' &&
+          context.taskKind === 'change' &&
+          context.grantedApprovals.includes('implementation_plan')
+        ) {
+          return { outcome: 'allowed', tool };
+        }
+
         return {
           outcome: 'approval_required',
           tool,
@@ -170,6 +182,14 @@ export function approvalActionForTool(toolName: string): string | null {
       return 'git_push';
     case 'delete_file':
       return 'file_deletion';
+    // Record writes on a live Odoo Online instance (ADR-064). Declared here
+    // rather than as a chat-only rule like CHAT_WRITE_TOOLS above, because a
+    // record write is a change to a customer's running system whether the task
+    // that asked for it was a conversation or a change request: `leavesPlatform`
+    // is what the boundary means, so the gate follows from it in both kinds.
+    case 'odoo_create_records':
+    case 'odoo_update_records':
+      return 'odoo_record_write';
     default:
       return null;
   }

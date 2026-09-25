@@ -13,6 +13,7 @@ import type { Approval } from '@/lib/types';
  */
 const ACTION_LABELS: Record<string, string> = {
   chat_edit: 'File change',
+  odoo_record_write: 'Odoo data change',
 };
 
 /**

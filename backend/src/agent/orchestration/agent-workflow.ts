@@ -256,6 +256,11 @@ export class AgentWorkflow {
           message: 'Approved. Continuing.',
         });
 
+      case 'odoo_record_write':
+        return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'implementing', {
+          message: 'The Odoo data change was approved. Writing the records.',
+        });
+
       default:
         return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'failed', {
           failureReason: `No resumption is defined for an approved ${decision.action}.`,
@@ -1865,7 +1870,7 @@ export class AgentWorkflow {
           taskReference: snapshot.reference,
                     action: error.approvalAction,
           requiredReason: error.reason,
-          context: { toolName: error.toolName, branch: workspace.branch, path: input.path },
+          context: approvalContextFor(error.toolName, workspace.branch, input),
           taskStatus: snapshot.status,
         });
 
@@ -1959,6 +1964,34 @@ function toLoopResult(status: 'succeeded' | 'failed' | 'denied' | 'suspended'): 
   return status === 'suspended' ? 'approval_required' : status;
 }
 
+/**
+ * What a reviewer is shown next to an approval request.
+ *
+ * A file write is identified by its path. A record write on Odoo Online has no
+ * path: what the person is deciding on is which model, how many records, and
+ * what they look like - so those are what the context carries. The preview is
+ * capped; the approval row is a summary, not a copy of the payload (and it passes
+ * through `redactMetadata` before it is stored).
+ */
+export function approvalContextFor(
+  toolName: string,
+  branch: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  if (toolName === 'odoo_create_records' || toolName === 'odoo_update_records') {
+    const records = Array.isArray(input.records) ? input.records : [];
+    const ids = Array.isArray(input.ids) ? input.ids : [];
+    return {
+      toolName,
+      model: input.model,
+      ...(toolName === 'odoo_create_records'
+        ? { recordCount: records.length, preview: records.slice(0, 5) }
+        : { recordCount: ids.length, ids: ids.slice(0, 20), values: input.values }),
+    };
+  }
+  return { toolName, branch, path: input.path };
+}
+
 function humanise(value: string): string {
   return value.replace(/_/g, ' ');
 }
@@ -1984,12 +2017,25 @@ export type { AgentTaskStatus };
  * The implementation step counts these rather than trusting the model's summary,
  * which is the same rule the repository modes apply by trusting `git diff`.
  */
-const CHANGING_ODOO_TOOLS = ['odoo_create_field', 'odoo_add_field_to_view'];
+const CHANGING_ODOO_TOOLS = [
+  'odoo_create_field',
+  'odoo_add_field_to_view',
+  'odoo_create_records',
+  'odoo_update_records',
+];
 
 /** One applied change, in the terms a reviewer reads in the activity log. */
 function describeOdooChange(toolName: string, output: Record<string, unknown>): string {
   if (toolName === 'odoo_create_field') {
     return `Created field ${String(output.field)} on ${String(output.model)} (id ${String(output.fieldId)}).`;
+  }
+  if (toolName === 'odoo_create_records') {
+    const ids = Array.isArray(output.ids) ? output.ids.join(', ') : '';
+    return `Created ${String(output.created)} ${String(output.model)} record(s) (ids ${ids}).`;
+  }
+  if (toolName === 'odoo_update_records') {
+    const ids = Array.isArray(output.ids) ? output.ids.join(', ') : '';
+    return `Updated ${String(output.updated)} ${String(output.model)} record(s) (ids ${ids}).`;
   }
   return (
     `Placed ${String(output.field)} after ${String(output.after)} on the ${String(output.model)} ` +

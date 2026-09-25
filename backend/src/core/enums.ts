@@ -82,6 +82,7 @@ export const APPROVAL_ACTIONS = [
   'service_restart',
   'file_deletion',
   'chat_edit',
+  'odoo_record_write',
 ] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 

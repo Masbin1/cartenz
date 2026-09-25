@@ -287,3 +287,74 @@ export const ODOO_ADD_FIELD_TO_VIEW_SCHEMA = {
   required: ['model', 'field', 'after'],
   additionalProperties: false,
 } as const;
+
+/**
+ * Record tools (ADR-064): create, update and search business records on the
+ * live instance. The record itself (`recordModelRefusal` in
+ * `odoo-record-surface.ts`) - not this schema - is what refuses a protected
+ * model; the schema only shapes what a well-formed call looks like.
+ */
+export const ODOO_CREATE_RECORDS_SCHEMA = {
+  type: 'object',
+  properties: {
+    model: odooModelName,
+    records: {
+      type: 'array',
+      description:
+        'One object per record, field name to value, e.g. {"name": "Office Chair", "list_price": 149.0}. ' +
+        'A many2one field takes the target record\'s id, e.g. {"categ_id": 8}.',
+      items: { type: 'object' },
+      minItems: 1,
+      maxItems: 50,
+    },
+  },
+  required: ['model', 'records'],
+  additionalProperties: false,
+} as const;
+
+export const ODOO_UPDATE_RECORDS_SCHEMA = {
+  type: 'object',
+  properties: {
+    model: odooModelName,
+    ids: {
+      type: 'array',
+      description: 'The record ids to update, from a prior odoo_search_records or odoo_create_records call.',
+      items: { type: 'integer', minimum: 1 },
+      minItems: 1,
+      maxItems: 50,
+    },
+    values: {
+      type: 'object',
+      description: 'Field name to new value. Applied to every id in the same call.',
+    },
+  },
+  required: ['model', 'ids', 'values'],
+  additionalProperties: false,
+} as const;
+
+export const ODOO_SEARCH_RECORDS_SCHEMA = {
+  type: 'object',
+  properties: {
+    model: odooModelName,
+    domain: {
+      type: 'array',
+      description:
+        'An Odoo domain, e.g. [["name", "ilike", "chair"]]. Omit or use [] to match every record.',
+      items: {},
+    },
+    fields: {
+      type: 'array',
+      description: 'Field names to read. Omit for id and display_name only.',
+      items: { type: 'string' },
+      maxItems: 60,
+    },
+    limit: {
+      type: 'integer',
+      description: 'Maximum records to return. Defaults to 20, capped at 100.',
+      minimum: 1,
+      maximum: 100,
+    },
+  },
+  required: ['model'],
+  additionalProperties: false,
+} as const;
