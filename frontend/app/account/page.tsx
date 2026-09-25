@@ -11,6 +11,7 @@ import { DetailItem, DetailList } from '@/components/ui/detail-list';
 import { Alert } from '@/components/ui/alert';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { USER_REGION_LABELS } from '@/lib/types';
+import { NotificationsSection } from '@/components/account/notifications-section';
 
 const MINIMUM_PASSWORD_LENGTH = 12;
 
@@ -73,7 +74,7 @@ export default function AccountPage() {
   return (
     <AppShell>
       <div className="page-narrow">
-        <PageHeader title="Account" description="Your details and password." />
+        <PageHeader title="Account" description="Your details, password and notifications." />
 
         {error || notice ? (
           <div className="mb-10 space-y-3">
@@ -171,6 +172,14 @@ export default function AccountPage() {
                 password for you from Users, then change it here once you are signed in.
               </span>
             </p>
+          </Section>
+
+          <Section
+            title="Notifications"
+            description="A sound and a system notification for tasks that need you, even with the portal closed."
+            divided
+          >
+            <NotificationsSection />
           </Section>
         </div>
       </div>

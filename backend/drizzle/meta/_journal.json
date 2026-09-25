@@ -169,6 +169,13 @@
       "when": 1789992000007,
       "tag": "0023_project_git_access",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1789992000008,
+      "tag": "0024_push_notifications",
+      "breakpoints": true
     }
   ]
 }

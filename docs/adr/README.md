@@ -62,3 +62,4 @@ with the condition under which it is retired.
 | [ADR-062](ADR-062-task-pulls-its-branch.md) | A task can pull the branch it works on, and "nothing new" is a success | Accepted |
 | [ADR-063](ADR-063-project-local-checkout.md) | A connected project keeps a local clone that syncs on request | Accepted |
 | [ADR-064](ADR-064-odoo-online-record-writes.md) | Odoo Online records are reachable, gated by permission and approval | Accepted |
+| [ADR-065](ADR-065-web-push-notifications.md) | Web push notifications for approval, completion and failure | Accepted |

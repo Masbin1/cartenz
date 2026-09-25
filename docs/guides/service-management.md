@@ -356,3 +356,40 @@ sudo systemctl restart odoo-<name>
 
 Stopping the Cartenz units does not stop the projects: the customer's Odoo keeps
 serving.
+
+## Web push (ADR-065): rotating VAPID keys
+
+Approval / completion / failure push notifications sign every message with a
+VAPID key pair in `.env` (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`,
+`VAPID_SUBJECT`), read by `cartenz-api` and `cartenz-worker`.
+
+Generate a pair once and keep it - **rotating it is destructive**: every
+browser currently subscribed was subscribed against the old public key, and a
+push signed with a new private key is rejected by the push service for every
+one of them. There is no server-side way to un-break an existing subscription;
+each person has to open the portal again (which re-subscribes automatically if
+they already granted permission) to get a working one.
+
+```bash
+cd /opt/cartenz/backend
+node -e "console.log(JSON.stringify(require('web-push').generateVAPIDKeys()))"
+```
+
+Put the two keys into `/opt/cartenz/.env`:
+
+```
+VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...
+VAPID_SUBJECT=mailto:ai-agent@linkederp.com
+PORTAL_PUBLIC_URL=https://<domain>
+```
+
+then `sudo systemctl restart cartenz-api cartenz-worker`. Blank or missing
+keys turn push off cleanly (`GET /api/v1/notifications/config` reports
+`enabled: false`, and the account page explains that push isn't configured) —
+there is no crash from an absent pair, only silence.
+
+To confirm push is live after a restart: sign in, Account → Notifications →
+Turn on notifications → Send test. A `sent: 0` result with no error means the
+keys are read but no browser is registered yet for that account.
+

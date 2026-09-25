@@ -1,5 +1,6 @@
 import type {
   AgentCapabilities,
+  NotificationPreferences,
   AgentSession,
   AuditLogEntry,
   AuthTokens,
@@ -897,6 +898,26 @@ export const api = {
 
   agent: {
     capabilities: () => request<AgentCapabilities>('/agent/capabilities'),
+  },
+
+  notifications: {
+    /** Whether the deployment has push configured, and the key to subscribe with. */
+    config: () => request<{ enabled: boolean; publicKey: string | null }>('/notifications/config'),
+
+    subscribe: (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+      request<void>('/notifications/subscriptions', { method: 'POST', body: subscription }),
+
+    unsubscribe: (endpoint: string) =>
+      request<void>('/notifications/subscriptions', { method: 'DELETE', body: { endpoint } }),
+
+    subscriptionCount: () => request<{ count: number }>('/notifications/subscriptions'),
+
+    preferences: () => request<NotificationPreferences>('/notifications/preferences'),
+
+    updatePreferences: (body: Partial<NotificationPreferences>) =>
+      request<NotificationPreferences>('/notifications/preferences', { method: 'PUT', body }),
+
+    test: () => request<{ sent: number }>('/notifications/test', { method: 'POST' }),
   },
 
   health: {

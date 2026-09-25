@@ -1324,3 +1324,52 @@ export const projectEnvironments = pgTable(
 );
 
 export type ProjectEnvironmentRow = typeof projectEnvironments.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Web push (ADR-065). A subscription is one browser's registration with a
+// push service (its endpoint is that service's URL, unique to the browser
+// install); a user with several devices holds several rows.
+// ---------------------------------------------------------------------------
+
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** The push service URL the browser registered. Unique: re-subscribing updates the row. */
+    endpoint: text('endpoint').notNull(),
+    /** The two keys `PushSubscription.toJSON()` returns, needed to encrypt a message to this browser. */
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    userAgent: text('user_agent'),
+    lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => ({
+    endpointUnique: uniqueIndex('push_subscriptions_endpoint_unique').on(table.endpoint),
+    byUser: index('push_subscriptions_user_idx').on(table.userId),
+  }),
+);
+
+export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
+
+/**
+ * Per-user, per-event opt-in. A row only exists once a user has changed a
+ * default; the service reads a missing row as "all events on, sound on",
+ * which is the platform default (ADR-065) and keeps the common case free of
+ * a row nobody asked for.
+ */
+export const notificationPreferences = pgTable('notification_preferences', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  approvalRequired: boolean('approval_required').notNull().default(true),
+  taskCompleted: boolean('task_completed').notNull().default(true),
+  taskFailed: boolean('task_failed').notNull().default(true),
+  soundEnabled: boolean('sound_enabled').notNull().default(true),
+  ...timestamps,
+});
+
+export type NotificationPreferenceRow = typeof notificationPreferences.$inferSelect;

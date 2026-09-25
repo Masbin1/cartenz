@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service';
 import { RedisService } from '../redis/redis.service';
@@ -8,6 +8,7 @@ import { redactMetadata } from '../audit/redact';
 import { withSequenceRetry } from '../database/task-sequence';
 import type { TaskEvent, TaskEventStatus, TaskEventType } from './event-types';
 import type { AgentTaskStatus } from '../../agent/task-state';
+import { NotificationsService } from '../../modules/notifications/notifications.service';
 
 export interface PublishTaskEventInput {
   readonly taskId: string;
@@ -39,6 +40,11 @@ export class TaskEventPublisher {
   constructor(
     private readonly database: DatabaseService,
     private readonly redis: RedisService,
+    /**
+     * Optional so that a test module wiring the publisher on its own does not
+     * have to stand up push as well. In the application it is always present.
+     */
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
   async publish(input: PublishTaskEventInput): Promise<TaskEvent> {
@@ -87,6 +93,20 @@ export class TaskEventPublisher {
       this.logger.warn(
         `Failed to publish event ${input.type} for task ${input.taskReference}: ${(error as Error).message}`,
       );
+    }
+
+    // Push (ADR-065). Fire-and-forget: the dispatcher swallows its own errors,
+    // and the task must never wait on a push service. The catch is a second
+    // guard in case the dispatcher itself is missing or throws synchronously.
+    if (this.notifications) {
+      void this.notifications
+        .dispatchForEvent({
+          taskId: input.taskId,
+          taskReference: input.taskReference,
+          type: input.type,
+          message: input.message,
+        })
+        .catch(() => undefined);
     }
 
     return event;

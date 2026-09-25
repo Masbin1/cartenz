@@ -548,6 +548,22 @@ const environmentSchema = z.object({
   CODE_SEARCH_MAX_RESULTS: z.coerce.number().int().min(1).max(1000).default(60),
   CODE_SEARCH_MAX_FILE_BYTES: z.coerce.number().int().min(1024).default(1048576),
   READ_FILE_MAX_BYTES: z.coerce.number().int().min(1024).default(262144),
+
+  /**
+   * Web push (ADR-065). Generate once with `npx web-push generate-vapid-keys`
+   * and never rotate casually: every browser subscription is bound to the
+   * public key, so a new pair makes every existing subscription dead. Leave
+   * both empty to keep the feature off.
+   */
+  VAPID_PUBLIC_KEY: z.string().default(''),
+  VAPID_PRIVATE_KEY: z.string().default(''),
+  /** `mailto:` or `https:` contact the push services may use to reach the operator. */
+  VAPID_SUBJECT: z.string().default(''),
+  /**
+   * The portal's public origin, used to build the absolute link a
+   * notification opens. Falls back to the first CORS origin when empty.
+   */
+  PORTAL_PUBLIC_URL: z.string().default(''),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;
@@ -724,6 +740,20 @@ export interface AppConfig {
     readonly searchMaxResults: number;
     readonly searchMaxFileBytes: number;
     readonly readFileMaxBytes: number;
+  };
+  /**
+   * Web push notifications (ADR-065).
+   *
+   * `publicKey` empty means the feature is off end to end: the portal is told
+   * so, no subscription is accepted, and no push is attempted. The keys are
+   * supplied by the operator rather than generated at boot, because a key that
+   * changed on restart would silently invalidate every existing subscription.
+   */
+  readonly push: {
+    readonly publicKey: string;
+    readonly privateKey: string;
+    readonly subject: string;
+    readonly portalUrl: string | null;
   };
 }
 
@@ -1121,6 +1151,23 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       searchMaxResults: env.CODE_SEARCH_MAX_RESULTS,
       searchMaxFileBytes: env.CODE_SEARCH_MAX_FILE_BYTES,
       readFileMaxBytes: env.READ_FILE_MAX_BYTES,
+    },
+    push: {
+      // A half-configured pair is off, not an error: a public key without its
+      // private key can let a browser subscribe but never deliver to it.
+      publicKey:
+        emptyToUndefined(env.VAPID_PUBLIC_KEY) && emptyToUndefined(env.VAPID_PRIVATE_KEY)
+          ? env.VAPID_PUBLIC_KEY.trim()
+          : '',
+      privateKey:
+        emptyToUndefined(env.VAPID_PUBLIC_KEY) && emptyToUndefined(env.VAPID_PRIVATE_KEY)
+          ? env.VAPID_PRIVATE_KEY.trim()
+          : '',
+      subject: emptyToUndefined(env.VAPID_SUBJECT)?.trim() ?? 'mailto:ai-agent@linkederp.com',
+      portalUrl:
+        emptyToUndefined(env.PORTAL_PUBLIC_URL)?.trim().replace(/\/+$/, '') ??
+        env.CORS_ORIGINS[0]?.replace(/\/+$/, '') ??
+        null,
     },
   };
 }

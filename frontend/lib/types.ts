@@ -518,6 +518,14 @@ export interface AgentCapabilities {
   };
 }
 
+/** A person's choices about which of the three push events wake their phone. */
+export interface NotificationPreferences {
+  approvalRequired: boolean;
+  taskCompleted: boolean;
+  taskFailed: boolean;
+  soundEnabled: boolean;
+}
+
 /** An environment kind. Production is never a target for a task. */
 export type EnvironmentKind = 'production' | 'staging' | 'development';
 
