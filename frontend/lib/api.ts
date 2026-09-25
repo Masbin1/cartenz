@@ -42,32 +42,65 @@ const BASE = `${API_URL}/api/v1`;
 
 const ACCESS_TOKEN_KEY = 'linkederp.accessToken';
 const REFRESH_TOKEN_KEY = 'linkederp.refreshToken';
+const EXPIRY_KEY = 'linkederp.sessionExpiry';
+
+/**
+ * How long a session survives without being used, in the browser.
+ *
+ * A sliding window, not an absolute one: every token write pushes the deadline
+ * out, and the deadline is only reached after this much *inactivity*. The
+ * server's refresh token lives longer (`JWT_REFRESH_TTL`), so the browser is
+ * what decides an idle session is over - a deployment that wants a different
+ * window sets the refresh TTL and this together.
+ */
+const SESSION_IDLE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Token storage.
  *
- * sessionStorage rather than localStorage: a token that survives the browser
- * being closed is a token an unattended machine still holds. Refresh tokens are
- * single-use server-side, so the cost of losing them on close is one sign-in.
+ * localStorage rather than sessionStorage: sessionStorage is cleared when the
+ * tab closes, so an operator who closed a tab came back to a sign-in page while
+ * the server still held a valid 30-day refresh token for them. The session is
+ * bounded here instead - by an explicit deadline, so the token a shared or
+ * unattended machine holds still expires, which is what sessionStorage was
+ * standing in for.
  */
 export const tokenStore = {
   get access(): string | null {
     if (typeof window === 'undefined') return null;
-    return window.sessionStorage.getItem(ACCESS_TOKEN_KEY);
+    if (this.expired) {
+      this.clear();
+      return null;
+    }
+    return window.localStorage.getItem(ACCESS_TOKEN_KEY);
   },
   get refresh(): string | null {
     if (typeof window === 'undefined') return null;
-    return window.sessionStorage.getItem(REFRESH_TOKEN_KEY);
+    if (this.expired) {
+      this.clear();
+      return null;
+    }
+    return window.localStorage.getItem(REFRESH_TOKEN_KEY);
+  },
+  /** True when a stored session exists but its idle window has passed. */
+  get expired(): boolean {
+    if (typeof window === 'undefined') return false;
+    const raw = window.localStorage.getItem(EXPIRY_KEY);
+    if (!raw) return false;
+    const deadline = Number(raw);
+    return Number.isFinite(deadline) && Date.now() >= deadline;
   },
   set(tokens: { accessToken: string; refreshToken: string }): void {
     if (typeof window === 'undefined') return;
-    window.sessionStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken);
-    window.sessionStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken);
+    window.localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
+    window.localStorage.setItem(EXPIRY_KEY, String(Date.now() + SESSION_IDLE_WINDOW_MS));
   },
   clear(): void {
     if (typeof window === 'undefined') return;
-    window.sessionStorage.removeItem(ACCESS_TOKEN_KEY);
-    window.sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+    window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+    window.localStorage.removeItem(EXPIRY_KEY);
   },
 };
 
