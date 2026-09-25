@@ -62,6 +62,20 @@ service:
   per user, defaults to "everything on" when absent) lets a person turn off
   any of the three events, or the sound, from Account without unsubscribing
   the browser entirely.
+- **Opt-out, not opt-in** (amendment, same day). The platform turns
+  notifications on for everyone and each person turns them off for themselves:
+  the per-event switches already defaulted to on in the schema, and the
+  browser side now subscribes itself on every signed-in page load
+  (`autoEnablePush()` in the app shell) instead of waiting for a visit to
+  Account. The single unavoidable exception is the browser's own permission
+  prompt, which no site can answer on a person's behalf: while permission is
+  undecided the shell shows one banner whose button makes the request from a
+  real click. Nothing calls `Notification.requestPermission()` from a page
+  load - a prompt not caused by a gesture is what makes Chrome and Firefox
+  mute a site's notifications permanently. `disablePush()` records the opt-out
+  in `localStorage` (`cartenz.push.optedOut`) before unsubscribing, so a later
+  page load cannot silently undo the person's choice; "Not now" on the banner
+  only silences the banner for the session.
 - **Sound is best-effort.** A push message cannot choose its own operating
   system sound at the platform level - browsers do not expose that. The sound
   files (`public/sounds/{approval,done,failed}.wav`) are played from the

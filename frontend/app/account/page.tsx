@@ -176,7 +176,7 @@ export default function AccountPage() {
 
           <Section
             title="Notifications"
-            description="A sound and a system notification for tasks that need you, even with the portal closed."
+            description="On by default. Turn them off here if you would rather not be told."
             divided
           >
             <NotificationsSection />

@@ -5,7 +5,7 @@ import { Bell, BellOff } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
-import { pushSupport, enablePush, disablePush, currentSubscription, playSound } from '@/lib/push';
+import { autoEnablePush, enablePush, disablePush, playSound } from '@/lib/push';
 import type { NotificationPreferences } from '@/lib/types';
 
 const EVENT_TOGGLES: {
@@ -30,13 +30,20 @@ const EVENT_TOGGLES: {
   },
 ];
 
-type Status = 'loading' | 'off' | 'denied' | 'on' | 'unsupported' | 'unconfigured';
+type Status =
+  | 'loading'
+  | 'off'
+  | 'pending'
+  | 'denied'
+  | 'on'
+  | 'unsupported'
+  | 'unconfigured';
 
 /**
- * Turning push on is one deliberate click (permission can only be requested
- * from a click), after which this shows which browser is registered and lets
- * the person choose what wakes it. The toggles themselves are always visible,
- * even before push is turned on: they are preferences, not a feature gate.
+ * Push is on by default (ADR-065 amendment); this is where a person turns it
+ * off, or back on. `off` is their own choice for this browser; `pending` is a
+ * browser that has not yet been given permission, which only a click can do.
+ * The per-event toggles are always visible: they are preferences, not a gate.
  */
 export function NotificationsSection() {
   const [status, setStatus] = useState<Status>('loading');
@@ -49,24 +56,12 @@ export function NotificationsSection() {
   useEffect(() => {
     let cancelled = false;
 
-    (async () => {
-      const config = await api.notifications
-        .config()
-        .catch(() => ({ enabled: false, publicKey: null }));
-      const support = pushSupport(config.enabled);
-      if (support !== 'ready') {
-        if (!cancelled) setStatus(support);
-        return;
-      }
-
-      if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
-        if (!cancelled) setStatus('denied');
-        return;
-      }
-
-      const subscription = await currentSubscription().catch(() => null);
-      if (!cancelled) setStatus(subscription ? 'on' : 'off');
-    })();
+    void autoEnablePush().then((result) => {
+      if (cancelled) return;
+      setStatus(
+        result === 'opted_out' ? 'off' : result === 'needs_permission' ? 'pending' : result,
+      );
+    });
 
     api.notifications
       .preferences()
@@ -197,11 +192,21 @@ export function NotificationsSection() {
                   ? 'Notifications are on for this browser'
                   : status === 'denied'
                     ? 'Notifications are blocked for this site'
-                    : 'Notifications are off for this browser'}
+                    : status === 'pending'
+                      ? 'This browser has not allowed notifications yet'
+                      : 'Notifications are off for this browser'}
             </p>
             {status === 'denied' ? (
               <p className="mt-0.5 text-meta text-content-subtle">
                 Allow notifications for this site in your browser&apos;s settings, then reload.
+              </p>
+            ) : status === 'off' ? (
+              <p className="mt-0.5 text-meta text-content-subtle">
+                Notifications are on by default. You turned them off for this browser.
+              </p>
+            ) : status === 'pending' ? (
+              <p className="mt-0.5 text-meta text-content-subtle">
+                Click the button and choose Allow when your browser asks.
               </p>
             ) : null}
           </div>
@@ -230,7 +235,7 @@ export function NotificationsSection() {
               className="btn-primary btn-sm"
             >
               {busy ? <Spinner /> : null}
-              Turn on notifications
+              {status === 'pending' ? 'Allow notifications' : 'Turn on notifications'}
             </button>
           )}
         </div>

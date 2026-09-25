@@ -11,12 +11,7 @@ import {
 } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, tokenStore } from './api';
-import {
-  detachPushSubscription,
-  listenForPush,
-  registerServiceWorker,
-  syncPushSubscription,
-} from './push';
+import { detachPushSubscription, listenForPush, registerServiceWorker } from './push';
 import type { CurrentUser } from './types';
 
 interface AuthState {
@@ -67,14 +62,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void load();
   }, [load]);
 
-  // Push (ADR-065): the service worker is registered for anyone signed in,
-  // whether or not they have granted notification permission yet, so it is
-  // ready the moment they turn notifications on from Account. Re-syncing the
-  // subscription on load repairs a row the backend dropped (VAPID rotation, a
-  // stale endpoint) without asking the person to redo anything.
+  // Push (ADR-065): the service worker is registered for anyone signed in, so
+  // it is ready the moment permission is granted. Subscribing itself is done
+  // by <PushOptIn /> in the app shell, which turns push on by default.
   useEffect(() => {
     if (!user?.id) return;
-    void registerServiceWorker().then(() => syncPushSubscription());
+    void registerServiceWorker();
     return listenForPush();
   }, [user?.id]);
 
@@ -102,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Detach this browser from the account before the token goes, so a shared
     // machine stops receiving the previous person's approvals. The browser's
     // own subscription is kept: whoever signs in next is re-attached to it by
-    // the sync above, without being asked for permission again.
+    // <PushOptIn />, without being asked for permission again.
     await detachPushSubscription();
     try {
       await api.auth.logout(tokenStore.refresh);

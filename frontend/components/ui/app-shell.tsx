@@ -20,6 +20,7 @@ import { USER_REGION_LABELS } from '@/lib/types';
 import { CartenzMark } from '@/components/ui/cartenz-mark';
 import { ActionMenu } from '@/components/ui/action-menu';
 import { ThemeSwitcher } from '@/components/ui/theme-switcher';
+import { PushOptIn } from '@/components/ui/push-opt-in';
 
 interface NavItem {
   href: string;
@@ -111,7 +112,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       ) : null}
 
-      <main className="min-w-0">{children}</main>
+      <main className="min-w-0">
+        <PushOptIn />
+        {children}
+      </main>
     </div>
   );
 }
