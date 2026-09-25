@@ -21,6 +21,7 @@ import { PROJECT_TYPE_LABELS, humanise, relativeTime } from '@/lib/format';
 import type {
   BackupSummary,
   CheckoutStatus,
+  ProjectConnection,
   ProjectDetail,
   ProjectProvisioningInfo,
   ProjectRestartInfo,
@@ -39,6 +40,36 @@ const INSTANCE_STATE: Record<
   pending: { tone: 'running', label: 'Installing modules', pulse: true },
   provisioned: { tone: 'success', label: 'Instance ready', pulse: false },
   failed: { tone: 'failure', label: 'Provisioning failed', pulse: false },
+};
+
+/**
+ * The Odoo Online project has no provisioning step of its own: the operator
+ * connects an instance that already exists, and its address is whatever they
+ * pasted into the connection's credentials. We read it back out of the
+ * connection's metadata rather than asking them to remember or re-find it.
+ */
+interface OdooOnlineInstance {
+  url: string | null;
+  database: string | null;
+  status: ProjectConnection['status'];
+}
+
+function odooOnlineInstanceOf(project: ProjectDetail): OdooOnlineInstance | null {
+  const connection = project.connections.find((c) => c.connectionType === 'odoo_api');
+  if (!connection) return null;
+  const url = typeof connection.metadata.url === 'string' ? connection.metadata.url : null;
+  const database = typeof connection.metadata.db === 'string' ? connection.metadata.db : null;
+  return { url, database, status: connection.status };
+}
+
+const ODOO_ONLINE_STATE: Record<
+  ProjectConnection['status'],
+  { tone: StatusTone; label: string; pulse: boolean }
+> = {
+  connected: { tone: 'success', label: 'Connected', pulse: false },
+  pending: { tone: 'running', label: 'Connecting', pulse: true },
+  error: { tone: 'failure', label: 'Connection error', pulse: false },
+  disabled: { tone: 'idle', label: 'Disabled', pulse: false },
 };
 
 /**
@@ -105,7 +136,8 @@ export default function ProjectDetailPage() {
 
   const grantedPermissions = Object.entries(project.agentPermissions);
   const grantedCount = grantedPermissions.filter(([, granted]) => granted).length;
-  const instance = INSTANCE_STATE[project.provisioning.status];
+  const odooOnline = project.projectType === 'odoo_online' ? odooOnlineInstanceOf(project) : null;
+  const instance = odooOnline ? ODOO_ONLINE_STATE[odooOnline.status] : INSTANCE_STATE[project.provisioning.status];
   const hasInstance = project.provisioning.status !== 'none';
   const workspaceHref = `/projects/${project.id}/agent`;
 
@@ -140,6 +172,12 @@ export default function ProjectDetailPage() {
                 <Settings2 className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
                 Settings
               </Link>
+              {odooOnline?.url ? (
+                <a href={odooOnline.url} target="_blank" rel="noreferrer" className="btn-secondary">
+                  Open Odoo
+                  <ArrowUpRight className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
+                </a>
+              ) : null}
               <Link href={workspaceHref} className="btn-primary">
                 Open workspace
               </Link>
@@ -149,7 +187,11 @@ export default function ProjectDetailPage() {
 
         <div className="grid gap-12 lg:grid-cols-3 lg:gap-16">
           <div className="min-w-0 space-y-12 lg:col-span-2 lg:space-y-16">
-            {hasInstance ? <InstanceOverview provisioning={project.provisioning} /> : null}
+            {odooOnline ? (
+              <OdooOnlineInstanceOverview projectId={project.id} instance={odooOnline} />
+            ) : hasInstance ? (
+              <InstanceOverview provisioning={project.provisioning} />
+            ) : null}
 
             <Section
               title="Recent tasks"
@@ -498,6 +540,71 @@ function ProjectDetailSkeleton() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+/**
+ * The Odoo Online counterpart to `InstanceOverview`. Nothing here is
+ * provisioned by Cartenz, so the section's job is orientation: which instance
+ * this project talks to, and a way to open it. The URL is the one saved with
+ * the connection, which is also the address the agent writes to.
+ */
+function OdooOnlineInstanceOverview({
+  projectId,
+  instance,
+}: {
+  projectId: string;
+  instance: OdooOnlineInstance;
+}) {
+  const state = ODOO_ONLINE_STATE[instance.status];
+
+  return (
+    <Section
+      title="Odoo instance"
+      actions={
+        <Link href={`/projects/${projectId}/settings`} className="link-quiet text-callout">
+          Settings
+        </Link>
+      }
+    >
+      <div className="space-y-6">
+        <div className="min-w-0">
+          <StatusDot tone={state.tone} pulse={state.pulse}>
+            {state.label}
+          </StatusDot>
+          {instance.url ? (
+            <a
+              href={instance.url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 flex w-fit max-w-full items-center gap-1.5 break-all text-headline text-content transition-colors hover:text-accent"
+            >
+              {instance.url}
+              <ArrowUpRight className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+            </a>
+          ) : (
+            <p className="mt-2 text-body text-content-muted">
+              No instance address saved. Add one in Settings to let the agent reach Odoo.
+            </p>
+          )}
+        </div>
+
+        <p className="text-callout text-content-muted">
+          This project works against an Odoo Online database you already own. Its address is the
+          one from the project&apos;s Odoo connection — the agent reads and writes there, subject
+          to the project&apos;s permissions and your approval.
+        </p>
+
+        <DetailList columns={2}>
+          <DetailItem label="Database" mono>
+            {instance.database ?? 'Unknown'}
+          </DetailItem>
+          <DetailItem label="Instance">
+            <span className="break-all">{instance.url ?? 'Not set'}</span>
+          </DetailItem>
+        </DetailList>
+      </div>
+    </Section>
   );
 }
 

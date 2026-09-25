@@ -131,6 +131,32 @@ Two traps in that table:
   sudo systemctl restart cartenz-portal
   ```
 
+  If either variable is missing from the build shell, `next.config.mjs` falls back to
+  `http://localhost:4000` and bakes *that* into the bundle. The portal then loads, but
+  every browser shows "Could not reach the API. Check that the backend is running."
+  because it calls localhost on the user's own laptop. Check a finished build with
+  `grep -rl localhost:4000 .next/static/chunks/` — it must print nothing.
+
+  **Build into a staging directory, not over the live `.next`.** `next build` in place
+  deletes and rewrites the directory `cartenz-portal` is serving from, so the portal is
+  down for the whole build — and stays down if the build is interrupted. Set
+  `NEXT_DIST_DIR` to build aside, then swap and restart:
+
+  ```bash
+  cd /opt/cartenz/frontend
+  rm -rf .next.new
+  NODE_ENV=production NEXT_DIST_DIR=.next.new \
+    NEXT_PUBLIC_API_URL=https://<domain> NEXT_PUBLIC_WS_URL=wss://<domain>/ws npm run build
+  grep -rl localhost:4000 .next.new/static/chunks/     # must print nothing
+  rm -rf .next.old && mv .next .next.old && mv .next.new .next
+  git -C /opt/cartenz checkout -- frontend/next-env.d.ts frontend/tsconfig.json  # build rewrites both
+  sudo systemctl restart cartenz-portal
+  ```
+
+  `.next.old` is the rollback: `mv .next .next.bad && mv .next.old .next` and restart.
+  All of this must run as `cartenz`: a single root-owned file in `.next` blocks every
+  later build with `EACCES`, and only root can clear it.
+
   Do not `source /opt/cartenz/.env` to get those two into the build shell: it also sets
   `NODE_ENV=development`, and `next build` under a non-production `NODE_ENV` fails with
   an unrelated-looking `<Html> should not be imported outside of pages/_document` error.
