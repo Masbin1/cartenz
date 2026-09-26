@@ -151,6 +151,7 @@ unaffected.
 | 2 | Realtime over the existing gateway + reconnect/resync (poll on reconnect, since events missed while disconnected are gone) | The board stops being a snapshot |
 | 3 | Needs-you queue, activity feed with cursor paging, drawer with the task's real actions and diff link | Operate approvals from the board |
 | 4 | Visual treatment (spatial layout, motion on real transitions) | Presence, plus approval follow-up |
+| 5 | Isometric floor: drawn rooms and desks, a figure per live task, a dispatch node for the worker pool, connections as real state transitions, camera, filters, mobile list | The office is a place you can watch, not a list to read |
 
 Each phase is independently shippable and each one is verified before the next
 starts.

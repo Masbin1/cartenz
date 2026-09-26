@@ -435,6 +435,100 @@
   background-position: -1px -1px;
 }
 
+/* ---- The spatial floor ------------------------------------------------- */
+
+/*
+ * A room is a floor plane with two walls. Its furniture is static; what moves
+ * is only what means something: a route carrying a task, or the dispatch ring
+ * while a task changes state. Nothing here animates on a timer.
+ */
+.office-canvas {
+  background-image: radial-gradient(
+    circle at 50% 0%,
+    rgb(var(--surface-overlay) / 0.6),
+    transparent 60%
+  );
+}
+
+.office-room {
+  transition: opacity 200ms ease;
+}
+
+/* The flow along an active route: a dashed line travelling the path. */
+@keyframes office-flow-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+.office-flow {
+  animation: office-flow-dash 1.6s linear infinite;
+}
+
+@keyframes office-dispatch-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.office-dispatch-pulse {
+  animation: office-dispatch-pulse 1.1s ease-in-out infinite;
+}
+
+/* The task bubble belongs to the states a human should see without clicking. */
+@keyframes office-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.office-bubble {
+  animation: office-bubble-in 220ms ease-out both;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+
+.office-control {
+  @apply flex h-7 w-7 items-center justify-center rounded-md text-content-muted transition-colors;
+}
+.office-control:hover {
+  @apply bg-surface-overlay text-content;
+}
+.office-control:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+.office-legend-dot {
+  @apply inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-[9px] leading-none;
+}
+.office-tone-running {
+  background: rgb(var(--state-running) / 0.14);
+  color: rgb(var(--state-running));
+}
+.office-tone-waiting {
+  background: rgb(var(--state-waiting) / 0.14);
+  color: rgb(var(--state-waiting));
+}
+.office-tone-success {
+  background: rgb(var(--state-success) / 0.14);
+  color: rgb(var(--state-success));
+}
+.office-tone-failure {
+  background: rgb(var(--state-failure) / 0.14);
+  color: rgb(var(--state-failure));
+}
+.office-tone-idle {
+  background: rgb(var(--state-idle) / 0.14);
+  color: rgb(var(--state-idle));
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-pose-working .agent-body,
   .agent-pose-working .agent-arm-front,
@@ -454,7 +548,10 @@
   .office-desk-arrive,
   .office-blink,
   .office-recent-item,
-  .office-feed-item {
+  .office-feed-item,
+  .office-flow,
+  .office-dispatch-pulse,
+  .office-bubble {
     animation: none;
   }
 }

@@ -162,6 +162,71 @@ own status instead of a sprite sheet.
   (`ai-office-board.spec.ts`); there is no separate "animation state" that
   could drift from the task's real status.
 
+## Phase 5: the spatial floor, and a renderer boundary
+
+The operator's visualisation task asked for an isometric office with Hermes at
+the centre coordinating named agents, lines between collaborating agents, and
+an architecture that lets a 3D renderer replace the 2D one later. The first two
+describe a system Cartenz is not (see Context), so they were kept to what is
+real; the rest was built as asked.
+
+- **A mapping layer the renderer cannot see past.** `frontend/lib/office/`
+  holds the office's own model: `status.ts` (task status to office status,
+  glyph, label, and the previous room of a step), `model.ts` (the board, queue,
+  attention and activity read models to `OfficeModel`: agents, departments,
+  dispatch node, connections, totals), `store.ts` (the realtime reducer),
+  `layout.ts` (where rooms and desks sit on the floor) and `camera.ts`
+  (pan/zoom as a reducer). Everything there is pure and tested with
+  `node:test` (`npm test` in `frontend/`). The SVG components in
+  `components/ai-office/` take `OfficeModel` and report clicks; none imports an
+  API type. A Three.js renderer would draw the same `OfficeModel`.
+- **The centre of the floor is the worker pool, labelled "Dispatch".** Hermes is
+  one LLM provider among several (ADR-018), so drawing "Hermes Orchestrator"
+  would name an architecture that does not exist. What does exist is a fixed
+  number of worker slots (`AGENT_WORKER_CONCURRENCY`) that pick queued tasks
+  up; the ring around the node fills with how many of those slots are held,
+  and pulses only while a task is actually changing state.
+- **A connection is a real step, never agent-to-agent.** Each live task
+  contributes one edge: from the room it just left to the room it is in (the
+  previous status in the state machine), or from Dispatch for a task that has
+  not yet walked anywhere. The line flows only while the task is running or has
+  just moved. There are no edges between tasks, because tasks do not
+  collaborate.
+- **A figure is named by its work.** The label is project and task reference,
+  never a persona ("Odoo Developer Agent"); the status chip under every figure
+  repeats the status as a glyph and a word, so colour is never the only signal.
+- **Realtime as a reducer.** `officeReducer` replaces the hook's ad hoc state:
+  a REST snapshot replaces everything; an event may move a card the floor
+  already holds to its new status at once (so the figure walks without waiting
+  for the refetch), but can never create a card; event `message` text is never
+  stored; a late or duplicate event (by per-task `sequence`) is dropped. A
+  resync is still scheduled after every event, and on reconnect and when the
+  tab becomes visible again.
+- **Filters subdue, they do not remove.** Department and project filters dim
+  everything outside scope; the floor never looks as if it has fewer tasks than
+  the backend reports. The project filter offers only projects on the floor.
+- **Camera.** Zoom in/out/reset buttons, drag to pan, ctrl/⌘-wheel to zoom;
+  clamped so the office cannot be lost off screen. The office fits the frame at
+  the default camera, so zoom is never needed to use it.
+- **Mobile is a list, not a shrunken floor.** Below 768px the same agents render
+  grouped by room, approvals first.
+- **Testing.** The frontend had no test runner. Rather than add Jest, jsdom and
+  Testing Library, `scripts/run-tests.mjs` bundles each `*.test.ts(x)` with the
+  esbuild that ships with Next and runs it under `node:test`; component tests
+  assert on `renderToStaticMarkup` output.
+- **Layout invariants are asserted, not eyeballed.** `layout.test.ts` checks
+  that rooms do not overlap in floor space, that every desk a room is asked for
+  sits inside it and never stacks on another, that the dispatch point is on
+  open floor inside no room, that a route attaches to the room edge facing the
+  other end rather than crossing a room to its centre, and that the world bounds
+  contain every room corner and wall top - so moving a room in `ROOM_LAYOUT`
+  cannot push it off-canvas.
+- **A room grows desks to fit its occupants.** The floor draws
+  `max(DESKS_PER_ROOM, occupants)`, because a task that a "full" room would
+  leave undrawn is a fabrication by omission, which this ADR forbids as much as
+  drawing a task that is not there. `model.test.ts` covers the fifth task in one
+  room.
+
 ## Consequences
 
 - The board cannot interfere with task execution: it writes nothing, adds no

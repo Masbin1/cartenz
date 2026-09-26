@@ -8,6 +8,7 @@
     "dev": "next dev -p ${FRONTEND_PORT:-3000}",
     "build": "next build",
     "start": "next start -p ${FRONTEND_PORT:-3000}",
+    "test": "node scripts/run-tests.mjs",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },

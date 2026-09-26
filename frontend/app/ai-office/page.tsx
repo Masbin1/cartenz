@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   ArrowRight,
@@ -17,91 +17,103 @@ import { AppShell } from '@/components/ui/app-shell';
 import { PageHeader } from '@/components/ui/page';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AgentFigure } from '@/components/ai-office/agent-figure';
-import { RoomScene } from '@/components/ai-office/room-scene';
+import { OfficeCanvas } from '@/components/ai-office/office-canvas';
+import { OfficeFilterBar } from '@/components/ai-office/office-filter-bar';
+import { OfficeLegend, OfficeEmptyNote } from '@/components/ai-office/office-legend';
+import { OfficeMobileList } from '@/components/ai-office/office-mobile-list';
 import { humanise, relativeTime } from '@/lib/format';
-import type {
-  AiOfficeActivityItem,
-  AiOfficeAttentionItem,
-  AiOfficeCard,
-  AiOfficeFinishedCard,
-  AiOfficePhase,
-} from '@/lib/types';
+import {
+  NO_FILTERS,
+  activityInScope,
+  buildOfficeModel,
+  mobileAgents,
+  projectsOnFloor,
+  type OfficeAgent,
+  type OfficeFilters,
+} from '@/lib/office/model';
+import type { AiOfficeActivityItem, AiOfficeAttentionItem } from '@/lib/types';
 
 /**
- * The office floor (PRD docs/AI-OFFICE-PRD-draft.md, ADR-066).
+ * Cartenz AI Office: a live spatial view of the actual `agent_tasks` load
+ * (docs/AI-OFFICE-PRD-draft.md, ADR-066, and the visualization dev task on top
+ * of it).
  *
- * Four rooms, each a phase of the task lifecycle, and in each room a person for
- * every task actually running. The figures are tasks: Cartenz runs one agent
- * through a fixed state machine, so a desk is a task and the way the person sits
- * is that task's state. Nothing here animates without a database row behind it.
+ * The rule this page exists to keep, stated once so every component built for
+ * it can point back here: a figure on the floor is a task that exists right
+ * now, its pose and room are that task's real status, and nothing on the floor
+ * moves without a row in `agent_tasks` behind it. Cartenz runs one agent
+ * through a fixed state machine per task (ADR-018); there is no multi-agent
+ * registry to draw, so a figure is named by its work (project + task
+ * reference), not by an invented persona, and the dispatch node in the middle
+ * of the floor is the real worker pool, not an orchestrator that does not
+ * exist in this system.
  *
- * Live updates come from the existing gateway's cross-project feed. The wire
- * message is never rendered - it carries the agent's own narration, which
- * ADR-066 keeps out of the browser - so a visible change is either an optimistic
- * status move or a refetch from the sanitised REST endpoints.
+ * `lib/office/model.ts` turns the API's read models into that floor; this
+ * file only lays the page out and wires the toolbar.
  */
-const ROOMS: {
-  phase: AiOfficePhase;
-  name: string;
-  role: string;
-  hint: string;
-}[] = [
-  {
-    phase: 'research',
-    name: 'Research',
-    role: 'Analysts',
-    hint: 'Reading the request, planning the change',
-  },
-  { phase: 'development', name: 'Development', role: 'Engineers', hint: 'Writing the change' },
-  { phase: 'quality', name: 'Quality', role: 'Testers', hint: 'Running validation and tests' },
-  { phase: 'operations', name: 'Operations', role: 'Release', hint: 'Commit, push, build' },
-];
-
 export default function AiOfficePage() {
   const { loading, user } = useRequireAuth();
-  const {
-    board,
-    attention,
-    activity,
-    queue,
-    live,
-    busy,
-    loadedAt,
-    refresh,
-    loadMoreActivity,
-    hasMoreActivity,
-  } = useOffice();
-  const [selected, setSelected] = useState<AiOfficeCard | null>(null);
+  const { state, refresh, loadMoreActivity } = useOffice();
+  const [selected, setSelected] = useState<OfficeAgent | null>(null);
+  const [filters, setFilters] = useState<OfficeFilters>(NO_FILTERS);
+  const [busy, setBusy] = useState(false);
+  const [isCompact, setIsCompact] = useState(false);
 
-  const byPhase = useMemo(() => {
-    const grouped: Record<AiOfficePhase, AiOfficeCard[]> = {
-      research: [],
-      development: [],
-      quality: [],
-      operations: [],
-    };
-    for (const card of board?.cards ?? []) grouped[card.phase].push(card);
-    return grouped;
-  }, [board]);
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 767px)');
+    const update = () => setIsCompact(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  const model = useMemo(
+    () =>
+      buildOfficeModel({
+        board: state.board,
+        attention: state.attention,
+        queue: state.queue,
+        activity: state.activity,
+        live: state.connection === 'live',
+        movedTaskIds: state.movedTaskIds,
+      }),
+    [
+      state.attention,
+      state.board,
+      state.connection,
+      state.movedTaskIds,
+      state.queue,
+      state.activity,
+    ],
+  );
+
+  const projects = useMemo(() => projectsOnFloor(model.agents), [model.agents]);
+  const scopedActivity = useMemo(
+    () => activityInScope(model.activity, filters),
+    [model.activity, filters],
+  );
+  const mobileList = useMemo(() => mobileAgents(model, filters), [model, filters]);
 
   if (loading || !user) return <PageLoading label="Loading your session" />;
 
-  const summary = board?.summary;
+  const loadingBoard = model.status === 'loading';
 
   return (
     <AppShell>
       <div className="page">
         <PageHeader
           title="AI Office"
-          description="Every task running across your projects, shown as the phase it is in. One person is one task that exists right now."
+          description="Every task running across your projects, shown as a live floor. One figure is one task that exists right now."
           actions={
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => void refresh()}
+              onClick={() => {
+                setBusy(true);
+                void refresh().finally(() => setBusy(false));
+              }}
               disabled={busy}
             >
               {busy ? (
@@ -114,9 +126,11 @@ export default function AiOfficePage() {
           }
           meta={
             <>
-              <LiveIndicator live={live} />
+              <ConnectionIndicator connection={state.connection} />
               <span className="text-meta text-content-subtle">
-                {loadedAt ? `Read at ${loadedAt.toLocaleTimeString()}` : 'Reading the board'}
+                {state.loadedAt
+                  ? `Read at ${state.loadedAt.toLocaleTimeString()}`
+                  : 'Reading the board'}
               </span>
             </>
           }
@@ -126,93 +140,91 @@ export default function AiOfficePage() {
           <dl className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
             <Metric
               label="Working now"
-              hint={
-                queue
-                  ? `${queue.running} of ${queue.capacity} workers busy`
-                  : 'Tasks occupying a worker'
-              }
-              value={summary?.live}
+              hint={`${model.orchestrator.busy} of ${model.orchestrator.capacity || '—'} workers busy`}
+              value={loadingBoard ? undefined : model.totals.running + model.totals.waiting}
               icon={Users}
-              busy={busy}
             />
             <Metric
               label="Waiting on you"
-              hint={attention.length > 0 ? 'Paused for a decision' : 'Nothing waiting'}
-              value={summary?.needsAttention}
+              hint={model.totals.approval > 0 ? 'Paused for a decision' : 'Nothing waiting'}
+              value={loadingBoard ? undefined : model.totals.approval}
               icon={Hand}
-              busy={busy}
-              highlight={(summary?.needsAttention ?? 0) > 0}
+              highlight={model.totals.approval > 0}
             />
             <Metric
               label="Completed today"
               hint="Since midnight"
-              value={summary?.completedToday}
+              value={loadingBoard ? undefined : model.totals.completedToday}
               icon={CircleCheckBig}
-              busy={busy}
             />
             <Metric
               label="Failed today"
               hint="Since midnight"
-              value={summary?.failedToday}
+              value={loadingBoard ? undefined : model.totals.failedToday}
               icon={TriangleAlert}
-              busy={busy}
-              tone={(summary?.failedToday ?? 0) > 0 ? 'failure' : undefined}
+              tone={model.totals.failedToday > 0 ? 'failure' : undefined}
             />
           </dl>
 
-          {attention.length > 0 ? <AttentionQueue items={attention} /> : null}
-
-          <div className="office-floor overflow-hidden rounded-card border border-surface-border">
-            <div className="grid gap-px bg-surface-border sm:grid-cols-2">
-              {ROOMS.map((room) => (
-                <Room
-                  key={room.phase}
-                  room={room}
-                  cards={byPhase[room.phase]}
-                  busy={busy}
-                  onSelect={setSelected}
-                  selectedId={selected?.taskId ?? null}
-                />
-              ))}
-            </div>
-          </div>
-
-          {!busy && (board?.recent.length ?? 0) > 0 ? (
-            <RecentlyFinished items={board?.recent ?? []} />
+          {state.error ? (
+            <p className="rounded-card border border-state-waiting/40 bg-state-waiting/5 px-4 py-2.5 text-callout text-state-waiting">
+              {state.error} Showing the last known floor.
+            </p>
           ) : null}
 
-          <div className="grid gap-6 lg:grid-cols-5">
-            <QueueCard queue={queue} busy={busy} className="lg:col-span-2" />
-            <ActivityFeed
-              items={activity}
-              busy={busy}
-              hasMore={hasMoreActivity}
-              onMore={loadMoreActivity}
-              className="lg:col-span-3"
-            />
+          {model.totals.approval > 0 ? <AttentionQueue items={state.attention} /> : null}
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <OfficeFilterBar filters={filters} onChange={setFilters} projects={projects} />
+            <OfficeLegend />
           </div>
 
-          {!busy && (board?.cards.length ?? 0) === 0 ? (
-            <EmptyState
-              icon={Activity}
-              title="The office is quiet"
-              description="No task is running right now, so every desk is empty. Start one from a project's agent workspace and a person sits down at a desk in the room for its phase."
-              action={
-                <Link href="/projects" className="btn-primary">
-                  Go to projects
-                </Link>
-              }
+          {loadingBoard ? (
+            <Skeleton className="h-[420px] w-full rounded-card" />
+          ) : isCompact ? (
+            <OfficeMobileList agents={mobileList} onSelect={setSelected} />
+          ) : (
+            <OfficeCanvas
+              model={model}
+              filters={filters}
+              selectedId={selected?.id ?? null}
+              onSelect={setSelected}
             />
+          )}
+
+          {!loadingBoard && model.status === 'empty' ? (
+            <OfficeEmptyNote onGoToProjects={() => (window.location.href = '/projects')} />
           ) : null}
+
+          {!loadingBoard && model.recent.length > 0 ? (
+            <RecentlyFinished agents={model.recent} />
+          ) : null}
+
+          <ActivityFeed
+            items={scopedActivity}
+            loading={loadingBoard}
+            hasMore={state.hasMoreActivity && filters.projectId === 'all'}
+            onMore={loadMoreActivity}
+          />
         </div>
       </div>
 
-      {selected ? <TaskDrawer card={selected} onClose={() => setSelected(null)} /> : null}
+      {selected ? <TaskDrawer agent={selected} onClose={() => setSelected(null)} /> : null}
     </AppShell>
   );
 }
 
-function LiveIndicator({ live }: { live: boolean }) {
+function ConnectionIndicator({ connection }: { connection: string }) {
+  const live = connection === 'live';
+  const label =
+    connection === 'live'
+      ? 'Live'
+      : connection === 'synchronizing'
+        ? 'Synchronizing...'
+        : connection === 'reconnecting'
+          ? 'Reconnecting to AI Office...'
+          : 'Connecting...';
+
   return (
     <span className="inline-flex items-center gap-2 text-meta text-content-muted">
       <span className="relative flex h-2 w-2" aria-hidden="true">
@@ -227,80 +239,12 @@ function LiveIndicator({ live }: { live: boolean }) {
           }`}
         />
       </span>
-      {live ? 'Live' : 'Reconnecting'}
+      {label}
     </span>
   );
 }
 
-/**
- * One room: its name, and the scene with a person per task in this phase.
- *
- * The room is wide enough for four desks; anything past that is counted, not
- * squeezed in, because a five-person desk row would stop reading as an office.
- */
-function Room({
-  room,
-  cards,
-  busy,
-  onSelect,
-  selectedId,
-}: {
-  room: (typeof ROOMS)[number];
-  cards: AiOfficeCard[];
-  busy: boolean;
-  onSelect: (card: AiOfficeCard) => void;
-  selectedId: string | null;
-}) {
-  return (
-    <section className="flex flex-col bg-surface-raised/80 p-4">
-      <header className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h2 className="text-headline text-content">{room.name}</h2>
-          <p className="mt-0.5 text-meta text-content-subtle">{room.role}</p>
-        </div>
-        <span
-          className={`rounded-full px-2 py-0.5 text-meta font-semibold tabular-nums ${
-            cards.length > 0
-              ? 'bg-state-running/10 text-state-running'
-              : 'bg-surface-overlay text-content-subtle'
-          }`}
-        >
-          {busy ? '-' : cards.length}
-        </span>
-      </header>
-      <p className="mt-1 text-caption text-content-subtle">{room.hint}</p>
-
-      <div className="mt-3 flex-1">
-        {busy ? (
-          <Skeleton className="aspect-[280/250] w-full" />
-        ) : (
-          <RoomScene
-            phase={room.phase}
-            name={room.name}
-            cards={cards}
-            selectedId={selectedId}
-            onSelect={onSelect}
-          />
-        )}
-      </div>
-
-      {!busy && cards.length === 0 ? (
-        <p className="mt-2 text-center text-caption text-content-subtle">
-          Empty. No task is in this phase.
-        </p>
-      ) : null}
-    </section>
-  );
-}
-
-/**
- * The last few hours of finished tasks, each person standing back from the desk.
- *
- * A finished task has no desk (the floor is live work only), so this is where a
- * viewer who just watched a desk empty sees what became of it - and what makes an
- * idle office read as quiet rather than broken.
- */
-function RecentlyFinished({ items }: { items: AiOfficeFinishedCard[] }) {
+function RecentlyFinished({ agents }: { agents: OfficeAgent[] }) {
   return (
     <section className="overflow-hidden rounded-card border border-surface-border bg-surface-raised">
       <div className="flex items-center gap-3 border-b border-surface-border px-5 py-4">
@@ -314,24 +258,24 @@ function RecentlyFinished({ items }: { items: AiOfficeFinishedCard[] }) {
         <span className="text-meta text-content-subtle">Last 3 hours</span>
       </div>
       <ul className="grid grid-cols-2 gap-px bg-surface-border sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-        {items.map((item, index) => (
+        {agents.map((agent, index) => (
           <li
-            key={item.taskId}
+            key={agent.id}
             className="office-recent-item bg-surface-raised"
             style={{ animationDelay: `${index * 40}ms` }}
           >
             <Link
-              href={`/projects/${item.projectId}/agent?task=${item.taskId}`}
+              href={`/projects/${agent.projectId}/agent?task=${agent.taskId}`}
               className="flex h-full flex-col items-center gap-2 px-3 py-4 text-center transition-colors hover:bg-surface-overlay/60"
             >
-              <AgentFigure taskId={item.taskId} status={item.status} size={64} />
+              <AgentFigure taskId={agent.taskId} status={agent.taskStatus} size={64} />
               <div className="min-w-0 max-w-full">
-                <p className="truncate text-meta font-medium text-content">{item.projectName}</p>
+                <p className="truncate text-meta font-medium text-content">{agent.projectName}</p>
                 <p className="mt-0.5 line-clamp-2 text-caption text-content-subtle">
-                  {item.prompt}
+                  {agent.taskTitle}
                 </p>
                 <p className="mt-1 text-caption tabular-nums text-content-subtle">
-                  {humanise(item.status)} · {relativeTime(item.endedAt)}
+                  {humanise(agent.taskStatus)} · {relativeTime(agent.updatedAt)}
                 </p>
               </div>
             </Link>
@@ -388,89 +332,21 @@ function AttentionQueue({ items }: { items: AiOfficeAttentionItem[] }) {
   );
 }
 
-function QueueCard({
-  queue,
-  busy,
-  className = '',
-}: {
-  queue: ReturnType<typeof useOffice>['queue'];
-  busy: boolean;
-  className?: string;
-}) {
-  const waiting = queue?.waiting ?? [];
-
-  return (
-    <section
-      className={`overflow-hidden rounded-card border border-surface-border bg-surface-raised ${className}`}
-    >
-      <div className="flex items-center gap-3 border-b border-surface-border px-5 py-4">
-        <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-overlay text-content-subtle"
-          aria-hidden="true"
-        >
-          <Users className="h-4 w-4" strokeWidth={1.75} />
-        </span>
-        <h2 className="min-w-0 flex-1 text-headline text-content">Workers</h2>
-        {queue ? (
-          <span className="text-meta tabular-nums text-content-subtle">
-            {queue.running}/{queue.capacity} busy
-          </span>
-        ) : null}
-      </div>
-
-      {busy ? (
-        <div className="space-y-3 p-4">
-          <Skeleton className="h-14 w-full" />
-        </div>
-      ) : waiting.length === 0 ? (
-        <p className="px-5 py-6 text-callout text-content-subtle">
-          Nothing is queued. Every started task has a worker.
-        </p>
-      ) : (
-        <>
-          <p className="px-5 pt-3 text-meta text-content-subtle">
-            {waiting.length === 1 ? '1 task is waiting' : `${waiting.length} tasks are waiting`} for
-            a free worker.
-          </p>
-          <ul className="mt-1 divide-y divide-surface-border">
-            {waiting.slice(0, 6).map((item) => (
-              <li key={item.taskId} className="px-5 py-3">
-                <p className="truncate text-callout text-content">{item.prompt}</p>
-                <p className="mt-0.5 text-meta text-content-subtle">
-                  {item.projectName}
-                  {' · '}
-                  <span className="font-mono text-caption">{item.taskReference}</span>
-                  {' · '}
-                  {relativeTime(item.createdAt)}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </section>
-  );
-}
-
 function ActivityFeed({
   items,
-  busy,
+  loading,
   hasMore,
   onMore,
-  className = '',
 }: {
   items: AiOfficeActivityItem[];
-  busy: boolean;
+  loading: boolean;
   hasMore: boolean;
   onMore: () => Promise<void>;
-  className?: string;
 }) {
   const [loadingMore, setLoadingMore] = useState(false);
 
   return (
-    <section
-      className={`overflow-hidden rounded-card border border-surface-border bg-surface-raised ${className}`}
-    >
+    <section className="overflow-hidden rounded-card border border-surface-border bg-surface-raised">
       <div className="flex items-center gap-3 border-b border-surface-border px-5 py-4">
         <span
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-state-running/10 text-state-running"
@@ -481,7 +357,7 @@ function ActivityFeed({
         <h2 className="min-w-0 flex-1 text-headline text-content">Activity</h2>
       </div>
 
-      {busy ? (
+      {loading ? (
         <div className="space-y-3 p-4">
           <Skeleton className="h-5 w-full" />
           <Skeleton className="h-5 w-4/5" />
@@ -547,8 +423,8 @@ function feedDot(status: string): string {
   return 'bg-state-success';
 }
 
-/** The card, in full, without leaving the floor (PRD phase 3). */
-function TaskDrawer({ card, onClose }: { card: AiOfficeCard; onClose: () => void }) {
+/** The agent, in full, without leaving the floor (section 17). */
+function TaskDrawer({ agent, onClose }: { agent: OfficeAgent; onClose: () => void }) {
   return (
     <div
       className="fixed inset-0 z-40 flex justify-end"
@@ -572,28 +448,35 @@ function TaskDrawer({ card, onClose }: { card: AiOfficeCard; onClose: () => void
 
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
           <div className="flex items-center gap-4">
-            <AgentFigure taskId={card.taskId} status={card.status} size={72} />
+            <AgentFigure taskId={agent.taskId} status={agent.taskStatus} size={72} />
             <div className="min-w-0">
-              <p className="text-callout font-medium text-content">{card.projectName}</p>
+              <p className="text-callout font-medium text-content">{agent.projectName}</p>
               <p className="mt-0.5 font-mono text-caption text-content-subtle">
-                {card.taskReference}
+                {agent.taskReference}
               </p>
               <div className="mt-1.5">
-                <StatusBadge status={card.status} size="small" />
+                <StatusBadge status={agent.taskStatus} size="small" />
               </div>
             </div>
           </div>
 
+          {agent.approval ? (
+            <div className="rounded-card border border-state-waiting/40 bg-state-waiting/5 p-3">
+              <p className="text-meta font-medium text-state-waiting">
+                {humanise(agent.approval.action)}
+              </p>
+              <p className="mt-1 text-caption text-content-muted">{agent.approval.reason}</p>
+            </div>
+          ) : null}
+
           <div>
             <p className="text-meta text-content-subtle">Request</p>
-            <p className="mt-1 text-callout text-content">{card.prompt}</p>
+            <p className="mt-1 text-callout text-content">{agent.taskTitleFull}</p>
           </div>
 
           <div>
             <p className="text-meta text-content-subtle">Last action</p>
-            <p className="mt-1 font-mono text-caption text-content-muted">
-              {card.currentAction ?? 'No action recorded yet'}
-            </p>
+            <p className="mt-1 font-mono text-caption text-content-muted">{agent.currentAction}</p>
           </div>
 
           <div>
@@ -601,17 +484,17 @@ function TaskDrawer({ card, onClose }: { card: AiOfficeCard; onClose: () => void
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-overlay">
               <span
                 className="block h-full rounded-full bg-accent"
-                style={{ width: `${Math.round(card.progress * 100)}%` }}
+                style={{ width: `${Math.round(agent.progress * 100)}%` }}
               />
             </div>
             <p className="mt-1.5 text-meta text-content-subtle">
-              {humanise(card.status)}
-              {card.startedAt ? ` · started ${relativeTime(card.startedAt)}` : ''}
+              {humanise(agent.taskStatus)}
+              {agent.startedAt ? ` · started ${relativeTime(agent.startedAt)}` : ''}
             </p>
           </div>
 
           <Link
-            href={`/projects/${card.projectId}/agent?task=${card.taskId}`}
+            href={`/projects/${agent.projectId}/agent?task=${agent.taskId}`}
             className="btn-primary w-full"
           >
             Open task
@@ -628,7 +511,6 @@ function Metric({
   hint,
   value,
   icon: Icon,
-  busy,
   highlight = false,
   tone,
 }: {
@@ -636,7 +518,6 @@ function Metric({
   hint: string;
   value: number | undefined;
   icon: typeof Activity;
-  busy: boolean;
   highlight?: boolean;
   tone?: 'failure';
 }) {
@@ -662,7 +543,7 @@ function Metric({
         </span>
       </div>
       <dd className="mt-2">
-        {busy || value === undefined ? (
+        {value === undefined ? (
           <Skeleton className="h-9 w-12" />
         ) : (
           <span
