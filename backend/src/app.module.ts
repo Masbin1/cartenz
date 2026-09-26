@@ -20,6 +20,7 @@ import { DocumentsModule } from './modules/documents/documents.module';
 import { TasksModule } from './modules/tasks/tasks.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { AiOfficeModule } from './modules/ai-office/ai-office.module';
 import { AgentModule } from './agent/agent.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 
@@ -55,6 +56,7 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     TasksModule,
     ApprovalsModule,
     NotificationsModule,
+    AiOfficeModule,
     RealtimeModule,
   ],
   controllers: [],

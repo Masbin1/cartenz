@@ -1,5 +1,9 @@
 import type {
   AgentCapabilities,
+  AiOfficeActivityItem,
+  AiOfficeAttentionItem,
+  AiOfficeBoard,
+  AiOfficeQueue,
   NotificationPreferences,
   AgentSession,
   AuditLogEntry,
@@ -898,6 +902,19 @@ export const api = {
 
   agent: {
     capabilities: () => request<AgentCapabilities>('/agent/capabilities'),
+  },
+
+  aiOffice: {
+    board: () => request<AiOfficeBoard>('/ai-office/board'),
+    attention: () => request<AiOfficeAttentionItem[]>('/ai-office/attention'),
+    queue: () => request<AiOfficeQueue>('/ai-office/queue'),
+    activity: (query: { before?: string; limit?: number } = {}) => {
+      const params = new URLSearchParams();
+      if (query.before) params.set('before', query.before);
+      if (query.limit) params.set('limit', String(query.limit));
+      const suffix = params.toString();
+      return request<AiOfficeActivityItem[]>(`/ai-office/activity${suffix ? `?${suffix}` : ''}`);
+    },
   },
 
   notifications: {

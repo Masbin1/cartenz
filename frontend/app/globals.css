@@ -306,3 +306,156 @@
     @apply animate-pulse rounded-md bg-surface-overlay;
   }
 }
+
+/*
+ * AI Office (ADR-066). Each figure moves only while the task it stands for is in
+ * a state that means something is happening. The motion is small on purpose: a
+ * floor of people bobbing constantly is noise, and it would imply activity a
+ * queued task does not have.
+ */
+@keyframes agent-type-arm {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  25% { transform: translate(0.6px, -0.6px) rotate(-2deg); }
+  75% { transform: translate(-0.4px, 0.4px) rotate(2deg); }
+}
+
+@keyframes agent-type-arm-back {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-0.5px, 0.3px); }
+}
+
+@keyframes agent-code-scroll {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-11px); }
+}
+
+@keyframes agent-breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-0.5px); }
+}
+
+@keyframes agent-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.15); }
+}
+
+@keyframes agent-wave-arm {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-12deg); }
+}
+
+@keyframes agent-bubble-pop {
+  0% { opacity: 0; transform: scale(0.4) translateY(3px); }
+  60% { opacity: 1; transform: scale(1.08) translateY(0); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes agent-bubble-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+
+@keyframes agent-cheer-arm {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-1.5px) rotate(6deg); }
+}
+
+@keyframes agent-think-rise {
+  0% { opacity: 0; transform: translateY(2px) scale(0.7); }
+  15%, 80% { opacity: 0.9; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-2px) scale(0.85); }
+}
+
+@keyframes office-arrive {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes office-feed-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes office-monitor-glow {
+  0%, 100% { filter: drop-shadow(0 0 0px rgb(var(--state-running) / 0)); }
+  50% { filter: drop-shadow(0 0 3px rgb(var(--state-running) / 0.5)); }
+}
+
+.agent-figure { overflow: visible; transform-box: fill-box; }
+.agent-figure .agent-body,
+.agent-figure .agent-head { transform-box: fill-box; transform-origin: 50% 100%; }
+
+.agent-pose-working .agent-body { animation: agent-breathe 2.4s ease-in-out infinite; }
+.agent-pose-working .agent-arm-front { animation: agent-type-arm 0.5s ease-in-out infinite; transform-box: fill-box; transform-origin: 25% 60%; }
+.agent-pose-working .agent-arm-back { animation: agent-type-arm-back 0.5s ease-in-out infinite reverse; transform-box: fill-box; transform-origin: 25% 60%; }
+.agent-pose-working .agent-code { animation: agent-code-scroll 2.6s linear infinite alternate; }
+.agent-pose-working { animation: office-monitor-glow 2.6s ease-in-out infinite; }
+
+.agent-pose-waiting .agent-wave { animation: agent-wave-arm 1.1s ease-in-out infinite; transform-box: fill-box; transform-origin: 25% 100%; }
+.agent-pose-waiting .agent-bubble { animation: agent-bubble-pop 260ms ease-out both, agent-bubble-pulse 1.6s ease-in-out 260ms infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+
+.agent-pose-done .agent-cheer { animation: agent-cheer-arm 1.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100%; }
+.agent-pose-done .agent-bubble { animation: agent-bubble-pop 260ms ease-out both; transform-box: fill-box; transform-origin: 50% 50%; }
+
+.agent-pose-failed .agent-bubble { animation: agent-bubble-pop 260ms ease-out both; transform-box: fill-box; transform-origin: 50% 50%; }
+
+.agent-pose-thinking .agent-think-1 { animation: agent-think-rise 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+.agent-pose-thinking .agent-think-2 { animation: agent-think-rise 2.4s ease-in-out 0.3s infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+.agent-pose-thinking .agent-think-3 { animation: agent-think-rise 2.4s ease-in-out 0.6s infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+
+.agent-eye { animation: agent-blink 4.5s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+
+.office-desk { animation: office-arrive 320ms ease-out both; }
+.office-desk-arrive { animation: office-arrive 320ms ease-out both; transform-box: fill-box; transform-origin: 50% 100%; }
+.office-feed-item { animation: office-feed-in 240ms ease-out both; }
+
+.office-seat:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
+
+@keyframes office-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+.office-blink { animation: office-blink 1.2s ease-in-out infinite; }
+.office-blink-0 { animation-delay: 0ms; }
+.office-blink-1 { animation-delay: 220ms; }
+.office-blink-2 { animation-delay: 440ms; }
+
+@keyframes office-recent-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.office-recent-item { animation: office-recent-in 260ms ease-out both; }
+
+/* The floor texture: a quiet tile grid, drawn with the theme's border colour. */
+.office-floor {
+  background-image:
+    linear-gradient(rgb(var(--surface-border) / 0.55) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--surface-border) / 0.55) 1px, transparent 1px);
+  background-size: 28px 28px;
+  background-position: -1px -1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-pose-working .agent-body,
+  .agent-pose-working .agent-arm-front,
+  .agent-pose-working .agent-arm-back,
+  .agent-pose-working .agent-code,
+  .agent-pose-working,
+  .agent-pose-waiting .agent-wave,
+  .agent-pose-waiting .agent-bubble,
+  .agent-pose-done .agent-cheer,
+  .agent-pose-done .agent-bubble,
+  .agent-pose-failed .agent-bubble,
+  .agent-pose-thinking .agent-think-1,
+  .agent-pose-thinking .agent-think-2,
+  .agent-pose-thinking .agent-think-3,
+  .agent-eye,
+  .office-desk,
+  .office-desk-arrive,
+  .office-blink,
+  .office-recent-item,
+  .office-feed-item {
+    animation: none;
+  }
+}
+

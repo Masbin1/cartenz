@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
+  Activity,
   ChevronsUpDown,
   FolderGit2,
   LayoutGrid,
@@ -36,6 +37,7 @@ interface NavItem {
 const PRIMARY: NavItem[] = [
   { href: '/dashboard', label: 'Overview', icon: LayoutGrid },
   { href: '/projects', label: 'Projects', icon: FolderGit2 },
+  { href: '/ai-office', label: 'AI Office', icon: Activity },
 ];
 
 const ADMINISTRATION: NavItem[] = [

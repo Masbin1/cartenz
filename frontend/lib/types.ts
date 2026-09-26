@@ -263,6 +263,102 @@ export interface TaskSummary {
   completedAt: string | null;
 }
 
+/**
+ * The AI Office board (PRD docs/AI-OFFICE-PRD-draft.md, phase 1).
+ *
+ * `phase` is the task's own lifecycle state grouped into a column, not a
+ * separate department entity - see the server's `ai-office-board.ts` for the
+ * mapping. There is no "agent" object here: a card is a task.
+ */
+export type AiOfficePhase = 'research' | 'development' | 'quality' | 'operations';
+
+export interface AiOfficeCard {
+  taskId: string;
+  taskReference: string;
+  projectId: string;
+  projectName: string;
+  prompt: string;
+  status: AgentTaskStatus;
+  phase: AiOfficePhase;
+  /** 0 to 1, derived from the task's position in its state machine. */
+  progress: number;
+  /** A one-line summary of the last recorded action, or null if none yet. */
+  currentAction: string | null;
+  startedAt: string | null;
+  updatedAt: string;
+}
+
+export interface AiOfficeSummary {
+  live: number;
+  needsAttention: number;
+  completedToday: number;
+  failedToday: number;
+}
+
+export interface AiOfficeBoard {
+  cards: AiOfficeCard[];
+  /** Tasks that ended in the last few hours, newest first (idle-office tail). */
+  recent: AiOfficeFinishedCard[];
+  summary: AiOfficeSummary;
+}
+
+/**
+ * A task that just ended. Shown as a figure standing up from its desk, so a
+ * viewer who watched it finish sees where it went instead of it disappearing.
+ */
+export interface AiOfficeFinishedCard {
+  taskId: string;
+  taskReference: string;
+  projectId: string;
+  projectName: string;
+  prompt: string;
+  status: AgentTaskStatus;
+  endedAt: string;
+}
+
+export interface AiOfficeQueueItem {
+  taskId: string;
+  taskReference: string;
+  projectId: string;
+  projectName: string;
+  prompt: string;
+  status: AgentTaskStatus;
+  createdAt: string;
+}
+
+/** Tasks waiting for a worker, and how many workers exist (ADR-066). */
+export interface AiOfficeQueue {
+  waiting: AiOfficeQueueItem[];
+  capacity: number;
+  running: number;
+}
+
+/** One line of the activity feed: a real `agent_actions` row, summarised (ADR-066). */
+export interface AiOfficeActivityItem {
+  id: string;
+  taskId: string;
+  taskReference: string;
+  projectId: string;
+  projectName: string;
+  actionType: string;
+  toolName: string | null;
+  status: string;
+  taskStatus: AgentTaskStatus;
+  summary: string | null;
+  at: string;
+}
+
+export interface AiOfficeAttentionItem {
+  approvalId: string;
+  taskId: string;
+  taskReference: string;
+  projectId: string;
+  projectName: string;
+  action: string;
+  requiredReason: string;
+  requestedAt: string;
+}
+
 export interface PlanStep {
   order: number;
   title: string;
