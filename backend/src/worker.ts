@@ -8,6 +8,7 @@ import { APP_CONFIG } from './core/config/config.module';
 import type { AppConfig } from './core/config/configuration';
 import { RedisService } from './core/redis/redis.service';
 import { AgentWorkflow } from './agent/orchestration/agent-workflow';
+import { WorkspaceManager } from './agent/workspace/workspace-manager';
 import { AGENT_TASK_QUEUE, PROJECT_PROVISIONING_QUEUE, PROJECT_RESTART_JOB } from './core/redis/redis.constants';
 import type { AgentJobData } from './agent/orchestration/queue-agent-orchestrator';
 import { ProjectsService } from './modules/projects/projects.service';
@@ -15,6 +16,14 @@ import type {
   ProjectRestartJobData,
   SelectiveProvisionJobData,
 } from './modules/projects/project-provisioning.queue';
+
+/**
+ * How often the worker reclaims workspaces whose task has settled but which a
+ * run never released. Bounded below by "long enough that a live run cannot be
+ * mistaken for a dead one" - the reclaim only touches rows whose task is
+ * already terminal, so the interval is about promptness, not safety.
+ */
+const WORKSPACE_RECLAIM_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * Agent worker entry point.
@@ -116,10 +125,40 @@ async function bootstrap(): Promise<void> {
 
   let shuttingDown = false;
 
+  /**
+   * Reclaims workspaces left behind by a run that never reached its release -
+   * a worker killed mid-task (SIGKILL, OOM, a crash-looped unit) or a run that
+   * exited before it could observe a cancellation. A worktree workspace left
+   * like that keeps pinning its branch in the project's clone, so every later
+   * task on that branch fails with "already checked out" until it is cleared.
+   *
+   * Runs once at boot - the moment right after the most likely cause, a worker
+   * that died - and then periodically, because a leak can also happen while
+   * this process stays up. Only workspaces of tasks already in a terminal
+   * state are touched (see `reclaimOrphans`), so this is safe beside live runs.
+   */
+  const workspaces = app.get(WorkspaceManager);
+  let reclaiming = false;
+  const reclaim = async (): Promise<void> => {
+    if (reclaiming || shuttingDown) return;
+    reclaiming = true;
+    try {
+      await workspaces.reclaimOrphans();
+    } catch (error) {
+      logger.error(`Workspace reclaim failed: ${(error as Error).message}`);
+    } finally {
+      reclaiming = false;
+    }
+  };
+  void reclaim();
+  const reclaimTimer = setInterval(() => void reclaim(), WORKSPACE_RECLAIM_INTERVAL_MS);
+  reclaimTimer.unref();
+
   const shutdown = async (signal: string): Promise<void> => {
     // A second signal during shutdown must not start a second shutdown.
     if (shuttingDown) return;
     shuttingDown = true;
+    clearInterval(reclaimTimer);
 
     logger.log(`Received ${signal}; draining the worker`);
 

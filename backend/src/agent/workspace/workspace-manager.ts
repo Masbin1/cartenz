@@ -2,11 +2,12 @@ import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common
 import { mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join, resolve, sep } from 'node:path';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
 import { DatabaseService } from '../../core/database/database.service';
-import { agentWorkspaces } from '../../core/database/schema';
+import { agentTasks, agentWorkspaces } from '../../core/database/schema';
+import { TERMINAL_TASK_STATUSES } from '../task-state';
 import { GitService } from '../git/git.service';
 import { ProjectCheckoutService } from '../../modules/projects/project-checkout.service';
 import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
@@ -978,10 +979,27 @@ export class WorkspaceManager {
     return discarded;
   }
   /**
-   * Removes workspace directories whose task has settled but whose workspace was
-   * never released - the residue of a worker killed mid-task.
+   * Releases every workspace whose task has settled but which was never
+   * released - the residue of a run that ended without its `finally` running.
    *
-   * Reported rather than silent: an orphan means a worker died, which is worth
+   * Two distinct populations, and the second is the one that used to escape:
+   *
+   *  - `allocated` rows left by a worker killed mid-allocation, which is what
+   *    this originally covered.
+   *  - `ready`/`retained` rows whose task is already terminal. A run that ends
+   *    through `releaseWorkspace` marks the row itself, so a terminal task
+   *    sitting next to an unreleased row means the release never happened - a
+   *    `SIGKILL`, an OOM, or a cancelled task whose run exited before the release
+   *    could observe it. Leaving one of those behind is not just disk: for a
+   *    worktree-based workspace the git entry outlives the task and keeps pinning
+   *    its branch, so every later task on that branch fails with "already checked
+   *    out" over a task nobody can see running.
+   *
+   * A workspace belonging to a task that has NOT settled is deliberately left
+   * alone - that clone may hold the only copy of a commit the task has not
+   * pushed yet.
+   *
+   * Reported rather than silent: an orphan means a run died, which is worth
    * knowing about.
    */
   async reclaimOrphans(): Promise<number> {
@@ -990,9 +1008,26 @@ export class WorkspaceManager {
         workspaceRef: agentWorkspaces.workspaceRef,
         rootPath: agentWorkspaces.rootPath,
         baseCommit: agentWorkspaces.baseCommit,
+        status: agentWorkspaces.status,
+        taskStatus: agentTasks.status,
       })
       .from(agentWorkspaces)
-      .where(eq(agentWorkspaces.status, 'allocated'));
+      .innerJoin(agentTasks, eq(agentTasks.id, agentWorkspaces.taskId))
+      .where(
+        and(
+          // Already-released and already-failed rows have nothing left to do:
+          // their directory is gone and their worktree entry is pruned.
+          // `retained` is excluded on purpose: WORKSPACE_RETAIN_ON_FAILURE keeps
+          // a failed workspace for inspection, and reclaiming it would defeat it.
+          inArray(agentWorkspaces.status, ['allocated', 'ready']),
+          // Only once the task has settled. This runs periodically while tasks
+          // are live, so an `allocated` or `ready` row beside a running task is
+          // that task's own workspace mid-allocation or mid-run - and a task
+          // parked at an approval keeps its clone because the commit lives
+          // only there. None of those may be touched.
+          inArray(agentTasks.status, [...TERMINAL_TASK_STATUSES]),
+        ),
+      );
 
     let reclaimed = 0;
     for (const row of stale) {
@@ -1005,13 +1040,38 @@ export class WorkspaceManager {
         );
         continue;
       }
+
+      /**
+       * Which clone owns this working tree is read from the working tree, so it
+       * has to be asked BEFORE the directory is removed - `gitCommonDir` is
+       * answered by the worktree and returns nothing once it is gone. Without
+       * this step the files would disappear while the clone's
+       * `.git/worktrees/<name>` entry stayed, still pinning the branch: exactly
+       * the state this reclaim exists to clear.
+       */
+      const owningClone = await this.owningClone(join(row.rootPath, 'repository'));
+
       await rm(row.rootPath, { recursive: true, force: true }).catch(() => undefined);
+
+      if (owningClone) {
+        await this.unregisterWorktree(
+          row.workspaceRef,
+          owningClone,
+          join(row.rootPath, 'repository'),
+        );
+      }
+
+      this.learnedHostKeys.delete(row.workspaceRef);
       await this.markStatus(row.workspaceRef, 'released', row.baseCommit, 0, 0);
       reclaimed += 1;
+      this.logger.warn(
+        `Reclaimed workspace ${row.workspaceRef} (${row.status}, task ${row.taskStatus}): ` +
+          'a run ended without releasing it.',
+      );
     }
 
     if (reclaimed > 0) {
-      this.logger.warn(`Reclaimed ${reclaimed} orphaned workspace(s) from an interrupted worker`);
+      this.logger.warn(`Reclaimed ${reclaimed} orphaned workspace(s) from an interrupted run`);
     }
     return reclaimed;
   }

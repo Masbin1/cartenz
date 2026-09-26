@@ -145,11 +145,27 @@ export class AgentWorkflow {
         snapshot = await this.tasks.snapshot(taskId);
       }
     } finally {
+      /**
+       * `snapshot.status` can be stale here: `shouldStop` returns as soon as it
+       * sees the task's status diverge (a cancellation landing mid-step is the
+       * common case), but it never writes that new status back onto `snapshot`
+       * before returning. Re-reading from the database is what makes this
+       * `finally` see the status the task actually settled at.
+       *
+       * Without this, a task cancelled while a step is in flight releases with
+       * the pre-cancellation status - e.g. `analyzing`, which
+       * `releaseWorkspace` treats as non-terminal - so the workspace is kept
+       * forever instead of released. The clone's worktree entry then keeps
+       * pinning the branch after the task is gone, and every later task
+       * targeting that branch fails with "already checked out" until someone
+       * finds and removes it by hand.
+       */
+      const finalStatus = await this.tasks.currentStatus(taskId).catch(() => snapshot.status);
       // A workspace is released when the task settles, or when the run ends
       // without settling - a suspension at an approval, or a yield. Holding a
       // clone open across a human wait of unknown length would be worse than
       // re-cloning on resumption.
-      await this.releaseWorkspace(taskId, snapshot.status);
+      await this.releaseWorkspace(taskId, finalStatus);
     }
   }
 
