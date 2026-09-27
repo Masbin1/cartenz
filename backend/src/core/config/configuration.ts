@@ -321,6 +321,30 @@ const environmentSchema = z.object({
     .default('/opt/cartenz/infrastructure/provisioning/restart-project.sh'),
 
   /**
+   * Absolute path to the restored-copy script (ADR-067).
+   *
+   * Connects an existing odoo.sh project by building a NEW Odoo instance on
+   * this host from a backup zip the operator downloaded from odoo.sh. Empty
+   * disables the action end to end, the same posture as PROJECT_RESTART_SCRIPT:
+   * the served script is what the sudoers entry grants, and a deployment that
+   * has not installed either must not offer a button whose every press is
+   * refused.
+   */
+  PROJECT_RESTORE_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/restore-existing-instance.sh'),
+
+  /**
+   * Where an operator places the odoo.sh backup zips a restore reads (ADR-067).
+   *
+   * Read only to *list* what is available; the script resolves its own copy of
+   * this path and never takes a path from the platform. The class of bug this
+   * closes is the one where a caller-supplied path is the thing that decides
+   * which file a root-run loader opens.
+   */
+  PROJECT_RESTORE_STAGING_DIR: z.string().default('/opt/cartenz/restore-staging'),
+
+  /**
    * The email certbot registers a Let's Encrypt account under. Never a
    * secret — passed as a plain argument to certbot, and used only for expiry
    * notifications — but required (not defaulted) once PROJECT_HTTPS_ENABLED is
@@ -669,6 +693,14 @@ export interface AppConfig {
      * guard refuses the invocation and the portal does not offer it.
      */
     readonly restartScript: string | null;
+    /**
+     * The restored-copy script (ADR-067), or null when the deployment has not
+     * configured one. Null disables connecting an existing project by restore:
+     * the guard refuses the invocation and the portal does not offer it.
+     */
+    readonly restoreScript: string | null;
+    /** Where the operator places odoo.sh backup zips (ADR-067). Read-only. */
+    readonly restoreStagingDir: string;
     readonly portRangeStart: number;
     readonly portRangeEnd: number;
     readonly baseDomain: string | null;
@@ -1075,6 +1107,8 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       backupScript: emptyToUndefined(env.PROJECT_BACKUP_SCRIPT) ?? null,
       modulesListScript: emptyToUndefined(env.PROJECT_MODULES_LIST_SCRIPT) ?? null,
       restartScript: emptyToUndefined(env.PROJECT_RESTART_SCRIPT) ?? null,
+      restoreScript: emptyToUndefined(env.PROJECT_RESTORE_SCRIPT) ?? null,
+      restoreStagingDir: env.PROJECT_RESTORE_STAGING_DIR,
       portRangeStart: env.PROJECT_PORT_RANGE_START,
       portRangeEnd: env.PROJECT_PORT_RANGE_END,
       baseDomain: emptyToUndefined(env.PROJECT_BASE_DOMAIN) ?? null,

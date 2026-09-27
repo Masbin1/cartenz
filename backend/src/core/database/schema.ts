@@ -335,6 +335,29 @@ export const projects = pgTable(
      * to choose which one it is talking to.
      */
     isOdoosh: boolean('is_odoosh').notNull().default(false),
+    /**
+     * A restored copy of the customer's instance (ADR-067): a NEW Odoo on this
+     * host, loaded from an odoo.sh backup zip and neutralized before it ever
+     * starts. For a person to look at real data - never where the agent works,
+     * which stays the project's own template-built database (ADR-050 §3).
+     *
+     * 'none' until an operator asks for one; 'pending' while the worker runs
+     * the root script; 'restored' once the unit is listening; 'failed' with
+     * the script's own reason otherwise (the script has already cleaned up).
+     */
+    restoredStatus: text('restored_status', {
+      enum: ['none', 'pending', 'restored', 'failed'],
+    })
+      .notNull()
+      .default('none'),
+    /** The instance's name: its directory, database and `odoo-<name>` unit. */
+    restoredInstanceName: text('restored_instance_name'),
+    /** The loopback port the restored instance listens on. */
+    restoredPort: integer('restored_port'),
+    /** The backup file it was built from, by basename inside the staging dir. */
+    restoredBackupFile: text('restored_backup_file'),
+    restoredError: text('restored_error'),
+    restoredAt: timestamp('restored_at', { withTimezone: true }),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),

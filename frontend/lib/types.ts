@@ -180,6 +180,11 @@ export interface ProjectDetail {
   provisioning: ProjectProvisioningInfo;
   restart: ProjectRestartInfo;
   /**
+   * A restored copy of this project's odoo.sh instance (ADR-067), when an
+   * operator has built one. For a human to look at; the agent never touches it.
+   */
+  restoredInstance: RestoredInstanceInfo;
+  /**
    * The linked instance this project points at (ADR-050, ADR-054), when the
    * operator connected an existing odoo.sh/on-premise project rather than
    * only a repository - so a restore can be aimed at the right instance.
@@ -229,6 +234,22 @@ export interface ProjectLink {
   projectUrl?: string | null;
   database?: string | null;
   isOdoosh: boolean;
+}
+
+/**
+ * A restored copy of a connected project's odoo.sh instance (ADR-067): a NEW
+ * Odoo built on the Cartenz host from a backup zip an operator staged, loaded
+ * and neutralized before it ever started. For a human to look at real data —
+ * never where the agent works, which stays the project's own standard,
+ * always-empty database (ADR-050 §3).
+ */
+export interface RestoredInstanceInfo {
+  status: 'none' | 'pending' | 'restored' | 'failed';
+  instanceName: string | null;
+  port: number | null;
+  backupFile: string | null;
+  error: string | null;
+  restoredAt: string | null;
 }
 
 /**

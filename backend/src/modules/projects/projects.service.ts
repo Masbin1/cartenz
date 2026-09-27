@@ -2739,6 +2739,12 @@ export class ProjectsService {
     restartCommit?: string | null;
     restartBranch?: string | null;
     restartedAt?: Date | null;
+    restoredStatus?: string;
+    restoredInstanceName?: string | null;
+    restoredPort?: number | null;
+    restoredBackupFile?: string | null;
+    restoredError?: string | null;
+    restoredAt?: Date | null;
     /** ADR-050/ADR-054: the linked instance this connect points at. */
     projectUrl?: string | null;
     projectDatabase?: string | null;
@@ -2793,6 +2799,21 @@ export class ProjectsService {
         commit: project.restartCommit ?? null,
         branch: project.restartBranch ?? null,
         restartedAt: project.restartedAt ?? null,
+      },
+      /**
+       * A restored copy of this connected project's odoo.sh instance (ADR-067):
+       * real customer data, on this host, for a person to look at. Never where
+       * the agent works - that stays the `provisioning` instance above, on an
+       * always-empty standard database (ADR-050 §3). Null-ish ('none') until an
+       * operator asks for one.
+       */
+      restoredInstance: {
+        status: project.restoredStatus ?? 'none',
+        instanceName: project.restoredInstanceName ?? null,
+        port: project.restoredPort ?? null,
+        backupFile: project.restoredBackupFile ?? null,
+        error: project.restoredError ?? null,
+        restoredAt: project.restoredAt ?? null,
       },
       /**
        * The linked instance this project points at (ADR-050, ADR-054), when the

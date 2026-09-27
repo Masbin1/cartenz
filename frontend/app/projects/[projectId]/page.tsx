@@ -26,6 +26,7 @@ import type {
   ProjectProvisioningInfo,
   ProjectRestartInfo,
 } from '@/lib/types';
+import { RestoredInstancePanel } from '@/components/projects/restored-instance-panel';
 
 /**
  * The instance's provisioning state, in the words a person would use. Shown
@@ -108,12 +109,16 @@ export default function ProjectDetailPage() {
    * stops as soon as the status leaves `pending`, because a finished install
    * never changes again on its own.
    */
+  // ADR-067: a queued restored copy changes on its own in the same way.
+  const watching =
+    project?.provisioning.status === 'pending' || project?.restoredInstance?.status === 'pending';
+
   useEffect(() => {
-    if (project?.provisioning.status !== 'pending') return;
+    if (!watching) return;
 
     const timer = setInterval(() => void load(), 3000);
     return () => clearInterval(timer);
-  }, [project?.provisioning.status, load]);
+  }, [watching, load]);
 
   if (loading || !user) return <PageLoading />;
 
@@ -256,6 +261,15 @@ export default function ProjectDetailPage() {
                 restart={project.restart}
                 repositoryUrl={project.repositoryUrl}
                 isAdmin={user.isAdmin}
+              />
+            ) : null}
+
+            {project.link.isOdoosh || project.restoredInstance.status !== 'none' ? (
+              <RestoredInstancePanel
+                projectId={project.id}
+                restored={project.restoredInstance}
+                isAdmin={user.isAdmin}
+                onQueued={() => void load()}
               />
             ) : null}
 

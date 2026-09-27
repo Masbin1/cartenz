@@ -1113,3 +1113,123 @@ describe('assertProvisioningInvocation - project restart (ADR-057)', () => {
     ).not.toThrow();
   });
 });
+
+/**
+ * ADR-067: the restored-copy script. It takes one shape —
+ * `-n <script> <instance-name> <port> <zip> [<repository-url> <branch>]` — and
+ * the zip argument is the security-relevant one: a bare .zip basename, never a
+ * path, so no argument can decide which file a root-run loader opens.
+ */
+describe('assertProvisioningInvocation - restored instance (ADR-067)', () => {
+  const createScripts = ['/opt/odoo/scripts/create_project', '/opt/odoo/scripts/create_project_enterprise'];
+  const restoreScript = '/opt/cartenz/infrastructure/provisioning/restore-existing-instance.sh';
+
+  const call = (args: readonly string[]) =>
+    assertProvisioningInvocation(
+      args,
+      createScripts,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      restoreScript,
+    );
+
+  it('permits a bare restore with no repository', () => {
+    expect(() =>
+      call(['-n', restoreScript, 'dodol-r-1a2b3c4d', '7001', 'dodol-staging.zip']),
+    ).not.toThrow();
+  });
+
+  it('permits a restore that also checks out the project repository', () => {
+    expect(() =>
+      call([
+        '-n',
+        restoreScript,
+        'dodol-r-1a2b3c4d',
+        '7001',
+        'dodol-staging.zip',
+        'git@github.com:LinkedERP/Odoo.git',
+        'staging',
+      ]),
+    ).not.toThrow();
+  });
+
+  it('refuses an instance name that is not a safe systemd/database identifier', () => {
+    for (const name of ['', 'a', '-rf', 'Upper', 'has space', 'x;id', '../etc', 'a'.repeat(32)]) {
+      expect(() => call(['-n', restoreScript, name, '7001', 'backup.zip'])).toThrow(
+        CommandArgumentError,
+      );
+    }
+  });
+
+  it('refuses a backup argument that is a path, not a basename', () => {
+    for (const zip of [
+      '/etc/shadow.zip',
+      '../../etc/shadow.zip',
+      'sub/dir/backup.zip',
+      '../backup.zip',
+      './backup.zip',
+    ]) {
+      expect(() => call(['-n', restoreScript, 'name', '7001', zip])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a backup argument that is not a .zip', () => {
+    for (const zip of ['backup.tar.gz', 'backup', '', '.zip', '.hidden.zip']) {
+      expect(() => call(['-n', restoreScript, 'name', '7001', zip])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses an out-of-range or non-numeric port', () => {
+    for (const port of ['', '80', '65535', 'abc', '-1', '7001; id']) {
+      expect(() => call(['-n', restoreScript, 'name', port, 'backup.zip'])).toThrow(
+        CommandArgumentError,
+      );
+    }
+  });
+
+  it('refuses a repository URL or branch that the pull shape would refuse too', () => {
+    expect(() =>
+      call(['-n', restoreScript, 'name', '7001', 'b.zip', 'file:///etc', 'main']),
+    ).toThrow(CommandArgumentError);
+    expect(() =>
+      call(['-n', restoreScript, 'name', '7001', 'b.zip', 'https://github.com/o/r.git', '--exec=x']),
+    ).toThrow(CommandArgumentError);
+  });
+
+  it('refuses a repository without a branch, and a branch without a repository', () => {
+    expect(() =>
+      call(['-n', restoreScript, 'name', '7001', 'b.zip', 'https://github.com/o/r.git']),
+    ).toThrow(CommandArgumentError);
+  });
+
+  it('refuses an argument count the shape does not define', () => {
+    expect(() => call(['-n', restoreScript, 'name'])).toThrow(CommandArgumentError);
+    expect(() => call(['-n', restoreScript, 'name', '7001'])).toThrow(CommandArgumentError);
+    expect(() =>
+      call(['-n', restoreScript, 'name', '7001', 'b.zip', 'https://github.com/o/r.git', 'main', 'x']),
+    ).toThrow(CommandArgumentError);
+  });
+
+  /** The off switch: an empty PROJECT_RESTORE_SCRIPT. */
+  it('refuses the restore script when it is not configured', () => {
+    expect(() =>
+      assertProvisioningInvocation(
+        ['-n', restoreScript, 'name', '7001', 'b.zip'],
+        createScripts,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+      ),
+    ).toThrow(/not a configured provisioning script/);
+  });
+});

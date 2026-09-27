@@ -39,6 +39,13 @@ export const PROJECT_PROVISIONING_JOB = 'provision-modules';
 export const PROJECT_RESTART_JOB = 'restart-project';
 
 /**
+ * ADR-067: building a restored copy of a connected odoo.sh project from its
+ * backup zip. Same queue, for the same reason a restart shares it: one host
+ * action at a time on a small host.
+ */
+export const PROJECT_RESTORED_INSTANCE_JOB = 'restore-existing-instance';
+
+/**
  * Pub/sub channel for a single task's event stream, in the form documented in
  * chapter 9: task:{task_id}:events.
  */

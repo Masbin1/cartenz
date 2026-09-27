@@ -83,6 +83,18 @@
 #     systemd unit), and the platform's CommandRunner distinguishes the two only
 #     by which configured path was passed.
 #
+#   - The tenth is the restored copy of a connected odoo.sh project (ADR-067):
+#     infrastructure/provisioning/restore-existing-instance.sh builds a NEW
+#     Odoo instance and PostgreSQL database on this host from an odoo.sh backup
+#     zip that an operator placed in a fixed staging directory, loads it with
+#     `odoo-bin db load --neutralize` (so no cron or outgoing mail can fire
+#     from real customer data), and starts its own unit bound to 127.0.0.1.
+#     Shape: `-n <script> <instance-name> <port> <zip-basename>
+#     [<repository-url> <branch>]`, the zip given as a bare basename — the
+#     script resolves it inside its own directory and never takes a path.
+#     This produces an instance for a human to look at; the AI agent never
+#     works against it (ADR-050 §3).
+#
 #   - `sudo -l -U cartenz` on the host shows exactly this rule; there is no
 #     wildcard sudo access anywhere else for this user.
 #
@@ -98,7 +110,8 @@ Cmnd_Alias LINKEDERP_PROVISION = \
     /opt/cartenz/infrastructure/provisioning/preview-project.sh, \
     /opt/cartenz/infrastructure/provisioning/backup-project.sh, \
     /opt/cartenz/infrastructure/provisioning/list-installed-modules.sh, \
-    /opt/cartenz/infrastructure/provisioning/restart-project.sh
+    /opt/cartenz/infrastructure/provisioning/restart-project.sh, \
+    /opt/cartenz/infrastructure/provisioning/restore-existing-instance.sh
 
 cartenz ALL=(root) NOPASSWD: LINKEDERP_PROVISION
 

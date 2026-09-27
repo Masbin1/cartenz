@@ -145,6 +145,10 @@ export const AUDIT_EVENTS = {
    * that requested it - the restore point is what matters afterwards.
    */
   PROJECT_BACKUP_CREATED: 'project.backup_created',
+  /** ADR-067: a restored copy of an odoo.sh backup was requested / built / failed. */
+  PROJECT_RESTORED_INSTANCE_REQUESTED: 'project.restored_instance_requested',
+  PROJECT_RESTORED_INSTANCE_CREATED: 'project.restored_instance_created',
+  PROJECT_RESTORED_INSTANCE_FAILED: 'project.restored_instance_failed',
   PROJECT_BACKUP_FAILED: 'project.backup_failed',
 
   /**

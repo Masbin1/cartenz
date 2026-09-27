@@ -5,6 +5,7 @@ import {
   PROJECT_PROVISIONING_JOB,
   PROJECT_PROVISIONING_QUEUE,
   PROJECT_RESTART_JOB,
+  PROJECT_RESTORED_INSTANCE_JOB,
 } from '../../core/redis/redis.constants';
 import type { OdooEdition, UserRegion } from '../../core/enums';
 
@@ -45,6 +46,21 @@ export interface ProjectRestartJobData {
 }
 
 /**
+ * ADR-067 job payload: build a NEW Odoo instance on this host from an odoo.sh
+ * backup zip already sitting in the staging directory. Identifiers only; the
+ * zip is named by basename and the script resolves it itself.
+ */
+export interface RestoredInstanceJobData {
+  readonly projectId: string;
+  readonly userId: string;
+  readonly instanceName: string;
+  readonly backupFilename: string;
+  /** Checked out into addons/ first so custom modules load; null when none. */
+  readonly repositoryUrl: string | null;
+  readonly branch: string | null;
+}
+
+/**
  * Owns the BullMQ queue a selective module install is handed to (ADR-056).
  *
  * A separate class rather than a `Queue` field on `ProjectProvisioningService`
@@ -71,6 +87,7 @@ export class ProjectProvisioningQueue implements OnApplicationShutdown {
   // call for a queue that carries two different payload shapes needs two
   // instances even though there is only one queue in Redis.
   private readonly restartQueue: Queue<ProjectRestartJobData>;
+  private readonly restoreQueue: Queue<RestoredInstanceJobData>;
 
   constructor(redis: RedisService) {
     /**
@@ -94,6 +111,10 @@ export class ProjectProvisioningQueue implements OnApplicationShutdown {
       defaultJobOptions,
     });
     this.restartQueue = new Queue<ProjectRestartJobData>(PROJECT_PROVISIONING_QUEUE, {
+      connection: redis.queueConnection,
+      defaultJobOptions,
+    });
+    this.restoreQueue = new Queue<RestoredInstanceJobData>(PROJECT_PROVISIONING_QUEUE, {
       connection: redis.queueConnection,
       defaultJobOptions,
     });
@@ -164,8 +185,27 @@ export class ProjectProvisioningQueue implements OnApplicationShutdown {
     this.logger.log(`Queued restart for "${data.technicalName}" (${data.branch})`);
   }
 
+  /**
+   * Queues a restored-copy build (ADR-067). Same job-id discipline as a
+   * restart: a finished job with this id is cleared first so a retry after a
+   * failure is not handed back the old job and silently skipped.
+   */
+  async enqueueRestoredInstance(data: RestoredInstanceJobData): Promise<void> {
+    const jobId = `restore-${data.instanceName}`;
+    const existing = await this.restoreQueue.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === 'completed' || state === 'failed') {
+        await existing.remove();
+      }
+    }
+    await this.restoreQueue.add(PROJECT_RESTORED_INSTANCE_JOB, data, { jobId });
+    this.logger.log(`Queued restored instance "${data.instanceName}" from ${data.backupFilename}`);
+  }
+
   async onApplicationShutdown(): Promise<void> {
     await this.queue.close();
     await this.restartQueue.close();
+    await this.restoreQueue.close();
   }
 }

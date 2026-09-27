@@ -607,6 +607,23 @@ export const api = {
       ),
 
     /**
+     * A restored copy of a connected odoo.sh project (ADR-067).
+     * `restoreBackups` lists the zips an operator has staged on the host and
+     * whether this deployment can build one; `restoreFromBackup` queues the
+     * build. The project's own `restoredInstance` block is what a caller polls.
+     */
+    restoreBackups: (projectId: string) =>
+      request<{ available: boolean; reason: string | null; backups: string[] }>(
+        `/projects/${projectId}/restored-instance/backups`,
+      ),
+
+    restoreFromBackup: (projectId: string, backupFile: string) =>
+      request<{ queued: boolean; instanceName: string }>(
+        `/projects/${projectId}/restored-instance`,
+        { method: 'POST', body: { backupFile } },
+      ),
+
+    /**
      * The ephemeral preview instance (ADR-052): a short-lived running Odoo built
      * from a task's retained draft, so a reviewer sees the real UI before
      * approving. `preview` reads the live one, `startPreview` builds it,
