@@ -19,6 +19,11 @@ import {
  * two agents - Cartenz runs one agent per task, so there is no agent-to-agent
  * relationship to draw. An edge flows only while a task on it is moving or
  * running; otherwise it is a faint presence line.
+ *
+ * Colour: the track is drawn in the running-state blue rather than the brand
+ * accent. The accent is a red, and a red line across the floor reads as an
+ * alarm rather than as traffic; failure is the only thing on this floor allowed
+ * to be red.
  */
 export const ConnectionLines = memo(function ConnectionLines({
   connections,
@@ -42,18 +47,33 @@ export const ConnectionLines = memo(function ConnectionLines({
             data-connection={connection.id}
             style={{ opacity: dimmed ? 0.25 : 1 }}
           >
+            {/* The bed of the route: a wide, soft pass that makes the line feel
+                laid into the floor rather than drawn on top of it. */}
             <path
               d={path}
-              stroke="rgb(var(--accent) / 0.18)"
-              strokeWidth={4 + Math.min(connection.agentIds.length, 4)}
+              stroke="rgb(var(--state-running) / 0.1)"
+              strokeWidth={9 + Math.min(connection.agentIds.length, 4)}
               strokeLinecap="round"
             />
             <path
               d={path}
-              stroke={connection.active ? 'rgb(var(--accent))' : 'rgb(var(--accent) / 0.45)'}
+              stroke={
+                connection.active
+                  ? 'rgb(var(--state-running) / 0.7)'
+                  : 'rgb(var(--state-running) / 0.28)'
+              }
+              strokeWidth={2.6 + Math.min(connection.agentIds.length, 4) * 0.5}
+              strokeLinecap="round"
+            />
+            {/* The travelling dashes: only while something really is moving. */}
+            <path
+              d={path}
+              stroke={
+                connection.active ? 'rgb(var(--state-running))' : 'rgb(var(--state-running) / 0.4)'
+              }
               strokeWidth="1.6"
               strokeLinecap="round"
-              strokeDasharray="5 7"
+              strokeDasharray="6 8"
               className={connection.active ? 'office-flow' : undefined}
             />
           </g>

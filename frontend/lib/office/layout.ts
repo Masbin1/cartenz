@@ -60,6 +60,14 @@ export const ROOM_LAYOUT: readonly RoomLayout[] = [
 // space so the "inside no room" invariant stays testable.
 export const DISPATCH_LAYOUT = { center: { x: 345, y: 195 }, radius: 30 };
 
+/** The dispatch plinth, in drawing units: its top ellipse and its height. */
+export const DISPATCH_RX = 38;
+export const DISPATCH_RY = DISPATCH_RX * (0.5 / 0.866);
+export const DISPATCH_HEIGHT = 12;
+
+/** How far a room's name plate hangs above the top of the wall it is on. */
+export const SIGN_LIFT_OVER_WALL = 24;
+
 export function project(point: Point): Point {
   return { x: (point.x - point.y) * ISO_X, y: (point.x + point.y) * ISO_Y };
 }
@@ -79,6 +87,39 @@ export function floorPath(origin: Point, width: number, depth: number): string {
   ].map(project);
 
   return `M${corners.map((corner) => `${corner.x.toFixed(2)} ${corner.y.toFixed(2)}`).join('L')}Z`;
+}
+
+/**
+ * Where a room's name plate hangs: over its right-hand back wall, a fifth of
+ * the way along, rather than over the back corner. The back corner of the
+ * rooms south of the dispatch point faces straight at it, and a plate there
+ * sat on top of the dispatch plinth. Further along (0.3) the plate's hanger
+ * came down onto the front desk's task card. At 0.2 the plate clears both, and
+ * the wall piece further along (at 0.42).
+ */
+export const SIGN_ALONG_WALL = 0.2;
+
+export function signAnchor(room: RoomLayout): Point {
+  return project({ x: room.origin.x + room.width * SIGN_ALONG_WALL, y: room.origin.y });
+}
+
+/**
+ * The floor's own thickness, revealed along the two viewer-facing edges (the
+ * ones opposite the walls). Without it a room reads as a flat outline; with it,
+ * as a slab standing on the ground the way the walls stand on the slab.
+ */
+export function floorSlabPaths(
+  origin: Point,
+  width: number,
+  depth: number,
+  slab = 9,
+): { right: string; front: string } {
+  const right = project({ x: origin.x + width, y: origin.y });
+  const front = project({ x: origin.x + width, y: origin.y + depth });
+  const left = project({ x: origin.x, y: origin.y + depth });
+  const face = (a: Point, b: Point) =>
+    `M${a.x.toFixed(2)} ${a.y.toFixed(2)}L${b.x.toFixed(2)} ${b.y.toFixed(2)}L${b.x.toFixed(2)} ${(b.y + slab).toFixed(2)}L${a.x.toFixed(2)} ${(a.y + slab).toFixed(2)}Z`;
+  return { right: face(right, front), front: face(front, left) };
 }
 
 /**

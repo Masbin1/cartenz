@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DISPATCH_HEIGHT,
   DISPATCH_LAYOUT,
+  DISPATCH_RX,
+  DISPATCH_RY,
   ROOM_LAYOUT,
+  SIGN_LIFT_OVER_WALL,
   WORLD,
   bowPath,
   deskLayout,
@@ -10,6 +14,7 @@ import {
   floorPath,
   project,
   roomAnchor,
+  signAnchor,
 } from './layout';
 
 test('project keeps the isometric axes: origin is the back corner, both axes descend', () => {
@@ -70,6 +75,49 @@ test('desks in one room never share a spot', () => {
   const desks = deskLayout(ROOM_LAYOUT[2], 4);
   const spots = new Set(desks.map((d) => `${d.point.x.toFixed(1)},${d.point.y.toFixed(1)}`));
   assert.equal(spots.size, 4);
+});
+
+test('a room name plate hanger never lands on a task card', () => {
+  // Task cards sit above each desk (office-desk.tsx TaskBubble): 116 wide,
+  // offset -64 from the desk, their bottom 34-47 above it, up to 30 tall.
+  for (const room of ROOM_LAYOUT) {
+    const at = signAnchor(room);
+    const hangerTop = at.y - room.wallHeight - SIGN_LIFT_OVER_WALL;
+    const hangerBottom = at.y - room.wallHeight + 2;
+    for (const desk of deskLayout(room, 4)) {
+      const d = project(desk.point);
+      const cardLeft = d.x - 64;
+      const cardRight = d.x + 52;
+      const cardTop = d.y - 47 - 30;
+      const cardBottom = d.y - 34;
+      const hits =
+        at.x + 2 >= cardLeft &&
+        at.x - 2 <= cardRight &&
+        hangerBottom >= cardTop &&
+        hangerTop <= cardBottom;
+      assert.equal(hits, false, `${room.id}: sign hanger lands on a desk's task card`);
+    }
+  }
+});
+
+test('a room name plate never hangs over the dispatch plinth', () => {
+  // The plate is anchored along the room's back wall (see signAnchor); the
+  // dispatch plinth and its ground shadow occupy a band around its centre.
+  const centre = project(DISPATCH_LAYOUT.center);
+  const plinthTop = centre.y - DISPATCH_RY;
+  const plinthBottom = centre.y + DISPATCH_HEIGHT + 4 + DISPATCH_RY + 5;
+  const plateHalfWidth = 90;
+  const plateHalfHeight = 9.5;
+  for (const room of ROOM_LAYOUT) {
+    const at = signAnchor(room);
+    const plateTop = at.y - room.wallHeight - SIGN_LIFT_OVER_WALL - plateHalfHeight;
+    const plateBottom = at.y - room.wallHeight - SIGN_LIFT_OVER_WALL + plateHalfHeight;
+    const overlapsPlinth =
+      Math.abs(at.x - centre.x) < DISPATCH_RX + plateHalfWidth &&
+      plateBottom > plinthTop &&
+      plateTop < plinthBottom;
+    assert.equal(overlapsPlinth, false, `${room.id}: name plate sits on the dispatch plinth`);
+  }
 });
 
 test('the dispatch point is on open floor, inside no room', () => {

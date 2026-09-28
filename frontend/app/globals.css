@@ -438,9 +438,12 @@
 /* ---- The spatial floor ------------------------------------------------- */
 
 /*
- * A room is a floor plane with two walls. Its furniture is static; what moves
- * is only what means something: a route carrying a task, or the dispatch ring
- * while a task changes state. Nothing here animates on a timer.
+ * A room is a floor slab with two walls. Its furniture is static; what moves
+ * is only what means something: a route carrying a task, the dispatch slots
+ * while a task changes state, a running desk's screen light.
+ *
+ * The frame carries a soft vignette (`::after`) so the middle of the floor,
+ * where the dispatch point and the routes are, holds the eye.
  */
 .office-canvas {
   background-image: radial-gradient(
@@ -448,6 +451,31 @@
     rgb(var(--surface-overlay) / 0.6),
     transparent 60%
   );
+}
+.office-canvas::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 70% 55% at 50% 52%,
+    transparent 0%,
+    rgb(var(--surface) / 0.45) 100%
+  );
+}
+
+/* The monitor's light on a desk whose task is running. */
+@keyframes office-screen-glow {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+.office-screen-glow {
+  animation: office-screen-glow 2.6s ease-in-out infinite;
 }
 
 .office-room {
@@ -550,6 +578,7 @@
   .office-recent-item,
   .office-feed-item,
   .office-flow,
+  .office-screen-glow,
   .office-dispatch-pulse,
   .office-bubble {
     animation: none;

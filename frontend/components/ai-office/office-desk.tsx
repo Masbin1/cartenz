@@ -41,7 +41,20 @@ export const OfficeDesk = memo(function OfficeDesk({
       style={{ opacity: dimmed ? 0.45 : 1 }}
     >
       {/* Desk shadow and top. */}
-      <ellipse cx="4" cy="20" rx="34" ry="9" fill="rgb(0 0 0 / 0.07)" />
+      <ellipse cx="4" cy="20" rx="34" ry="9" fill="rgb(0 0 0 / 0.1)" />
+
+      {/* The monitor's light on the desk and floor: the status as light, so a
+          working desk glows blue and a failed one red before any text is read. */}
+      {agent !== null ? (
+        <ellipse
+          cx="16"
+          cy="4"
+          rx="30"
+          ry="14"
+          fill={`rgb(var(--state-${tone(agent.status)}) / ${agent.status === 'queued' ? 0.06 : 0.16})`}
+          className={agent.status === 'running' ? 'office-screen-glow' : undefined}
+        />
+      ) : null}
 
       {agent === null ? (
         <g transform="translate(-32 -42)">
@@ -101,20 +114,56 @@ export const OfficeDesk = memo(function OfficeDesk({
 function TaskBubble({ agent }: { agent: OfficeAgent }) {
   const width = 116;
   const lines = wrap(agent.taskTitle, 26, 2);
+  const cardHeight = lines.length === 1 ? 20 : 30;
+  // The figure's head sits around desk-space y ≈ -28 (FigureArt's own local
+  // head circle, offset by the desk's -42 placement). The tail should stop
+  // just short of that, not float a badge's height above it. An approval
+  // figure carries its own "!" badge right above the head, so its card sits
+  // higher to leave that badge visible.
+  const top = (agent.status === 'approval' ? -47 : -34) - cardHeight;
 
   return (
-    <g transform={`translate(-58 ${-92})`} className="office-bubble">
+    <g transform={`translate(-64 ${top})`} className="office-bubble">
+      {/* A soft drop shadow, so the card floats above the floor it sits over. */}
       <rect
+        x="1.5"
+        y="3"
         width={width}
         height={lines.length === 1 ? 20 : 30}
-        rx="5"
+        rx="6"
+        fill="rgb(0 0 0 / 0.38)"
+      />
+      {/* The tail, pointing down at the person the card belongs to. */}
+      <path
+        d={`M${width / 2 - 5} ${lines.length === 1 ? 19.5 : 29.5} L${width / 2} ${lines.length === 1 ? 25 : 35} L${width / 2 + 5} ${lines.length === 1 ? 19.5 : 29.5} Z`}
         fill="rgb(var(--surface-raised))"
         stroke={
           agent.status === 'approval'
             ? 'rgb(var(--state-waiting) / 0.6)'
-            : 'rgb(var(--surface-border))'
+            : 'rgb(var(--surface-strong) / 0.8)'
         }
         strokeWidth="1"
+      />
+      <rect
+        width={width}
+        height={lines.length === 1 ? 20 : 30}
+        rx="6"
+        fill="rgb(var(--surface-raised))"
+        stroke={
+          agent.status === 'approval'
+            ? 'rgb(var(--state-waiting) / 0.6)'
+            : 'rgb(var(--surface-strong) / 0.8)'
+        }
+        strokeWidth="1"
+      />
+      {/* A status stripe down the card's left edge. */}
+      <rect
+        x="0"
+        y="0"
+        width="3"
+        height={lines.length === 1 ? 20 : 30}
+        rx="1.5"
+        fill={`rgb(var(--state-${tone(agent.status)}))`}
       />
       {lines.map((line, index) => (
         <text
@@ -123,7 +172,8 @@ function TaskBubble({ agent }: { agent: OfficeAgent }) {
           y={index === 0 ? 13 : 23}
           textAnchor="middle"
           fontSize="8.4"
-          fill="rgb(var(--content-subtle))"
+          fontWeight="500"
+          fill="rgb(var(--content))"
         >
           {line}
         </text>
@@ -135,7 +185,11 @@ function TaskBubble({ agent }: { agent: OfficeAgent }) {
 /** The status, as a glyph and a word, on a plate under the desk. */
 function StatusChip({ agent }: { agent: OfficeAgent }) {
   const label = `${STATUS_GLYPHS[agent.status]} ${STATUS_LABELS[agent.status]}`;
-  const width = label.length * 4.3 + 12;
+  const width = label.length * 4.9 + 16;
+  const state = tone(agent.status);
+  // The idle grey is a fine chip fill but too faint as small text on the light
+  // floor, so an idle chip writes its label in the muted content colour.
+  const ink = state === 'idle' ? 'rgb(var(--content-muted))' : `rgb(var(--state-${state}))`;
 
   return (
     <g transform="translate(0 30)">
@@ -145,18 +199,19 @@ function StatusChip({ agent }: { agent: OfficeAgent }) {
         width={width}
         height="14"
         rx="7"
-        fill={`rgb(var(--state-${tone(agent.status)}) / 0.14)`}
-        stroke={`rgb(var(--state-${tone(agent.status)}) / 0.45)`}
+        fill={`rgb(var(--surface) / 0.9)`}
+        stroke={`rgb(var(--state-${state}) / 0.55)`}
         strokeWidth="0.8"
       />
-      <text
-        x="0"
-        y="2"
-        textAnchor="middle"
-        fontSize="8.6"
-        fontWeight="600"
-        fill={`rgb(var(--state-${tone(agent.status)}))`}
-      >
+      <rect
+        x={-width / 2}
+        y="-8"
+        width={width}
+        height="14"
+        rx="7"
+        fill={`rgb(var(--state-${state}) / 0.14)`}
+      />
+      <text x="0" y="2" textAnchor="middle" fontSize="8.6" fontWeight="600" fill={ink}>
         {label}
       </text>
     </g>

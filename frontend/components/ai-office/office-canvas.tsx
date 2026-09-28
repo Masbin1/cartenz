@@ -17,8 +17,8 @@ import {
   cameraTransform,
   isDragStart,
 } from '@/lib/office/camera';
-import { ROOM_LAYOUT, WORLD, deskLayout } from '@/lib/office/layout';
-import { RoomBlock } from './room-block';
+import { ROOM_LAYOUT, WORLD, deskLayout, project } from '@/lib/office/layout';
+import { RoomBlock, ROOM_LIGHT } from './room-block';
 import { OfficeDesk } from './office-desk';
 import { DispatchNode } from './dispatch-node';
 import { ConnectionLines } from './connection-lines';
@@ -163,6 +163,7 @@ export const OfficeCanvas = memo(function OfficeCanvas({
         aria-label={`AI Office floor: ${model.agents.length} task${model.agents.length === 1 ? '' : 's'} on the floor`}
       >
         <g transform={cameraTransform(camera)}>
+          <OfficeDefs />
           <ConnectionLines connections={model.connections} dimmedIds={dimmedConnections} />
 
           {model.departments.map((department) => (
@@ -201,6 +202,39 @@ export const OfficeCanvas = memo(function OfficeCanvas({
     </div>
   );
 });
+
+/**
+ * Shared painting resources: one radial light pool per room, plus the
+ * background vignette that lets the middle of the floor carry the eye.
+ * Declared once in the drawing so each room just references its own gradient.
+ */
+function OfficeDefs() {
+  return (
+    <defs>
+      {ROOM_LAYOUT.map((room) => {
+        const centre = project({
+          x: room.origin.x + room.width / 2,
+          y: room.origin.y + room.depth / 2,
+        });
+        const radius = Math.max(room.width, room.depth) * 0.62;
+        return (
+          <radialGradient
+            key={room.id}
+            id={`pool-${room.id}`}
+            gradientUnits="userSpaceOnUse"
+            cx={centre.x}
+            cy={centre.y}
+            r={radius}
+          >
+            <stop offset="0%" stopColor={`rgb(${ROOM_LIGHT[room.id]} / 0.16)`} />
+            <stop offset="70%" stopColor={`rgb(${ROOM_LIGHT[room.id]} / 0.05)`} />
+            <stop offset="100%" stopColor={`rgb(${ROOM_LIGHT[room.id]} / 0)`} />
+          </radialGradient>
+        );
+      })}
+    </defs>
+  );
+}
 
 /**
  * Camera controls, as a small overlay. Zoom is never required: the office fits
