@@ -10,6 +10,7 @@ import {
 import {
   ODOO_ADD_FIELD_TO_VIEW_SCHEMA,
   ODOO_CREATE_FIELD_SCHEMA,
+  ODOO_CREATE_MODEL_SCHEMA,
   ODOO_CREATE_RECORDS_SCHEMA,
   ODOO_LIST_FIELDS_SCHEMA,
   ODOO_LIST_MODELS_SCHEMA,
@@ -23,6 +24,11 @@ import {
   validateSearchRecords,
   validateUpdateRecords,
 } from '../../odoo-online/odoo-record-surface';
+import {
+  normalizeModelLabel,
+  normalizeModelName,
+  validateCreateModel,
+} from '../../odoo-online/odoo-model-surface';
 import type { AnyToolDefinition, ToolDefinition, ToolExecutionContext } from '../tool.interface';
 
 /**
@@ -59,6 +65,7 @@ export class OdooOnlineTools {
       this.listModels,
       this.listFields,
       this.createField,
+      this.createModel,
       this.addFieldToView,
       this.searchRecords,
       this.createRecords,
@@ -175,6 +182,38 @@ export class OdooOnlineTools {
         model: input.model,
         field: `x_${input.name.replace(/^x_/, '')}`,
         fieldId,
+      };
+    },
+  };
+
+  private readonly createModel: ToolDefinition<{
+    model: string;
+    label: string;
+  }> = {
+    name: 'odoo_create_model',
+    description:
+      'Create a new custom model on the Odoo instance, as Odoo Studio does. Creates the model, its display field, access rights and a default form view.',
+    permission: 'odoo_customize',
+    modes: ['odoo_online'],
+    leavesPlatform: true,
+    simulated: false,
+    parameters: ODOO_CREATE_MODEL_SCHEMA,
+    availableToModel: true,
+    validate: validateCreateModel,
+    execute: async (input, context) => {
+      const credentials = await this.resolveCredentials(context);
+      const uid = await this.client.authenticate(credentials);
+      const created = await this.client.createModel(credentials, uid, {
+        model: normalizeModelName(input.model),
+        label: normalizeModelLabel(input.label),
+      });
+      return {
+        model: normalizeModelName(input.model),
+        label: normalizeModelLabel(input.label),
+        modelId: created.modelId,
+        accessIds: created.accessIds,
+        formViewId: created.formViewId,
+        listViewId: created.listViewId,
       };
     },
   };

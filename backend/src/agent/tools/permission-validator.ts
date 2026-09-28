@@ -145,7 +145,7 @@ export class ToolPermissionValidator {
         // mid-implementation would re-run the loop from the start after the
         // second decision - on a live instance, where the first half already ran.
         if (
-          approvalAction === 'odoo_record_write' &&
+          (approvalAction === 'odoo_record_write' || approvalAction === 'odoo_model_create') &&
           context.taskKind === 'change' &&
           context.grantedApprovals.includes('implementation_plan')
         ) {
@@ -190,6 +190,13 @@ export function approvalActionForTool(toolName: string): string | null {
     case 'odoo_create_records':
     case 'odoo_update_records':
       return 'odoo_record_write';
+    // Creating a model is a different grant from writing its records: a plan
+    // that said "create sample data" is not consent to change the shape of the
+    // database (ADR-068). It is a change to the customer's running system all the
+    // same, so it is declared here on the same boundary rule, not as a chat-only
+    // rule.
+    case 'odoo_create_model':
+      return 'odoo_model_create';
     default:
       return null;
   }

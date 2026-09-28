@@ -277,6 +277,11 @@ export class AgentWorkflow {
           message: 'The Odoo data change was approved. Writing the records.',
         });
 
+      case 'odoo_model_create':
+        return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'implementing', {
+          message: 'The new Odoo model was approved. Creating it.',
+        });
+
       default:
         return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'failed', {
           failureReason: `No resumption is defined for an approved ${decision.action}.`,
@@ -2035,6 +2040,7 @@ export type { AgentTaskStatus };
  */
 const CHANGING_ODOO_TOOLS = [
   'odoo_create_field',
+  'odoo_create_model',
   'odoo_add_field_to_view',
   'odoo_create_records',
   'odoo_update_records',
@@ -2044,6 +2050,13 @@ const CHANGING_ODOO_TOOLS = [
 function describeOdooChange(toolName: string, output: Record<string, unknown>): string {
   if (toolName === 'odoo_create_field') {
     return `Created field ${String(output.field)} on ${String(output.model)} (id ${String(output.fieldId)}).`;
+  }
+  if (toolName === 'odoo_create_model') {
+    return (
+      `Created model ${String(output.model)} "${String(output.label)}" (id ${String(output.modelId)}) ` +
+      `with access rights and form/list views (view ids ${String(output.formViewId)}, ` +
+      `${String(output.listViewId)}).`
+    );
   }
   if (toolName === 'odoo_create_records') {
     const ids = Array.isArray(output.ids) ? output.ids.join(', ') : '';

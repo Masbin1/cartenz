@@ -398,6 +398,8 @@ const ODOO_ONLINE_PLANNING_INSTRUCTION = [
   '',
   'What you will be able to do when the plan is approved:',
   '- odoo_create_field: create a custom field on a model. Odoo prefixes it with "x_".',
+  '- odoo_create_model: create a whole new custom model named "x_...". It brings its',
+  '  own display field, access rights and a default form view, the way Studio does.',
   '- odoo_add_field_to_view: place an existing field on the form view, below another field.',
   '- odoo_list_models and odoo_list_fields: read schema.',
   '- odoo_search_records: read existing business records.',

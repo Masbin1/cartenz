@@ -267,6 +267,26 @@ export const ODOO_CREATE_FIELD_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+export const ODOO_CREATE_MODEL_SCHEMA = {
+  type: 'object',
+  properties: {
+    model: {
+      type: 'string',
+      description:
+        'Technical model name, starting with "x_" (Odoo requires it for a manual model). Lowercase letters, digits, underscores. e.g. "x_servis".',
+      pattern: '^x_[a-z0-9_]+(\\.[a-z0-9_]+)*$',
+      maxLength: 60,
+    },
+    label: {
+      type: 'string',
+      description: 'The human label shown in the UI, e.g. "Servis".',
+      maxLength: 200,
+    },
+  },
+  required: ['model', 'label'],
+  additionalProperties: false,
+} as const;
+
 export const ODOO_ADD_FIELD_TO_VIEW_SCHEMA = {
   type: 'object',
   properties: {

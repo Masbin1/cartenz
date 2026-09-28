@@ -387,6 +387,7 @@ const ODOO_ONLINE_INSTRUCTION = [
   '- Every change you make takes effect immediately on a running system. There is no',
   '  branch and no undo: create exactly what the plan describes and nothing else.',
   '- odoo_create_field takes the field name WITHOUT the "x_" prefix; Odoo adds it.',
+  '  odoo_create_model takes the model name WITH the "x_" prefix and a human label.',
   '  odoo_add_field_to_view takes the full name INCLUDING "x_", which the create',
   '  result gives you.',
   '- Read with odoo_list_fields before you create a custom field, so you do not',
