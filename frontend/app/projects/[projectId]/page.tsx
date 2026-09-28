@@ -25,8 +25,25 @@ import type {
   ProjectDetail,
   ProjectProvisioningInfo,
   ProjectRestartInfo,
+  RestoredInstanceInfo,
 } from '@/lib/types';
 import { RestoredInstancePanel } from '@/components/projects/restored-instance-panel';
+
+/**
+ * The shape `project.restoredInstance` falls back to when it is absent from
+ * the API response - an older backend build still running (predates
+ * ADR-067's field) or any other gap between frontend and backend deploys.
+ * Rendering as "no restored copy" here is what keeps a rolling deploy from
+ * crashing this page instead of just hiding one panel.
+ */
+const NO_RESTORED_INSTANCE: RestoredInstanceInfo = {
+  status: 'none',
+  instanceName: null,
+  port: null,
+  backupFile: null,
+  error: null,
+  restoredAt: null,
+};
 
 /**
  * The instance's provisioning state, in the words a person would use. Shown
@@ -264,10 +281,11 @@ export default function ProjectDetailPage() {
               />
             ) : null}
 
-            {project.link.isOdoosh || project.restoredInstance.status !== 'none' ? (
+            {project.link.isOdoosh ||
+            (project.restoredInstance && project.restoredInstance.status !== 'none') ? (
               <RestoredInstancePanel
                 projectId={project.id}
-                restored={project.restoredInstance}
+                restored={project.restoredInstance ?? NO_RESTORED_INSTANCE}
                 isAdmin={user.isAdmin}
                 onQueued={() => void load()}
               />
