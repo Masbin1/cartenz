@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DRAG_THRESHOLD_PX,
   INITIAL_CAMERA,
   MAX_ZOOM,
   MIN_ZOOM,
   cameraReducer,
   cameraTransform,
   DEFAULT_VIEWPORT,
+  isDragStart,
 } from './camera';
 
 const viewport = DEFAULT_VIEWPORT;
@@ -74,4 +76,20 @@ test('wheel zoom respects the same clamp', () => {
 
 test('the transform serialises what the renderer applies', () => {
   assert.equal(cameraTransform({ zoom: 1.25, x: 12, y: -8 }), 'translate(12.0 -8.0) scale(1.250)');
+});
+
+test('a press that never leaves the click threshold is not a drag', () => {
+  // Regression: the canvas used to call setPointerCapture on every
+  // pointerdown, which redirects the matching pointerup (and the click it
+  // would have produced) away from anything underneath — the zoom controls
+  // and the desk seats both live inside the same frame. The canvas must wait
+  // for real movement before it captures the pointer.
+  assert.equal(isDragStart(0, 0), false);
+  assert.equal(isDragStart(DRAG_THRESHOLD_PX - 1, DRAG_THRESHOLD_PX - 1), false);
+});
+
+test('movement past the threshold on either axis starts a drag', () => {
+  assert.equal(isDragStart(DRAG_THRESHOLD_PX, 0), true);
+  assert.equal(isDragStart(0, DRAG_THRESHOLD_PX), true);
+  assert.equal(isDragStart(-DRAG_THRESHOLD_PX - 5, 1), true);
 });

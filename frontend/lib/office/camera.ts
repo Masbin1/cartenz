@@ -19,6 +19,22 @@ export const MIN_ZOOM = 0.6;
 export const MAX_ZOOM = 2.2;
 export const ZOOM_STEP = 0.2;
 
+/**
+ * Pointer movement below this many pixels is still a click, not a pan.
+ *
+ * The canvas waits for this threshold before it captures the pointer. A press
+ * that never crosses it stays a plain click, so the zoom controls and the desk
+ * seats inside the frame keep receiving their events; capturing on pointerdown
+ * would redirect the matching pointerup away from them and the control would
+ * render but never respond.
+ */
+export const DRAG_THRESHOLD_PX = 4;
+
+/** True once a pointer has moved far enough on either axis to count as a drag. */
+export function isDragStart(dx: number, dy: number): boolean {
+  return Math.abs(dx) >= DRAG_THRESHOLD_PX || Math.abs(dy) >= DRAG_THRESHOLD_PX;
+}
+
 export const INITIAL_CAMERA: Camera = { zoom: 1, x: 0, y: 0 };
 
 function clampZoom(zoom: number): number {

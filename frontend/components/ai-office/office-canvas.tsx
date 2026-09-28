@@ -15,6 +15,7 @@ import {
   INITIAL_CAMERA,
   cameraReducer,
   cameraTransform,
+  isDragStart,
 } from '@/lib/office/camera';
 import { ROOM_LAYOUT, WORLD, deskLayout } from '@/lib/office/layout';
 import { RoomBlock } from './room-block';
@@ -57,7 +58,7 @@ export const OfficeCanvas = memo(function OfficeCanvas({
 }) {
   const [camera, setCamera] = useState(INITIAL_CAMERA);
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ x: number; y: number; id: number; active: boolean } | null>(null);
 
   const viewportOf = useCallback(() => {
     const box = frameRef.current?.getBoundingClientRect();
@@ -117,19 +118,32 @@ export const OfficeCanvas = memo(function OfficeCanvas({
       className="office-canvas relative overflow-hidden rounded-card border border-surface-border bg-surface-raised"
       onPointerDown={(event) => {
         if (event.button !== 0) return;
-        dragRef.current = { x: event.clientX, y: event.clientY };
-        (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+        // Defer setPointerCapture until the pointer actually moves (see
+        // onPointerMove). Capturing eagerly here would swallow the matching
+        // pointerup/click on any interactive child underneath — the zoom
+        // controls and the desk seats both live inside this frame — so a
+        // plain click would look like a drag and never reach them.
+        dragRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+          id: event.pointerId,
+          active: false,
+        };
       }}
       onPointerMove={(event) => {
         const drag = dragRef.current;
         if (!drag) return;
-        dispatch({
-          type: 'pan',
-          dx: event.clientX - drag.x,
-          dy: event.clientY - drag.y,
-          viewport: viewportOf(),
-        });
-        dragRef.current = { x: event.clientX, y: event.clientY };
+        const dx = event.clientX - drag.x;
+        const dy = event.clientY - drag.y;
+        if (!drag.active) {
+          // Only a real drag starts panning. Below the threshold the gesture
+          // stays a click, so the controls and the seats keep working.
+          if (!isDragStart(dx, dy)) return;
+          drag.active = true;
+          (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+        }
+        dispatch({ type: 'pan', dx, dy, viewport: viewportOf() });
+        dragRef.current = { x: event.clientX, y: event.clientY, id: drag.id, active: true };
       }}
       onPointerUp={() => {
         dragRef.current = null;
