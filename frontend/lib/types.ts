@@ -184,6 +184,8 @@ export interface ProjectDetail {
    * operator has built one. For a human to look at; the agent never touches it.
    */
   restoredInstance: RestoredInstanceInfo;
+  /** ADR-069; absent on a backend build that predates it. */
+  connectedInstance?: ConnectedInstanceInfo;
   /**
    * The linked instance this project points at (ADR-050, ADR-054), when the
    * operator connected an existing odoo.sh/on-premise project rather than
@@ -250,6 +252,23 @@ export interface RestoredInstanceInfo {
   backupFile: string | null;
   error: string | null;
   restoredAt: string | null;
+}
+
+/**
+ * A connected project's own provisioned instance (ADR-069): a NEW, empty
+ * Odoo instance on this host, reachable over HTTPS with the database manager
+ * open, for the project owner to restore their own backup into. Never where
+ * the agent works — that stays the project's own standard, always-empty
+ * database (ADR-050 §3), same rule as `RestoredInstanceInfo` above.
+ */
+export interface ConnectedInstanceInfo {
+  status: 'none' | 'pending' | 'ready' | 'failed';
+  instanceName: string | null;
+  port: number | null;
+  url: string | null;
+  error: string | null;
+  createdAt: string | null;
+  hasMasterPassword: boolean;
 }
 
 /**

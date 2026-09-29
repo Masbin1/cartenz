@@ -149,6 +149,14 @@ export const AUDIT_EVENTS = {
   PROJECT_RESTORED_INSTANCE_REQUESTED: 'project.restored_instance_requested',
   PROJECT_RESTORED_INSTANCE_CREATED: 'project.restored_instance_created',
   PROJECT_RESTORED_INSTANCE_FAILED: 'project.restored_instance_failed',
+  /**
+   * ADR-069: a connected project's own provisioned instance was requested /
+   * created / failed, and its master password revealed.
+   */
+  PROJECT_CONNECTED_INSTANCE_REQUESTED: 'project.connected_instance_requested',
+  PROJECT_CONNECTED_INSTANCE_CREATED: 'project.connected_instance_created',
+  PROJECT_CONNECTED_INSTANCE_FAILED: 'project.connected_instance_failed',
+  PROJECT_CONNECTED_INSTANCE_PASSWORD_REVEALED: 'project.connected_instance_password_revealed',
   PROJECT_BACKUP_FAILED: 'project.backup_failed',
 
   /**

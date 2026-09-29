@@ -183,6 +183,13 @@
       "when": 1789992000009,
       "tag": "0025_restored_instance",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1789992000010,
+      "tag": "0026_connected_instance",
+      "breakpoints": true
     }
   ]
 }

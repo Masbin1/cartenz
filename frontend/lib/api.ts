@@ -624,6 +624,30 @@ export const api = {
       ),
 
     /**
+     * A connected project's own instance (ADR-069). `connectedInstanceAvailability`
+     * reports whether this deployment can create one (provisioning and HTTPS
+     * both on); `createConnectedInstance` queues the creation. The project's own
+     * `connectedInstance` block is what a caller polls. `revealConnectedInstanceMasterPassword`
+     * is admin/owner only — a 403 means the viewer's role, not a client bug.
+     */
+    connectedInstanceAvailability: (projectId: string) =>
+      request<{ available: boolean; reason: string | null }>(
+        `/projects/${projectId}/connected-instance/availability`,
+      ),
+
+    createConnectedInstance: (projectId: string) =>
+      request<{ queued: boolean; instanceName: string; port: number }>(
+        `/projects/${projectId}/connected-instance`,
+        { method: 'POST' },
+      ),
+
+    revealConnectedInstanceMasterPassword: (projectId: string) =>
+      request<{ masterPassword: string }>(
+        `/projects/${projectId}/connected-instance/master-password/reveal`,
+        { method: 'POST' },
+      ),
+
+    /**
      * The ephemeral preview instance (ADR-052): a short-lived running Odoo built
      * from a task's retained draft, so a reviewer sees the real UI before
      * approving. `preview` reads the live one, `startPreview` builds it,

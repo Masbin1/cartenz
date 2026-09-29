@@ -14,15 +14,18 @@ import {
   PROJECT_PROVISIONING_QUEUE,
   PROJECT_RESTART_JOB,
   PROJECT_RESTORED_INSTANCE_JOB,
+  PROJECT_CONNECTED_INSTANCE_JOB,
 } from './core/redis/redis.constants';
 import type { AgentJobData } from './agent/orchestration/queue-agent-orchestrator';
 import { ProjectsService } from './modules/projects/projects.service';
 import type {
+  ConnectedInstanceJobData,
   ProjectRestartJobData,
   RestoredInstanceJobData,
   SelectiveProvisionJobData,
 } from './modules/projects/project-provisioning.queue';
 import { ProjectRestoreService } from './modules/projects/project-restore.service';
+import { ProjectConnectedInstanceService } from './modules/projects/project-connected-instance.service';
 
 /**
  * How often the worker reclaims workspaces whose task has settled but which a
@@ -69,6 +72,7 @@ async function bootstrap(): Promise<void> {
   const workflow = app.get(AgentWorkflow);
   const projects = app.get(ProjectsService);
   const restore = app.get(ProjectRestoreService);
+  const connectedInstance = app.get(ProjectConnectedInstanceService);
 
   const worker = new Worker<AgentJobData>(
     AGENT_TASK_QUEUE,
@@ -101,10 +105,20 @@ async function bootstrap(): Promise<void> {
    * run has not yet bound.
    */
   const provisioningWorker = new Worker<
-    SelectiveProvisionJobData | ProjectRestartJobData | RestoredInstanceJobData
+    | SelectiveProvisionJobData
+    | ProjectRestartJobData
+    | RestoredInstanceJobData
+    | ConnectedInstanceJobData
   >(
     PROJECT_PROVISIONING_QUEUE,
-    async (job: Job<SelectiveProvisionJobData | ProjectRestartJobData | RestoredInstanceJobData>) => {
+    async (
+      job: Job<
+        | SelectiveProvisionJobData
+        | ProjectRestartJobData
+        | RestoredInstanceJobData
+        | ConnectedInstanceJobData
+      >,
+    ) => {
       if (job.name === PROJECT_RESTART_JOB) {
         const data = job.data as ProjectRestartJobData;
         logger.log(`Restarting project ${data.technicalName} (${data.branch})`);
@@ -121,6 +135,17 @@ async function bootstrap(): Promise<void> {
         const data = job.data as RestoredInstanceJobData;
         logger.log(`Restoring instance ${data.instanceName} from ${data.backupFilename}`);
         await restore.complete(data);
+        return;
+      }
+
+      /**
+       * ADR-069. A connected project's own, empty instance: the same
+       * create_project chain plus HTTPS. Outcome written onto the project row.
+       */
+      if (job.name === PROJECT_CONNECTED_INSTANCE_JOB) {
+        const data = job.data as ConnectedInstanceJobData;
+        logger.log(`Creating connected instance ${data.instanceName} on port ${data.port}`);
+        await connectedInstance.complete(data);
         return;
       }
 

@@ -46,6 +46,13 @@ export const PROJECT_RESTART_JOB = 'restart-project';
 export const PROJECT_RESTORED_INSTANCE_JOB = 'restore-existing-instance';
 
 /**
+ * ADR-069: provisioning a connected project's own, empty Odoo instance (the
+ * same create_project/create_project_enterprise chain "Create with AI" runs).
+ * Same queue as the other three provisioning job kinds, for the same reason.
+ */
+export const PROJECT_CONNECTED_INSTANCE_JOB = 'create-connected-instance';
+
+/**
  * Pub/sub channel for a single task's event stream, in the form documented in
  * chapter 9: task:{task_id}:events.
  */

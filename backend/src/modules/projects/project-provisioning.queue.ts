@@ -6,6 +6,7 @@ import {
   PROJECT_PROVISIONING_QUEUE,
   PROJECT_RESTART_JOB,
   PROJECT_RESTORED_INSTANCE_JOB,
+  PROJECT_CONNECTED_INSTANCE_JOB,
 } from '../../core/redis/redis.constants';
 import type { OdooEdition, UserRegion } from '../../core/enums';
 
@@ -61,6 +62,25 @@ export interface RestoredInstanceJobData {
 }
 
 /**
+ * ADR-069 job payload: provision a NEW, empty Odoo instance for a connected
+ * project, reusing the create_project/create_project_enterprise chain.
+ * Identifiers plus the already-allocated port (carried, never re-allocated on
+ * the worker side — see `SelectiveProvisionJobData.port` for why).
+ */
+export interface ConnectedInstanceJobData {
+  readonly projectId: string;
+  readonly userId: string;
+  readonly instanceName: string;
+  readonly port: number;
+  readonly odooEdition: OdooEdition;
+  readonly odooVersion: string;
+  readonly region: UserRegion;
+  /** Checked out into addons/ after provisioning; null when none is connected. */
+  readonly repositoryUrl: string | null;
+  readonly branch: string | null;
+}
+
+/**
  * Owns the BullMQ queue a selective module install is handed to (ADR-056).
  *
  * A separate class rather than a `Queue` field on `ProjectProvisioningService`
@@ -88,6 +108,7 @@ export class ProjectProvisioningQueue implements OnApplicationShutdown {
   // instances even though there is only one queue in Redis.
   private readonly restartQueue: Queue<ProjectRestartJobData>;
   private readonly restoreQueue: Queue<RestoredInstanceJobData>;
+  private readonly connectedInstanceQueue: Queue<ConnectedInstanceJobData>;
 
   constructor(redis: RedisService) {
     /**
@@ -115,6 +136,10 @@ export class ProjectProvisioningQueue implements OnApplicationShutdown {
       defaultJobOptions,
     });
     this.restoreQueue = new Queue<RestoredInstanceJobData>(PROJECT_PROVISIONING_QUEUE, {
+      connection: redis.queueConnection,
+      defaultJobOptions,
+    });
+    this.connectedInstanceQueue = new Queue<ConnectedInstanceJobData>(PROJECT_PROVISIONING_QUEUE, {
       connection: redis.queueConnection,
       defaultJobOptions,
     });
@@ -203,9 +228,28 @@ export class ProjectProvisioningQueue implements OnApplicationShutdown {
     this.logger.log(`Queued restored instance "${data.instanceName}" from ${data.backupFilename}`);
   }
 
+  /**
+   * Queues a connected project's own instance (ADR-069). Same job-id
+   * discipline as a restore: a finished job is cleared first so a retry after
+   * a failure is actually re-run, not handed back the old job.
+   */
+  async enqueueConnectedInstance(data: ConnectedInstanceJobData): Promise<void> {
+    const jobId = `connected-instance-${data.instanceName}`;
+    const existing = await this.connectedInstanceQueue.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === 'completed' || state === 'failed') {
+        await existing.remove();
+      }
+    }
+    await this.connectedInstanceQueue.add(PROJECT_CONNECTED_INSTANCE_JOB, data, { jobId });
+    this.logger.log(`Queued connected instance "${data.instanceName}" on port ${data.port}`);
+  }
+
   async onApplicationShutdown(): Promise<void> {
     await this.queue.close();
     await this.restartQueue.close();
     await this.restoreQueue.close();
+    await this.connectedInstanceQueue.close();
   }
 }

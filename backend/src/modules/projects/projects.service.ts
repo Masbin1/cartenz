@@ -2745,6 +2745,13 @@ export class ProjectsService {
     restoredBackupFile?: string | null;
     restoredError?: string | null;
     restoredAt?: Date | null;
+    connectedInstanceStatus?: string;
+    connectedInstanceName?: string | null;
+    connectedInstancePort?: number | null;
+    connectedInstanceUrl?: string | null;
+    connectedInstanceMasterPasswordRef?: string | null;
+    connectedInstanceError?: string | null;
+    connectedInstanceCreatedAt?: Date | null;
     /** ADR-050/ADR-054: the linked instance this connect points at. */
     projectUrl?: string | null;
     projectDatabase?: string | null;
@@ -2814,6 +2821,21 @@ export class ProjectsService {
         backupFile: project.restoredBackupFile ?? null,
         error: project.restoredError ?? null,
         restoredAt: project.restoredAt ?? null,
+      },
+      /**
+       * A connected project's own provisioned instance (ADR-069): empty,
+       * HTTPS, database manager open so the project owner restores their own
+       * backup into it. `hasMasterPassword` is a boolean only, same rule as
+       * `provisioning` above.
+       */
+      connectedInstance: {
+        status: project.connectedInstanceStatus ?? 'none',
+        instanceName: project.connectedInstanceName ?? null,
+        port: project.connectedInstancePort ?? null,
+        url: project.connectedInstanceUrl ?? null,
+        error: project.connectedInstanceError ?? null,
+        createdAt: project.connectedInstanceCreatedAt ?? null,
+        hasMasterPassword: Boolean(project.connectedInstanceMasterPasswordRef),
       },
       /**
        * The linked instance this project points at (ADR-050, ADR-054), when the

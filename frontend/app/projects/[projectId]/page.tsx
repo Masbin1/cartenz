@@ -26,8 +26,10 @@ import type {
   ProjectProvisioningInfo,
   ProjectRestartInfo,
   RestoredInstanceInfo,
+  ConnectedInstanceInfo,
 } from '@/lib/types';
 import { RestoredInstancePanel } from '@/components/projects/restored-instance-panel';
+import { ConnectedInstancePanel } from '@/components/projects/connected-instance-panel';
 
 /**
  * The shape `project.restoredInstance` falls back to when it is absent from
@@ -43,6 +45,17 @@ const NO_RESTORED_INSTANCE: RestoredInstanceInfo = {
   backupFile: null,
   error: null,
   restoredAt: null,
+};
+
+/** ADR-069's counterpart to NO_RESTORED_INSTANCE, for the same rolling-deploy reason. */
+const NO_CONNECTED_INSTANCE: ConnectedInstanceInfo = {
+  status: 'none',
+  instanceName: null,
+  port: null,
+  url: null,
+  error: null,
+  createdAt: null,
+  hasMasterPassword: false,
 };
 
 /**
@@ -127,8 +140,11 @@ export default function ProjectDetailPage() {
    * never changes again on its own.
    */
   // ADR-067: a queued restored copy changes on its own in the same way.
+  // ADR-069: so does a connected project's own instance being created.
   const watching =
-    project?.provisioning.status === 'pending' || project?.restoredInstance?.status === 'pending';
+    project?.provisioning.status === 'pending' ||
+    project?.restoredInstance?.status === 'pending' ||
+    project?.connectedInstance?.status === 'pending';
 
   useEffect(() => {
     if (!watching) return;
@@ -290,6 +306,22 @@ export default function ProjectDetailPage() {
               stays in the condition so an older row still shows it, and the
               restored row keeps it visible on any type once a copy exists.
             */}
+            {/*
+              ADR-069: a connected odoo.sh project's own, empty instance on
+              HTTPS, which the owner fills through /web/database/manager.
+              Offered on every odoo_sh project, and kept visible for any
+              project that already has one.
+            */}
+            {project.projectType === 'odoo_sh' ||
+            (project.connectedInstance && project.connectedInstance.status !== 'none') ? (
+              <ConnectedInstancePanel
+                projectId={project.id}
+                instance={project.connectedInstance ?? NO_CONNECTED_INSTANCE}
+                isAdmin={user.isAdmin}
+                onQueued={() => void load()}
+              />
+            ) : null}
+
             {project.link.isOdoosh ||
             project.projectType === 'odoo_sh' ||
             (project.restoredInstance && project.restoredInstance.status !== 'none') ? (

@@ -358,6 +358,31 @@ export const projects = pgTable(
     restoredBackupFile: text('restored_backup_file'),
     restoredError: text('restored_error'),
     restoredAt: timestamp('restored_at', { withTimezone: true }),
+    /**
+     * A provisioned instance for a connected project (ADR-069): a NEW, empty
+     * Odoo instance the platform stands up for a connected `odoo_sh` project,
+     * the same chain `create_project`/`create_project_enterprise` run for
+     * "Create with AI", so the project owner can reach `/web/database/manager`
+     * over HTTPS and restore their own database into it.
+     *
+     * Distinct from `restored*` above: that instance is preloaded from an
+     * odoo.sh backup and stays locked to localhost; this one starts empty and
+     * is reachable at `connectedInstanceUrl`. A project may have both.
+     */
+    connectedInstanceStatus: text('connected_instance_status', {
+      enum: ['none', 'pending', 'ready', 'failed'],
+    })
+      .notNull()
+      .default('none'),
+    /** The instance's name: its directory, database and `odoo-<name>` unit. */
+    connectedInstanceName: text('connected_instance_name'),
+    connectedInstancePort: integer('connected_instance_port'),
+    /** The public URL, always `https://` once issuance succeeds (ADR-069). */
+    connectedInstanceUrl: text('connected_instance_url'),
+    /** Reference into secret_records for the generated Odoo master password. */
+    connectedInstanceMasterPasswordRef: text('connected_instance_master_password_ref'),
+    connectedInstanceError: text('connected_instance_error'),
+    connectedInstanceCreatedAt: timestamp('connected_instance_created_at', { withTimezone: true }),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
