@@ -1,0 +1,11 @@
+-- Marks that a connected instance's directory, systemd unit, database and
+-- Nginx site were successfully built by create_project(_enterprise) + the
+-- addons grant (ADR-069). A retry after a `failed` row checks this: those
+-- scripts refuse a name/port/database that already exists, so a retry that
+-- reran them against an instance the FIRST attempt already built would fail
+-- immediately instead of getting the second chance at HTTPS it needs.
+--
+-- False for a row that failed before the grant step completed (nothing was
+-- built, or the build itself failed) — that retry still needs the full chain
+-- and a fresh name/port, exactly as before this migration.
+ALTER TABLE "projects" ADD COLUMN "connected_instance_host_ready" boolean NOT NULL DEFAULT false;

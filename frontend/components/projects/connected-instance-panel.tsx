@@ -56,15 +56,25 @@ export function ConnectedInstancePanel({
     void load();
   }, [load]);
 
+  /**
+   * Also the retry. The platform decides how far to resume: an attempt that
+   * already built the instance on the host skips the create/grant steps and
+   * only re-runs HTTPS issuance, because those scripts refuse a name that
+   * already exists — a fresh create would fail on its first step.
+   */
   const create = async () => {
+    const retry = instance.status === 'failed';
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
       const result = await api.projects.createConnectedInstance(projectId);
       setMessage(
-        `Creating "${result.instanceName}". Cloning the database and issuing the HTTPS ` +
-          'certificate takes a few minutes; this page updates on its own.',
+        retry
+          ? `Retrying "${result.instanceName}". The instance itself is already on the server; ` +
+              'the HTTPS certificate is issued again, which takes a minute or two.'
+          : `Creating "${result.instanceName}". Cloning the database and issuing the HTTPS ` +
+              'certificate takes a few minutes; this page updates on its own.',
       );
       onQueued();
     } catch (caught) {
@@ -185,11 +195,27 @@ export function ConnectedInstancePanel({
         ) : instance.status === 'failed' ? (
           <div className="space-y-2">
             <Alert tone="error">{instance.error ?? 'The instance could not be created.'}</Alert>
-            <p className="text-meta text-content-subtle">
-              The host may hold a partly built instance
-              {instance.instanceName ? ` (${instance.instanceName})` : ''}; an operator removes it
-              before a retry can reuse the name.
-            </p>
+            {isAdmin ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void create()}
+                  disabled={busy}
+                  className="btn-secondary btn-sm w-full sm:w-auto"
+                >
+                  {busy ? <Spinner className="h-3.5 w-3.5" /> : null}
+                  {busy ? 'Retrying' : 'Retry'}
+                </button>
+                <p className="text-meta text-content-subtle">
+                  Picks up where the last attempt stopped: an instance already built on the server
+                  is kept and only the remaining steps run again.
+                </p>
+              </>
+            ) : (
+              <p className="text-meta text-content-subtle">
+                An administrator can retry this.
+              </p>
+            )}
           </div>
         ) : available === null ? (
           <SkeletonText lines={2} />

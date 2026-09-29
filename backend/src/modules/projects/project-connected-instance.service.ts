@@ -138,6 +138,7 @@ export class ProjectConnectedInstanceService {
         connectedInstanceStatus: projects.connectedInstanceStatus,
         connectedInstanceName: projects.connectedInstanceName,
         connectedInstancePort: projects.connectedInstancePort,
+        connectedInstanceHostReady: projects.connectedInstanceHostReady,
       })
       .from(projects)
       .where(eq(projects.id, projectId))
@@ -169,25 +170,30 @@ export class ProjectConnectedInstanceService {
     }
 
     /**
-     * A `failed` row whose instance directory is still on the host cannot be
-     * retried under the same name: `create_project` refuses a path that
-     * already exists, so the retry would fail on the first step and leave the
-     * operator with nothing to click. Reuse the name the failed attempt
-     * recorded instead of deriving a fresh one, so the retry lands on the
-     * same directory, unit and Nginx site the script can now complete.
+     * A failed attempt that got as far as building the instance on the host
+     * must be retried against THAT instance: `create_project` refuses a name
+     * (and a port, and a database) that already exists, so deriving a fresh
+     * one would abandon a working directory, unit and Nginx site and take a
+     * second port's worth of memory. The recorded name and port are reused and
+     * the worker resumes at the pull/HTTPS steps — see `resume` on the job.
+     *
+     * A failure before that point built nothing, so it keeps the original
+     * behaviour: a fresh name and the next free port.
      */
+    const resume =
+      project.connectedInstanceStatus === 'failed' && project.connectedInstanceHostReady;
+
     const instanceName =
-      project.connectedInstanceStatus === 'failed' && project.connectedInstanceName
+      resume && project.connectedInstanceName
         ? project.connectedInstanceName
         : deriveInstanceName(project.name, projectId);
 
     /**
-     * A failure after the create step also leaves the recorded port occupied
-     * by the half-built instance's own systemd unit, so the allocator would
-     * step over the one port the retry needs. Reuse the recorded port then.
+     * A resume reuses the recorded port: the half-built instance's own systemd
+     * unit holds it, and the allocator would step over it.
      */
     const port =
-      project.connectedInstanceStatus === 'failed' && project.connectedInstancePort
+      resume && project.connectedInstancePort
         ? project.connectedInstancePort
         : await this.allocatePort();
 
@@ -220,6 +226,9 @@ export class ProjectConnectedInstanceService {
         connectedInstanceUrl: null,
         connectedInstanceError: null,
         connectedInstanceCreatedAt: null,
+        // A fresh attempt builds from scratch; a resume keeps the flag its own
+        // retry depends on.
+        ...(resume ? {} : { connectedInstanceHostReady: false }),
       })
       .where(eq(projects.id, projectId));
 
@@ -245,6 +254,7 @@ export class ProjectConnectedInstanceService {
       region: (project.region ?? 'indonesia') as UserRegion,
       repositoryUrl: repositoryUrl ?? null,
       branch: repositoryUrl ? (project.defaultBranch ?? 'main') : null,
+      resume,
     });
 
     this.logger.log(
@@ -280,15 +290,41 @@ export class ProjectConnectedInstanceService {
       data.odooVersion,
       data.region,
     ];
-    const created = await this.runStep('create', args);
-    if (!created.ok) return void (await this.markFailed(data.projectId, created.error));
+    /**
+     * A resume skips create and grant: the first attempt already ran them,
+     * and both refuse an existing project, service, Nginx site or database.
+     * The master password is not lost by skipping them: the first attempt
+     * sealed it the moment the instance existed.
+     */
+    if (!data.resume) {
+      const created = await this.runStep('create', args);
+      if (!created.ok) return void (await this.markFailed(data.projectId, created.error));
 
-    const granted = await this.runStep('grant', [
-      '-n',
-      this.config.provisioning!.grantScript,
-      data.instanceName,
-    ]);
-    if (!granted.ok) return void (await this.markFailed(data.projectId, granted.error));
+      const granted = await this.runStep('grant', [
+        '-n',
+        this.config.provisioning!.grantScript,
+        data.instanceName,
+      ]);
+      if (!granted.ok) return void (await this.markFailed(data.projectId, granted.error));
+
+      // Sealed the moment the instance exists, before anything that can fail
+      // later: HTTPS issuance (the common failure) leaves the row failed and
+      // the operator retries, and the retry must still be able to reveal the
+      // password the first attempt generated.
+      const masterPasswordRef = await this.sealMasterPassword(
+        data.projectId,
+        data.instanceName,
+        created.stdout,
+      );
+
+      await this.database.db
+        .update(projects)
+        .set({
+          connectedInstanceHostReady: true,
+          connectedInstanceMasterPasswordRef: masterPasswordRef,
+        })
+        .where(eq(projects.id, data.projectId));
+    }
 
     /**
      * The repository checkout is best-effort, deliberately: an instance that
@@ -344,32 +380,6 @@ export class ProjectConnectedInstanceService {
 
     const url = `https://${domain}`;
 
-    // The master password is printed by create_project and sealed here, never
-    // logged and never returned beyond the reveal endpoint (ADR-040's shape).
-    let masterPasswordRef: string | null = null;
-    const masterPassword = parseMasterPassword(created.stdout);
-    if (masterPassword) {
-      try {
-        const sealed = await this.secrets.write({
-          projectId: data.projectId,
-          purpose: 'odoo-master-password',
-          value: masterPassword,
-        });
-        masterPasswordRef = sealed.ref;
-      } catch (error) {
-        this.logger.error(
-          `Could not seal the master password for "${data.instanceName}": ` +
-            `${(error as Error).message}. Recover it from ` +
-            `${this.config.provisioning!.projectsDir}/${data.instanceName}/config/odoo.conf`,
-        );
-      }
-    } else {
-      this.logger.warn(
-        `create_project printed no master password for "${data.instanceName}"; recover it from ` +
-          `${this.config.provisioning!.projectsDir}/${data.instanceName}/config/odoo.conf`,
-      );
-    }
-
     const durationMs = Date.now() - startedAt;
 
     await this.database.db
@@ -380,7 +390,6 @@ export class ProjectConnectedInstanceService {
         connectedInstanceError: repositoryError
           ? `The instance is running, but its repository was not checked out: ${repositoryError}`
           : null,
-        connectedInstanceMasterPasswordRef: masterPasswordRef,
         connectedInstanceCreatedAt: new Date(),
       })
       .where(eq(projects.id, data.projectId));
@@ -465,6 +474,40 @@ export class ProjectConnectedInstanceService {
         ok: false,
         error: `The ${step} step failed: ${(error as Error).message}`,
       };
+    }
+  }
+
+  /**
+   * Seals the generated master password and returns the vault reference.
+   * Never logs the value; the portal reads it only through the reveal
+   * endpoint (ADR-040's shape).
+   */
+  private async sealMasterPassword(
+    projectId: string,
+    instanceName: string,
+    createOutput: string,
+  ): Promise<string | null> {
+    const recover = `${this.config.provisioning!.projectsDir}/${instanceName}/config/odoo.conf`;
+    const masterPassword = parseMasterPassword(createOutput);
+    if (!masterPassword) {
+      this.logger.warn(
+        `create_project printed no master password for "${instanceName}"; recover it from ${recover}`,
+      );
+      return null;
+    }
+    try {
+      const sealed = await this.secrets.write({
+        projectId,
+        purpose: 'odoo-master-password',
+        value: masterPassword,
+      });
+      return sealed.ref;
+    } catch (error) {
+      this.logger.error(
+        `Could not seal the master password for "${instanceName}": ` +
+          `${(error as Error).message}. Recover it from ${recover}`,
+      );
+      return null;
     }
   }
 

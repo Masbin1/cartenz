@@ -383,6 +383,12 @@ export const projects = pgTable(
     connectedInstanceMasterPasswordRef: text('connected_instance_master_password_ref'),
     connectedInstanceError: text('connected_instance_error'),
     connectedInstanceCreatedAt: timestamp('connected_instance_created_at', { withTimezone: true }),
+    /**
+     * True once create_project + the addons grant built this instance on the
+     * host. A retry after a failure past that point resumes at the pull/HTTPS
+     * steps instead of re-running create, which refuses an existing name.
+     */
+    connectedInstanceHostReady: boolean('connected_instance_host_ready').notNull().default(false),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),

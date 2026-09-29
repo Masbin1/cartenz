@@ -78,6 +78,13 @@ export interface ConnectedInstanceJobData {
   /** Checked out into addons/ after provisioning; null when none is connected. */
   readonly repositoryUrl: string | null;
   readonly branch: string | null;
+  /**
+   * True on a retry whose first attempt already built the instance on the host
+   * (`connected_instance_host_ready`): the create and grant steps are skipped,
+   * since create_project refuses a name that already exists. Optional so a job
+   * queued by the previous build still deserialises as a full run.
+   */
+  readonly resume?: boolean;
 }
 
 /**

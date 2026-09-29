@@ -66,6 +66,22 @@ when one is connected.
   ADR-056/ADR-057/ADR-067 already share, job name `create-connected-instance`
   (`PROJECT_CONNECTED_INSTANCE_JOB`), job id `connected-instance-<name>` with
   the same finished-state-clears-before-retry rule the other three jobs use.
+- **Retry resumes, it does not rebuild** (migration
+  `0027_connected_instance_host_ready.sql`). `create_project` refuses a name,
+  service, Nginx site, port or database that already exists, so a retry that
+  re-ran it after a failure at a later step (HTTPS issuance is the common one)
+  could never succeed. `connected_instance_host_ready` turns true once create
+  and the addons grant complete; a `failed` row with it set re-queues with
+  `resume: true`, the same name and port, and the worker skips straight to
+  pull + HTTPS. A failure before that point built nothing and retries from a
+  fresh name. The master password is sealed immediately after create, not at
+  the end of the chain, so a later failure cannot lose it.
+- **Host prerequisite: certbot's write paths.** `cartenz-api` and
+  `cartenz-worker` run under `ProtectSystem=strict`, which a root-run `sudo`
+  child inherits. `/etc/letsencrypt`, `/var/lib/letsencrypt` and
+  `/var/log/letsencrypt` are granted through the drop-ins in
+  `infrastructure/systemd/*.service.d/50-letsencrypt-write.conf`; without
+  them issuance fails with `[Errno 30] Read-only file system`.
 - **Backend.** `ProjectConnectedInstanceService` (admin-gated like a restore),
   `POST /projects/:id/connected-instance` records `pending` and enqueues;
   `GET` is folded into the existing project response (`connectedInstance`
