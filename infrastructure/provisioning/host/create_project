@@ -494,7 +494,13 @@ db_user = ${POSTGRES_USER}
 db_name = ${DB_NAME}
 dbfilter = ^${DB_NAME}\$
 
-list_db = False
+; list_db stays True: dbfilter above already pins the manager to this
+; project's own database, so opening it does not expose other instances.
+; Kept True deliberately so the operator can reach /web/database/manager
+; to restore/duplicate/backup this project's database (development hosts
+; only — see restore-existing-instance.sh for the customer-data exception,
+; which stays list_db = False).
+list_db = True
 
 ; ==========================================================
 ; Addons
