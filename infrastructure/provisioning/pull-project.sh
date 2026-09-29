@@ -129,7 +129,13 @@ fi
 CREDENTIAL=""
 if [[ ! -t 0 ]]; then
     CREDENTIAL="$(cat || true)"
-    CREDENTIAL="${CREDENTIAL%%$'\n'*}"
+    # The platform's vault holds an SSH credential as the private key's own
+    # PEM text (multi-line), not a path. Truncating to the first line would
+    # leave only "-----BEGIN ... PRIVATE KEY-----", so keep a key block whole
+    # and cut everything else (token, key path) to its first line as before.
+    if [[ "$CREDENTIAL" != -----BEGIN* ]]; then
+        CREDENTIAL="${CREDENTIAL%%$'\n'*}"
+    fi
 fi
 
 SECRET_DIR=""
@@ -187,8 +193,22 @@ ASKPASS
         GIT_ENV+=(GIT_TERMINAL_PROMPT=0)
     fi
 else
-    # scp-style: the credential is the path to a private key.
+    # scp-style: the credential is either the private key itself (what the
+    # platform's vault stores) or the path to one (operator use by hand).
     GIT_ENV+=(GIT_TERMINAL_PROMPT=0)
+    if [[ "$CREDENTIAL" == -----BEGIN* ]]; then
+        # Written under /tmp, not /run: /run is noexec here and, more to the
+        # point, 0700 + chown to the odoo user is what keeps the key private.
+        # Removed by the EXIT trap above.
+        SECRET_DIR="$(mktemp -d /tmp/pull-project-XXXXXX)"
+        chmod 0700 "$SECRET_DIR"
+        chown "$ODOO_USER" "$SECRET_DIR"
+        KEY_FILE="${SECRET_DIR}/id_key"
+        printf '%s\n' "$CREDENTIAL" > "$KEY_FILE"
+        chmod 0600 "$KEY_FILE"
+        chown "$ODOO_USER" "$KEY_FILE"
+        CREDENTIAL="$KEY_FILE"
+    fi
     if [[ -n "$CREDENTIAL" ]]; then
         if [[ ! -f "$CREDENTIAL" ]]; then
             echo "ERROR: SSH key not found: ${CREDENTIAL}" >&2

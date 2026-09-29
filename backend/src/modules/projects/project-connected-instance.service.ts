@@ -5,32 +5,25 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-} from "@nestjs/common";
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
-import { createConnection } from "node:net";
-import { APP_CONFIG } from "../../core/config/config.module";
-import type { AppConfig } from "../../core/config/configuration";
-import { DatabaseService } from "../../core/database/database.service";
-import { projectConnections, projects } from "../../core/database/schema";
-import { CommandRunner } from "../../core/process/command-runner.service";
-import { AuditService } from "../../core/audit/audit.service";
-import { AUDIT_EVENTS } from "../../core/audit/audit-events";
-import {
-  SECRETS_PROVIDER,
-  type SecretsProvider,
-} from "../../core/secrets/secrets.provider";
-import {
-  GIT_CONNECTION_TYPES,
-  type OdooEdition,
-  type UserRegion,
-} from "../../core/enums";
-import type { AuthenticatedUser } from "../../core/authz/authenticated-user";
-import { AuthorizationService } from "../../core/authz/authorization.service";
-import { effectiveRepositoryUrl } from "./repository-url";
+} from '@nestjs/common';
+import { and, eq, inArray, isNotNull } from 'drizzle-orm';
+import { createConnection } from 'node:net';
+import { APP_CONFIG } from '../../core/config/config.module';
+import type { AppConfig } from '../../core/config/configuration';
+import { DatabaseService } from '../../core/database/database.service';
+import { projectConnections, projects } from '../../core/database/schema';
+import { CommandRunner } from '../../core/process/command-runner.service';
+import { AuditService } from '../../core/audit/audit.service';
+import { AUDIT_EVENTS } from '../../core/audit/audit-events';
+import { SECRETS_PROVIDER, type SecretsProvider } from '../../core/secrets/secrets.provider';
+import { GIT_CONNECTION_TYPES, type OdooEdition, type UserRegion } from '../../core/enums';
+import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
+import { AuthorizationService } from '../../core/authz/authorization.service';
+import { effectiveRepositoryUrl } from './repository-url';
 import {
   ProjectProvisioningQueue,
   type ConnectedInstanceJobData,
-} from "./project-provisioning.queue";
+} from './project-provisioning.queue';
 
 export interface ConnectedInstanceAvailability {
   readonly available: boolean;
@@ -100,12 +93,12 @@ export class ProjectConnectedInstanceService {
   availability(): ConnectedInstanceAvailability {
     if (this.available) return { available: true, reason: null };
     const reason = !this.config.provisioning?.enabled
-      ? "Provisioning is not enabled on this deployment (PROJECT_PROVISIONING_ENABLED is false)."
+      ? 'Provisioning is not enabled on this deployment (PROJECT_PROVISIONING_ENABLED is false).'
       : !this.config.provisioning.baseDomain
-        ? "No base domain is configured on this deployment (PROJECT_BASE_DOMAIN is empty), and " +
-          "this feature creates an instance on a domain it can issue HTTPS for."
-        : "HTTPS issuance is not enabled on this deployment (PROJECT_HTTPS_ENABLED is false or " +
-          "PROJECT_HTTPS_EMAIL is empty), and this feature requires an https:// instance.";
+        ? 'No base domain is configured on this deployment (PROJECT_BASE_DOMAIN is empty), and ' +
+          'this feature creates an instance on a domain it can issue HTTPS for.'
+        : 'HTTPS issuance is not enabled on this deployment (PROJECT_HTTPS_ENABLED is false or ' +
+          'PROJECT_HTTPS_EMAIL is empty), and this feature requires an https:// instance.';
     return { available: false, reason };
   }
 
@@ -130,9 +123,7 @@ export class ProjectConnectedInstanceService {
     });
 
     if (!this.available) {
-      throw new BadRequestException(
-        this.availability().reason ?? "This feature is not enabled.",
-      );
+      throw new BadRequestException(this.availability().reason ?? 'This feature is not enabled.');
     }
 
     const [project] = await this.database.db
@@ -145,48 +136,68 @@ export class ProjectConnectedInstanceService {
         defaultBranch: projects.defaultBranch,
         repositoryUrl: projects.repositoryUrl,
         connectedInstanceStatus: projects.connectedInstanceStatus,
+        connectedInstanceName: projects.connectedInstanceName,
+        connectedInstancePort: projects.connectedInstancePort,
       })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
 
-    if (!project) throw new NotFoundException("Project not found.");
+    if (!project) throw new NotFoundException('Project not found.');
 
-    if (project.projectType !== "odoo_sh") {
+    if (project.projectType !== 'odoo_sh') {
       throw new BadRequestException(
-        "Only a connected odoo.sh project can have its own instance. An ai_project is " +
-          "provisioned when it is created, and an odoo_online project keeps its own instance.",
+        'Only a connected odoo.sh project can have its own instance. An ai_project is ' +
+          'provisioned when it is created, and an odoo_online project keeps its own instance.',
       );
     }
 
     if (!project.odooVersion) {
       throw new BadRequestException(
-        "This project has no Odoo version recorded, so no standard database can be selected " +
-          "for its instance. Set the version in project settings first.",
+        'This project has no Odoo version recorded, so no standard database can be selected ' +
+          'for its instance. Set the version in project settings first.',
       );
     }
 
-    if (project.connectedInstanceStatus === "pending") {
-      throw new ConflictException(
-        "This project’s instance is already being created.",
-      );
+    if (project.connectedInstanceStatus === 'pending') {
+      throw new ConflictException('This project’s instance is already being created.');
     }
-    if (project.connectedInstanceStatus === "ready") {
+    if (project.connectedInstanceStatus === 'ready') {
       throw new ConflictException(
-        "This project already has its own instance. Remove it on the host before creating another.",
+        'This project already has its own instance. Remove it on the host before creating another.',
       );
     }
 
-    const port = await this.allocatePort();
+    /**
+     * A `failed` row whose instance directory is still on the host cannot be
+     * retried under the same name: `create_project` refuses a path that
+     * already exists, so the retry would fail on the first step and leave the
+     * operator with nothing to click. Reuse the name the failed attempt
+     * recorded instead of deriving a fresh one, so the retry lands on the
+     * same directory, unit and Nginx site the script can now complete.
+     */
+    const instanceName =
+      project.connectedInstanceStatus === 'failed' && project.connectedInstanceName
+        ? project.connectedInstanceName
+        : deriveInstanceName(project.name, projectId);
+
+    /**
+     * A failure after the create step also leaves the recorded port occupied
+     * by the half-built instance's own systemd unit, so the allocator would
+     * step over the one port the retry needs. Reuse the recorded port then.
+     */
+    const port =
+      project.connectedInstanceStatus === 'failed' && project.connectedInstancePort
+        ? project.connectedInstancePort
+        : await this.allocatePort();
+
     if (port === null) {
       throw new ConflictException(
-        "No free port was found in the configured range " +
+        'No free port was found in the configured range ' +
           `${this.config.provisioning!.portRangeStart}-${this.config.provisioning!.portRangeEnd}. ` +
-          "Widen PROJECT_PORT_RANGE_START/END, or free a port.",
+          'Widen PROJECT_PORT_RANGE_START/END, or free a port.',
       );
     }
-
-    const instanceName = deriveInstanceName(project.name, projectId);
 
     // Same selection a pull or a restart makes: the oldest git-capable
     // connection. Absent, the instance is provisioned without the customer's
@@ -198,15 +209,12 @@ export class ProjectConnectedInstanceService {
       })
       .from(projectConnections)
       .where(eq(projectConnections.projectId, projectId));
-    const repositoryUrl = effectiveRepositoryUrl(
-      project.repositoryUrl,
-      connections,
-    );
+    const repositoryUrl = effectiveRepositoryUrl(project.repositoryUrl, connections);
 
     await this.database.db
       .update(projects)
       .set({
-        connectedInstanceStatus: "pending",
+        connectedInstanceStatus: 'pending',
         connectedInstanceName: instanceName,
         connectedInstancePort: port,
         connectedInstanceUrl: null,
@@ -232,11 +240,11 @@ export class ProjectConnectedInstanceService {
       userId: user.userId,
       instanceName,
       port,
-      odooEdition: (project.odooEdition ?? "community") as OdooEdition,
+      odooEdition: (project.odooEdition ?? 'community') as OdooEdition,
       odooVersion: project.odooVersion,
-      region: (project.region ?? "indonesia") as UserRegion,
+      region: (project.region ?? 'indonesia') as UserRegion,
       repositoryUrl: repositoryUrl ?? null,
-      branch: repositoryUrl ? (project.defaultBranch ?? "main") : null,
+      branch: repositoryUrl ? (project.defaultBranch ?? 'main') : null,
     });
 
     this.logger.log(
@@ -256,7 +264,7 @@ export class ProjectConnectedInstanceService {
     const startedAt = Date.now();
 
     const script =
-      data.odooEdition === "enterprise"
+      data.odooEdition === 'enterprise'
         ? this.config.provisioning!.enterpriseScript
         : this.config.provisioning!.communityScript;
 
@@ -265,24 +273,22 @@ export class ProjectConnectedInstanceService {
     );
 
     const args = [
-      "-n",
+      '-n',
       script,
       data.instanceName,
       String(data.port),
       data.odooVersion,
       data.region,
     ];
-    const created = await this.runStep("create", args);
-    if (!created.ok)
-      return void (await this.markFailed(data.projectId, created.error));
+    const created = await this.runStep('create', args);
+    if (!created.ok) return void (await this.markFailed(data.projectId, created.error));
 
-    const granted = await this.runStep("grant", [
-      "-n",
+    const granted = await this.runStep('grant', [
+      '-n',
       this.config.provisioning!.grantScript,
       data.instanceName,
     ]);
-    if (!granted.ok)
-      return void (await this.markFailed(data.projectId, granted.error));
+    if (!granted.ok) return void (await this.markFailed(data.projectId, granted.error));
 
     /**
      * The repository checkout is best-effort, deliberately: an instance that
@@ -295,13 +301,13 @@ export class ProjectConnectedInstanceService {
     if (data.repositoryUrl && this.config.provisioning!.pullScript) {
       const credential = await this.gitCredential(data.projectId);
       const pulled = await this.runStep(
-        "pull",
+        'pull',
         [
-          "-n",
+          '-n',
           this.config.provisioning!.pullScript,
           data.instanceName,
           data.repositoryUrl,
-          data.branch ?? "main",
+          data.branch ?? 'main',
         ],
         credential,
       );
@@ -313,7 +319,7 @@ export class ProjectConnectedInstanceService {
       }
     } else if (data.repositoryUrl) {
       repositoryError =
-        "No project-pull script is configured on this deployment (PROJECT_PULL_SCRIPT).";
+        'No project-pull script is configured on this deployment (PROJECT_PULL_SCRIPT).';
       this.logger.warn(
         `Instance "${data.instanceName}" was created without pulling its repository: ${repositoryError}`,
       );
@@ -327,15 +333,14 @@ export class ProjectConnectedInstanceService {
      * enough to allow.
      */
     const domain = `${data.instanceName}.${this.config.provisioning!.baseDomain}`;
-    const https = await this.runStep("https", [
-      "-n",
+    const https = await this.runStep('https', [
+      '-n',
       this.config.https.script,
       data.instanceName,
       domain,
       this.config.https!.email!,
     ]);
-    if (!https.ok)
-      return void (await this.markFailed(data.projectId, https.error));
+    if (!https.ok) return void (await this.markFailed(data.projectId, https.error));
 
     const url = `https://${domain}`;
 
@@ -347,7 +352,7 @@ export class ProjectConnectedInstanceService {
       try {
         const sealed = await this.secrets.write({
           projectId: data.projectId,
-          purpose: "odoo-master-password",
+          purpose: 'odoo-master-password',
           value: masterPassword,
         });
         masterPasswordRef = sealed.ref;
@@ -370,7 +375,7 @@ export class ProjectConnectedInstanceService {
     await this.database.db
       .update(projects)
       .set({
-        connectedInstanceStatus: "ready",
+        connectedInstanceStatus: 'ready',
         connectedInstanceUrl: url,
         connectedInstanceError: repositoryError
           ? `The instance is running, but its repository was not checked out: ${repositoryError}`
@@ -415,11 +420,11 @@ export class ProjectConnectedInstanceService {
       .where(eq(projects.id, projectId))
       .limit(1);
 
-    if (!project) throw new NotFoundException("Project not found.");
+    if (!project) throw new NotFoundException('Project not found.');
     if (!project.ref) {
       throw new NotFoundException(
-        "No master password is held for this project’s own instance. It may not have been " +
-          "created yet, or it was created before the password could be sealed.",
+        'No master password is held for this project’s own instance. It may not have been ' +
+          'created yet, or it was created before the password could be sealed.',
       );
     }
 
@@ -439,12 +444,10 @@ export class ProjectConnectedInstanceService {
     step: string,
     args: readonly string[],
     stdin?: string | null,
-  ): Promise<
-    { ok: true; stdout: string; stderr: string } | { ok: false; error: string }
-  > {
+  ): Promise<{ ok: true; stdout: string; stderr: string } | { ok: false; error: string }> {
     try {
-      const result = await this.commands.run("sudo", [...args], {
-        cwd: "/",
+      const result = await this.commands.run('sudo', [...args], {
+        cwd: '/',
         timeoutMs: this.config.process.maxTimeoutMs,
         ...(stdin ? { stdin } : {}),
       });
@@ -469,7 +472,7 @@ export class ProjectConnectedInstanceService {
     await this.database.db
       .update(projects)
       .set({
-        connectedInstanceStatus: "failed",
+        connectedInstanceStatus: 'failed',
         connectedInstanceError: message.slice(0, 1000),
       })
       .where(eq(projects.id, projectId));
@@ -481,9 +484,7 @@ export class ProjectConnectedInstanceService {
       metadata: { error: message },
     });
 
-    this.logger.error(
-      `Connected instance for project ${projectId} failed: ${message}`,
-    );
+    this.logger.error(`Connected instance for project ${projectId} failed: ${message}`);
   }
 
   /**
@@ -500,13 +501,9 @@ export class ProjectConnectedInstanceService {
     const { portRangeStart, portRangeEnd } = this.config.provisioning!;
 
     const [provisioned, restored, connected] = await Promise.all([
-      this.database.db
-        .select({ port: projects.provisioningPort })
-        .from(projects),
+      this.database.db.select({ port: projects.provisioningPort }).from(projects),
       this.database.db.select({ port: projects.restoredPort }).from(projects),
-      this.database.db
-        .select({ port: projects.connectedInstancePort })
-        .from(projects),
+      this.database.db.select({ port: projects.connectedInstancePort }).from(projects),
     ]);
     const taken = new Set(
       [...provisioned, ...restored, ...connected]
@@ -551,14 +548,14 @@ export class ProjectConnectedInstanceService {
 /** True when nothing on this host is already listening on the given port. */
 function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = createConnection({ port, host: "127.0.0.1" });
+    const socket = createConnection({ port, host: '127.0.0.1' });
     const settle = (free: boolean) => {
       socket.removeAllListeners();
       socket.destroy();
       resolve(free);
     };
-    socket.once("connect", () => settle(false));
-    socket.once("error", () => settle(true));
+    socket.once('connect', () => settle(false));
+    socket.once('error', () => settle(true));
     socket.setTimeout(500, () => settle(true));
   });
 }
@@ -571,17 +568,14 @@ function isPortFree(port: number): Promise<boolean> {
  * one script's project-directory guard would reject the other's. The project's
  * own technical name is never reused either, for the same reason.
  */
-export function deriveInstanceName(
-  projectName: string,
-  projectId: string,
-): string {
+export function deriveInstanceName(projectName: string, projectId: string): string {
   const slug = projectName
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
     .slice(0, 20);
-  const suffix = projectId.replace(/-/g, "").slice(0, 8);
-  const base = slug || "connected";
+  const suffix = projectId.replace(/-/g, '').slice(0, 8);
+  const base = slug || 'connected';
   return `${base}-i-${suffix}`;
 }
 
@@ -596,6 +590,6 @@ export function parseMasterPassword(stdout: string): string | null {
 }
 
 function summariseTail(output: string, maxLines = 15): string {
-  const lines = output.trim().split("\n");
-  return lines.slice(-maxLines).join("\n").slice(0, 2000);
+  const lines = output.trim().split('\n');
+  return lines.slice(-maxLines).join('\n').slice(0, 2000);
 }
