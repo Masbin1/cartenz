@@ -281,7 +281,17 @@ export default function ProjectDetailPage() {
               />
             ) : null}
 
+            {/*
+              Shown for every project whose customer instance is an odoo.sh one.
+              The gate is the project's type, not the legacy `link.isOdoosh`
+              checkbox: connect-existing creates `odoo_sh` projects and that
+              checkbox was easy to leave unticked, which hid this whole panel
+              for a project that plainly is an odoo.sh one. `link.isOdoosh`
+              stays in the condition so an older row still shows it, and the
+              restored row keeps it visible on any type once a copy exists.
+            */}
             {project.link.isOdoosh ||
+            project.projectType === 'odoo_sh' ||
             (project.restoredInstance && project.restoredInstance.status !== 'none') ? (
               <RestoredInstancePanel
                 projectId={project.id}
