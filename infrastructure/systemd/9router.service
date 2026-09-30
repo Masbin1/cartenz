@@ -2,6 +2,24 @@
 # 9router — the OpenAI-compatible model gateway Cartenz calls for its fallback
 # providers (priority 2 and below). Cartenz reaches it over loopback; it holds
 # the provider API keys, so it is never exposed beyond the host.
+#
+# WHY THIS RUNS custom-server.js AND NOT cli.js
+# ---------------------------------------------
+# cli.js is the interactive launcher, and under systemd it is actively harmful:
+#
+#   1. With no TTY (and --skip-update) cli.js forces "tray mode". It spawns the
+#      real server as a DETACHED child and then the launcher itself exits.
+#      systemd tracks the launcher PID, sees it leave, and restarts the unit
+#      every RestartSec — forever. `systemctl show 9router -p NRestarts` climbs
+#      into the thousands.
+#   2. Every one of those starts runs cli.js's killAllAppProcesses(), which does
+#      `kill -9` on every process whose command line contains "next-server"
+#      (cli.js: `|| cmd.includes("next-server")`). cartenz-portal IS a
+#      next-server too, so the portal is murdered on each cycle and never stays
+#      up — it exits 137 ("Killed") a few seconds after "Ready".
+#
+# Running the standalone server directly avoids both: one foreground process,
+# no tray, no kill sweep. Do not "simplify" this back to cli.js.
 Description=9router model gateway
 After=network-online.target
 Wants=network-online.target
@@ -10,13 +28,30 @@ Wants=network-online.target
 Type=simple
 User=cartenz
 Group=cartenz
-WorkingDirectory=/opt/cartenz
-ExecStart=/usr/bin/node /opt/9router/cli.js --skip-update --host 127.0.0.1 -p 20128
+# custom-server.js requires ./server.js next to it (the standalone build).
+WorkingDirectory=/opt/9router/app
+ExecStart=/usr/bin/node --dns-result-order=ipv4first --max-old-space-size=2048 /opt/9router/app/custom-server.js
 Restart=always
 RestartSec=5
 # The model catalogue sync on a cold start can take a minute.
 TimeoutStartSec=120
+
 Environment=NODE_ENV=production
+# The standalone server reads its bind address straight from the environment.
+Environment=PORT=20128
+Environment=HOSTNAME=127.0.0.1
+# 9router stores its API keys and upstream provider credentials under $DATA_DIR.
+# Set it EXPLICITLY. If this path moves — or if the unit's user/HOME changes so
+# that $HOME/.9router resolves somewhere else — the gateway comes back with an
+# EMPTY key store and every client gets "Invalid API key". Back this directory
+# up with the same care as .env (see docs/INSTALL-SERVER.md §10.1).
+Environment=DATA_DIR=/opt/cartenz/.9router
+Environment=HOME=/opt/cartenz
+# The standalone server resolves its runtime deps (the better-sqlite3 native
+# binary) through NODE_PATH. This mirrors what cli.js's buildEnvWithRuntime()
+# would have set; without it the DB driver falls back and 9router cannot keep
+# its key store.
+Environment=NODE_PATH=/opt/cartenz/.9router/runtime/node_modules:/opt/9router/app/node_modules
 
 NoNewPrivileges=true
 PrivateTmp=true
