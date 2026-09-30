@@ -81,7 +81,16 @@ when one is connected.
   child inherits. `/etc/letsencrypt`, `/var/lib/letsencrypt` and
   `/var/log/letsencrypt` are granted through the drop-ins in
   `infrastructure/systemd/*.service.d/50-letsencrypt-write.conf`; without
-  them issuance fails with `[Errno 30] Read-only file system`.
+  them issuance fails with `[Errno 30] Read-only file system`. Certbot's
+  nginx plugin also needs `/etc/nginx`, `/var/lib/nginx`, `/var/log/nginx`
+  itself writable — it locks its own config root — and `/usr/share/nginx`,
+  because it backs up `/etc/nginx/modules-enabled/*.conf` by following the
+  symlinks into `modules-available/` and copying there. Any of these missing
+  produces a `PluginError` or a stale `temp_checkpoint` that fails every
+  retry's recovery step until removed
+  (`rm -rf /var/lib/letsencrypt/temp_checkpoint`) — install the drop-in as a
+  whole file (`install -m 0644`), never edit it with `sed`: a partial
+  `ReadWritePaths=` overwrite silently drops the rest of the list.
 - **Backend.** `ProjectConnectedInstanceService` (admin-gated like a restore),
   `POST /projects/:id/connected-instance` records `pending` and enqueues;
   `GET` is folded into the existing project response (`connectedInstance`
