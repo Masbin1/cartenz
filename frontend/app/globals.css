@@ -141,9 +141,15 @@
 @layer components {
   /* ---- Layout -------------------------------------------------------- */
 
-  /** A page's content column. Readable by default; `page-wide` for workspaces. */
+  /**
+   * A page's content column. Readable by default; `page-wide` for workspaces.
+   *
+   * Widens on large screens: beside the 16rem sidebar a 1920px (FHD) display
+   * leaves ~1650px, and a fixed 1120px column left a wide empty band on both
+   * sides while squeezing two-column pages into a narrow middle.
+   */
   .page {
-    @apply mx-auto w-full max-w-[1120px] px-4 py-8 sm:px-8 lg:px-12 lg:py-12;
+    @apply mx-auto w-full max-w-[1120px] px-4 py-8 sm:px-8 lg:px-12 lg:py-12 2xl:max-w-[1440px];
   }
 
   .page-wide {
