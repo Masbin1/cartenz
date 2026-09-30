@@ -461,7 +461,7 @@ export default function AgentWorkspacePage() {
           </p>
         </header>
 
-        <div className="grid gap-12 lg:grid-cols-[232px_minmax(0,1fr)] lg:gap-8 xl:grid-cols-[248px_minmax(0,1fr)_340px] xl:gap-10">
+        <div className="grid gap-12 lg:grid-cols-[216px_minmax(0,1fr)] lg:gap-6 xl:grid-cols-[224px_minmax(0,1fr)_300px] xl:gap-8">
           {/* LEFT: conversation history. Last on a phone, where the conversation comes first. */}
           <aside
             aria-label="Conversations"
@@ -574,7 +574,7 @@ export default function AgentWorkspacePage() {
                 told apart by position and surface rather than by colour.
               */}
               {thread.length > 0 ? (
-                <div className="-mx-2 max-h-[60vh] space-y-6 overflow-y-auto px-2 py-1">
+                <div className="-mx-2 max-h-[60vh] min-h-[16rem] space-y-6 overflow-y-auto px-2 py-1 lg:max-h-[calc(100vh-22rem)]">
                   {thread.map((turn) => {
                     const selected = turn.id === selectedTaskId;
                     return (
@@ -1033,7 +1033,7 @@ function WorkspaceSkeleton({ error }: { error: string | null }) {
             <Alert tone="error">{error}</Alert>
           </div>
         ) : null}
-        <div className="grid gap-12 lg:grid-cols-[232px_minmax(0,1fr)] lg:gap-8 xl:grid-cols-[248px_minmax(0,1fr)_340px] xl:gap-10">
+        <div className="grid gap-12 lg:grid-cols-[216px_minmax(0,1fr)] lg:gap-6 xl:grid-cols-[224px_minmax(0,1fr)_300px] xl:gap-8">
           <div className="order-last lg:order-none">
             <SkeletonRows rows={5} />
           </div>
