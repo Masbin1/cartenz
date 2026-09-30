@@ -83,8 +83,22 @@
 }
 
 @layer base {
+  /*
+   * Desktop density. Every size in the scale, spacing and the sidebar is in
+   * rem, so the root size sets the whole UI's scale at once. 16px suits touch
+   * screens; on a desktop at 100% zoom (FHD and up) it read oversized, so from
+   * lg the root drops to 14px, a ~12% smaller, denser UI in the range of
+   * other business applications. Narrow screens keep 16px.
+   */
   html {
     -webkit-text-size-adjust: 100%;
+    font-size: 16px;
+  }
+
+  @media (min-width: 1024px) {
+    html {
+      font-size: 14px;
+    }
   }
 
   body {
@@ -149,7 +163,7 @@
    * sides while squeezing two-column pages into a narrow middle.
    */
   .page {
-    @apply mx-auto w-full max-w-[1120px] px-4 py-8 sm:px-8 lg:px-12 lg:py-12 2xl:max-w-[1440px];
+    @apply mx-auto w-full max-w-[1120px] px-4 py-8 sm:px-8 lg:px-12 lg:py-12 2xl:max-w-[1280px];
   }
 
   .page-wide {
