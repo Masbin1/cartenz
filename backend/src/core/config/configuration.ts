@@ -144,6 +144,39 @@ const environmentSchema = z.object({
     .transform((value) => value === 'true'),
 
   /**
+   * Where a connected project's long-lived clone lives (`PROJECT_CHECKOUT_ROOT`).
+   *
+   * Empty - the default - means nothing outlives its task: every task still
+   * clones into its own throwaway workspace, which is the behaviour this
+   * deployment has always had.
+   *
+   * Set it, and a connected project gets one clone, holding every branch, under
+   * it that survives between tasks and can be synced on demand. What that buys is
+   * the ability to read a repository's history instead of only its tip, a
+   * project page that can answer "how far behind is this?" without waiting for a
+   * task to run, and tasks that take a worktree from that clone instead of
+   * downloading the repository again. What it costs is customer source code resting on platform disk for as
+   * long as the project exists - the same retention WORKSPACE_RETAIN_ON_FAILURE
+   * refuses by default, accepted deliberately here because a clone that dies with
+   * its task cannot be read at all.
+   */
+  PROJECT_CHECKOUT_ROOT: z.string().default(''),
+
+  /**
+   * Whether a task takes a worktree from the project's clone (ADR-063).
+   *
+   * Only meaningful with PROJECT_CHECKOUT_ROOT set. On by default: that is the
+   * point of keeping the clone - one download per project, and the branch a
+   * task works on chosen from the ones already there, as on a developer's
+   * laptop. `false` is the rollback: every task clones for itself again, exactly
+   * as before ADR-063, while the project clone stays for reading and syncing.
+   */
+  PROJECT_CHECKOUT_REUSE: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+
+  /**
    * On-premise execution (ADR-028).
    *
    * ON_PREMISE_ROOT is the base directory under which on-premise projects live,
@@ -288,6 +321,30 @@ const environmentSchema = z.object({
     .default('/opt/cartenz/infrastructure/provisioning/restart-project.sh'),
 
   /**
+   * Absolute path to the restored-copy script (ADR-067).
+   *
+   * Connects an existing odoo.sh project by building a NEW Odoo instance on
+   * this host from a backup zip the operator downloaded from odoo.sh. Empty
+   * disables the action end to end, the same posture as PROJECT_RESTART_SCRIPT:
+   * the served script is what the sudoers entry grants, and a deployment that
+   * has not installed either must not offer a button whose every press is
+   * refused.
+   */
+  PROJECT_RESTORE_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/restore-existing-instance.sh'),
+
+  /**
+   * Where an operator places the odoo.sh backup zips a restore reads (ADR-067).
+   *
+   * Read only to *list* what is available; the script resolves its own copy of
+   * this path and never takes a path from the platform. The class of bug this
+   * closes is the one where a caller-supplied path is the thing that decides
+   * which file a root-run loader opens.
+   */
+  PROJECT_RESTORE_STAGING_DIR: z.string().default('/opt/cartenz/restore-staging'),
+
+  /**
    * The email certbot registers a Let's Encrypt account under. Never a
    * secret — passed as a plain argument to certbot, and used only for expiry
    * notifications — but required (not defaulted) once PROJECT_HTTPS_ENABLED is
@@ -355,7 +412,18 @@ const environmentSchema = z.object({
   ODOO_SOURCE_PATHS: z.string().default(''),
 
   // Git. Shallow by default: a task needs a branch and a diff, not history.
-  GIT_CLONE_DEPTH: z.coerce.number().int().min(1).max(1000).default(1),
+  /**
+   * How much history a clone takes.
+   *
+   * 0 means the whole history, which is what a deployment that wants the agent to
+   * be able to reason about why code looks the way it does should use: a shallow
+   * clone carries one commit and no past. A positive value is the number of
+   * commits to fetch - the depth a task needs, and nothing more.
+   *
+   * The default stays 1 because it is the cheapest, and a deployment that only
+   * ever changes files at the tip never notices the difference.
+   */
+  GIT_CLONE_DEPTH: z.coerce.number().int().min(0).max(1000).default(1),
   GIT_AUTHOR_NAME: z.string().min(1).default('LinkedERP AI Agent'),
   GIT_AUTHOR_EMAIL: z.string().email().default('ai-agent@linkederp.com'),
   /**
@@ -504,6 +572,22 @@ const environmentSchema = z.object({
   CODE_SEARCH_MAX_RESULTS: z.coerce.number().int().min(1).max(1000).default(60),
   CODE_SEARCH_MAX_FILE_BYTES: z.coerce.number().int().min(1024).default(1048576),
   READ_FILE_MAX_BYTES: z.coerce.number().int().min(1024).default(262144),
+
+  /**
+   * Web push (ADR-065). Generate once with `npx web-push generate-vapid-keys`
+   * and never rotate casually: every browser subscription is bound to the
+   * public key, so a new pair makes every existing subscription dead. Leave
+   * both empty to keep the feature off.
+   */
+  VAPID_PUBLIC_KEY: z.string().default(''),
+  VAPID_PRIVATE_KEY: z.string().default(''),
+  /** `mailto:` or `https:` contact the push services may use to reach the operator. */
+  VAPID_SUBJECT: z.string().default(''),
+  /**
+   * The portal's public origin, used to build the absolute link a
+   * notification opens. Falls back to the first CORS origin when empty.
+   */
+  PORTAL_PUBLIC_URL: z.string().default(''),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;
@@ -568,6 +652,16 @@ export interface AppConfig {
     readonly readOnlyPaths: readonly string[];
   };
   /**
+   * One clone per project, kept between tasks (`PROJECT_CHECKOUT_ROOT`).
+   *
+   * `root` null means disabled, which is the default: no clone outlives its task.
+   */
+  readonly checkouts: {
+    readonly root: string | null;
+    /** Hand a task the project's checkout rather than cloning its own. */
+    readonly reuse: boolean;
+  };
+  /**
    * Provisioning a real Odoo instance for a "Create with AI" project (ADR-039).
    */
   readonly provisioning: {
@@ -599,6 +693,14 @@ export interface AppConfig {
      * guard refuses the invocation and the portal does not offer it.
      */
     readonly restartScript: string | null;
+    /**
+     * The restored-copy script (ADR-067), or null when the deployment has not
+     * configured one. Null disables connecting an existing project by restore:
+     * the guard refuses the invocation and the portal does not offer it.
+     */
+    readonly restoreScript: string | null;
+    /** Where the operator places odoo.sh backup zips (ADR-067). Read-only. */
+    readonly restoreStagingDir: string;
     readonly portRangeStart: number;
     readonly portRangeEnd: number;
     readonly baseDomain: string | null;
@@ -670,6 +772,20 @@ export interface AppConfig {
     readonly searchMaxResults: number;
     readonly searchMaxFileBytes: number;
     readonly readFileMaxBytes: number;
+  };
+  /**
+   * Web push notifications (ADR-065).
+   *
+   * `publicKey` empty means the feature is off end to end: the portal is told
+   * so, no subscription is accepted, and no push is attempted. The keys are
+   * supplied by the operator rather than generated at boot, because a key that
+   * changed on restart would silently invalidate every existing subscription.
+   */
+  readonly push: {
+    readonly publicKey: string;
+    readonly privateKey: string;
+    readonly subject: string;
+    readonly portalUrl: string | null;
   };
 }
 
@@ -757,6 +873,14 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   // first task that targets the misconfigured directory.
   if (env.ON_PREMISE_ROOT && !isAbsolute(env.ON_PREMISE_ROOT)) {
     throw new ConfigurationError(['ON_PREMISE_ROOT must be an absolute path.']);
+  }
+  // Validated at boot rather than at the first sync: a relative or misspelled
+  // checkout root would otherwise be discovered as an empty directory listing on
+  // a project page that claims the code is current.
+  if (env.PROJECT_CHECKOUT_ROOT.trim().length > 0 && !isAbsolute(env.PROJECT_CHECKOUT_ROOT)) {
+    throw new ConfigurationError([
+      'PROJECT_CHECKOUT_ROOT must be an absolute path when set.',
+    ]);
   }
   const readOnlyPaths = splitPaths(env.ON_PREMISE_READ_ONLY_PATHS);
   for (const path of readOnlyPaths) {
@@ -970,6 +1094,10 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       root: emptyToUndefined(env.ON_PREMISE_ROOT) ?? null,
       readOnlyPaths,
     },
+    checkouts: {
+      root: emptyToUndefined(env.PROJECT_CHECKOUT_ROOT) ?? null,
+      reuse: env.PROJECT_CHECKOUT_REUSE,
+    },
     provisioning: {
       enabled: env.PROJECT_PROVISIONING_ENABLED,
       communityScript: env.PROJECT_PROVISION_SCRIPT,
@@ -979,6 +1107,8 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       backupScript: emptyToUndefined(env.PROJECT_BACKUP_SCRIPT) ?? null,
       modulesListScript: emptyToUndefined(env.PROJECT_MODULES_LIST_SCRIPT) ?? null,
       restartScript: emptyToUndefined(env.PROJECT_RESTART_SCRIPT) ?? null,
+      restoreScript: emptyToUndefined(env.PROJECT_RESTORE_SCRIPT) ?? null,
+      restoreStagingDir: env.PROJECT_RESTORE_STAGING_DIR,
       portRangeStart: env.PROJECT_PORT_RANGE_START,
       portRangeEnd: env.PROJECT_PORT_RANGE_END,
       baseDomain: emptyToUndefined(env.PROJECT_BASE_DOMAIN) ?? null,
@@ -1055,6 +1185,23 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       searchMaxResults: env.CODE_SEARCH_MAX_RESULTS,
       searchMaxFileBytes: env.CODE_SEARCH_MAX_FILE_BYTES,
       readFileMaxBytes: env.READ_FILE_MAX_BYTES,
+    },
+    push: {
+      // A half-configured pair is off, not an error: a public key without its
+      // private key can let a browser subscribe but never deliver to it.
+      publicKey:
+        emptyToUndefined(env.VAPID_PUBLIC_KEY) && emptyToUndefined(env.VAPID_PRIVATE_KEY)
+          ? env.VAPID_PUBLIC_KEY.trim()
+          : '',
+      privateKey:
+        emptyToUndefined(env.VAPID_PUBLIC_KEY) && emptyToUndefined(env.VAPID_PRIVATE_KEY)
+          ? env.VAPID_PRIVATE_KEY.trim()
+          : '',
+      subject: emptyToUndefined(env.VAPID_SUBJECT)?.trim() ?? 'mailto:ai-agent@linkederp.com',
+      portalUrl:
+        emptyToUndefined(env.PORTAL_PUBLIC_URL)?.trim().replace(/\/+$/, '') ??
+        env.CORS_ORIGINS[0]?.replace(/\/+$/, '') ??
+        null,
     },
   };
 }

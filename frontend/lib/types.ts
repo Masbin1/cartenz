@@ -180,6 +180,13 @@ export interface ProjectDetail {
   provisioning: ProjectProvisioningInfo;
   restart: ProjectRestartInfo;
   /**
+   * A restored copy of this project's odoo.sh instance (ADR-067), when an
+   * operator has built one. For a human to look at; the agent never touches it.
+   */
+  restoredInstance: RestoredInstanceInfo;
+  /** ADR-069; absent on a backend build that predates it. */
+  connectedInstance?: ConnectedInstanceInfo;
+  /**
    * The linked instance this project points at (ADR-050, ADR-054), when the
    * operator connected an existing odoo.sh/on-premise project rather than
    * only a repository - so a restore can be aimed at the right instance.
@@ -232,6 +239,39 @@ export interface ProjectLink {
 }
 
 /**
+ * A restored copy of a connected project's odoo.sh instance (ADR-067): a NEW
+ * Odoo built on the Cartenz host from a backup zip an operator staged, loaded
+ * and neutralized before it ever started. For a human to look at real data —
+ * never where the agent works, which stays the project's own standard,
+ * always-empty database (ADR-050 §3).
+ */
+export interface RestoredInstanceInfo {
+  status: 'none' | 'pending' | 'restored' | 'failed';
+  instanceName: string | null;
+  port: number | null;
+  backupFile: string | null;
+  error: string | null;
+  restoredAt: string | null;
+}
+
+/**
+ * A connected project's own provisioned instance (ADR-069): a NEW, empty
+ * Odoo instance on this host, reachable over HTTPS with the database manager
+ * open, for the project owner to restore their own backup into. Never where
+ * the agent works — that stays the project's own standard, always-empty
+ * database (ADR-050 §3), same rule as `RestoredInstanceInfo` above.
+ */
+export interface ConnectedInstanceInfo {
+  status: 'none' | 'pending' | 'ready' | 'failed';
+  instanceName: string | null;
+  port: number | null;
+  url: string | null;
+  error: string | null;
+  createdAt: string | null;
+  hasMasterPassword: boolean;
+}
+
+/**
  * The last restart attempt through the platform (ADR-057): pull, `-u all`,
  * restart the unit. 'pending' while the worker runs the upgrade; 'failed'
  * means the code was rolled back to what the instance was serving before, and
@@ -261,6 +301,102 @@ export interface TaskSummary {
   createdAt: string;
   startedAt?: string | null;
   completedAt: string | null;
+}
+
+/**
+ * The AI Office board (PRD docs/AI-OFFICE-PRD-draft.md, phase 1).
+ *
+ * `phase` is the task's own lifecycle state grouped into a column, not a
+ * separate department entity - see the server's `ai-office-board.ts` for the
+ * mapping. There is no "agent" object here: a card is a task.
+ */
+export type AiOfficePhase = 'research' | 'development' | 'quality' | 'operations';
+
+export interface AiOfficeCard {
+  taskId: string;
+  taskReference: string;
+  projectId: string;
+  projectName: string;
+  prompt: string;
+  status: AgentTaskStatus;
+  phase: AiOfficePhase;
+  /** 0 to 1, derived from the task's position in its state machine. */
+  progress: number;
+  /** A one-line summary of the last recorded action, or null if none yet. */
+  currentAction: string | null;
+  startedAt: string | null;
+  updatedAt: string;
+}
+
+export interface AiOfficeSummary {
+  live: number;
+  needsAttention: number;
+  completedToday: number;
+  failedToday: number;
+}
+
+export interface AiOfficeBoard {
+  cards: AiOfficeCard[];
+  /** Tasks that ended in the last few hours, newest first (idle-office tail). */
+  recent: AiOfficeFinishedCard[];
+  summary: AiOfficeSummary;
+}
+
+/**
+ * A task that just ended. Shown as a figure standing up from its desk, so a
+ * viewer who watched it finish sees where it went instead of it disappearing.
+ */
+export interface AiOfficeFinishedCard {
+  taskId: string;
+  taskReference: string;
+  projectId: string;
+  projectName: string;
+  prompt: string;
+  status: AgentTaskStatus;
+  endedAt: string;
+}
+
+export interface AiOfficeQueueItem {
+  taskId: string;
+  taskReference: string;
+  projectId: string;
+  projectName: string;
+  prompt: string;
+  status: AgentTaskStatus;
+  createdAt: string;
+}
+
+/** Tasks waiting for a worker, and how many workers exist (ADR-066). */
+export interface AiOfficeQueue {
+  waiting: AiOfficeQueueItem[];
+  capacity: number;
+  running: number;
+}
+
+/** One line of the activity feed: a real `agent_actions` row, summarised (ADR-066). */
+export interface AiOfficeActivityItem {
+  id: string;
+  taskId: string;
+  taskReference: string;
+  projectId: string;
+  projectName: string;
+  actionType: string;
+  toolName: string | null;
+  status: string;
+  taskStatus: AgentTaskStatus;
+  summary: string | null;
+  at: string;
+}
+
+export interface AiOfficeAttentionItem {
+  approvalId: string;
+  taskId: string;
+  taskReference: string;
+  projectId: string;
+  projectName: string;
+  action: string;
+  requiredReason: string;
+  requestedAt: string;
 }
 
 export interface PlanStep {
@@ -518,6 +654,14 @@ export interface AgentCapabilities {
   };
 }
 
+/** A person's choices about which of the three push events wake their phone. */
+export interface NotificationPreferences {
+  approvalRequired: boolean;
+  taskCompleted: boolean;
+  taskFailed: boolean;
+  soundEnabled: boolean;
+}
+
 /** An environment kind. Production is never a target for a task. */
 export type EnvironmentKind = 'production' | 'staging' | 'development';
 
@@ -739,4 +883,48 @@ export interface ProjectPreviewState {
   available: boolean;
   reason: string | null;
   preview: PreviewSummary | null;
+}
+
+/**
+ * One branch of the single local clone this host keeps for a project (ADR-063).
+ *
+ * `behind`/`ahead` are deliberately nullable: they are read from the local
+ * remote-tracking ref, so they are the truth as of the last sync, and a branch
+ * that has never been compared says so rather than claiming to be current.
+ */
+export interface CheckoutBranchState {
+  branch: string;
+  path: string;
+  exists: boolean;
+  commit: string | null;
+  remoteCommit: string | null;
+  behind: number | null;
+  /** Local commits the remote does not have yet (a task's unpushed work). */
+  ahead: number | null;
+  dirty: boolean;
+  /** A running task has this branch checked out in its worktree. */
+  inUse: boolean;
+  historyDepth: number | null;
+  lastSyncedAt: string | null;
+}
+
+export interface CheckoutStatus {
+  enabled: boolean;
+  reason: string | null;
+  root: string | null;
+  /** The project's one clone; every branch and every task worktree comes from it. */
+  path: string | null;
+  cloned: boolean;
+  branches: CheckoutBranchState[];
+}
+
+export interface CheckoutSyncResult {
+  branch: string;
+  outcome: 'cloned' | 'up_to_date' | 'fast_forwarded' | 'refused' | 'failed';
+  commit: string | null;
+  behind: number | null;
+  historyDepth: number | null;
+  modules: number | null;
+  message: string;
+  durationMs: number;
 }

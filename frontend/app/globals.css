@@ -2,75 +2,277 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Colour tokens, as space-separated RGB so Tailwind can apply opacity.
+ * Light is the default. Dark is chosen in the sidebar or follows the system.
+ */
 :root {
+  color-scheme: light;
+
+  --surface: 245 245 247;
+  --surface-raised: 255 255 255;
+  --surface-overlay: 237 237 240;
+  --surface-border: 226 226 231;
+  --surface-strong: 200 200 206;
+
+  --content: 29 29 31;
+  --content-muted: 72 72 77;
+  --content-subtle: 110 110 115;
+
+  --accent: 200 16 46;
+  --accent-hover: 165 13 38;
+
+  --state-running: 37 99 235;
+  --state-waiting: 180 83 9;
+  --state-success: 21 128 61;
+  --state-failure: 200 30 40;
+  --state-idle: 142 142 147;
+}
+
+/*
+ * Dark theme. Applied when the person chose Dark (data-theme="dark" on <html>),
+ * or when they left it on System and the operating system is dark. A choice of
+ * Light (data-theme="light") wins over a dark system setting. See lib/theme.ts.
+ */
+:root[data-theme='dark'] {
   color-scheme: dark;
+
+  --surface: 17 17 19;
+  --surface-raised: 26 26 29;
+  --surface-overlay: 38 38 42;
+  --surface-border: 46 46 51;
+  --surface-strong: 72 72 78;
+
+  --content: 245 245 247;
+  --content-muted: 190 190 196;
+  --content-subtle: 142 142 150;
+
+  --accent: 232 52 76;
+  --accent-hover: 246 84 105;
+
+  --state-running: 96 150 250;
+  --state-waiting: 240 170 60;
+  --state-success: 74 200 120;
+  --state-failure: 248 100 100;
+  --state-idle: 120 120 128;
 }
 
-body {
-  @apply bg-surface text-content antialiased;
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --surface: 17 17 19;
+    --surface-raised: 26 26 29;
+    --surface-overlay: 38 38 42;
+    --surface-border: 46 46 51;
+    --surface-strong: 72 72 78;
+
+    --content: 245 245 247;
+    --content-muted: 190 190 196;
+    --content-subtle: 142 142 150;
+
+    --accent: 232 52 76;
+    --accent-hover: 246 84 105;
+
+    --state-running: 96 150 250;
+    --state-waiting: 240 170 60;
+    --state-success: 74 200 120;
+    --state-failure: 248 100 100;
+    --state-idle: 120 120 128;
+  }
 }
 
-/* A dense interface needs a scrollbar that does not dominate a narrow column. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #2a323d transparent;
-}
+@layer base {
+  /*
+   * Desktop density. Every size in the scale, spacing and the sidebar is in
+   * rem, so the root size sets the whole UI's scale at once. 16px suits touch
+   * screens; on a desktop at 100% zoom (FHD and up) it read oversized, so from
+   * lg the root drops to 13px, a ~19% smaller, denser UI in the range of other
+   * business applications. Narrow screens keep 16px.
+   */
+  html {
+    -webkit-text-size-adjust: 100%;
+    font-size: 16px;
+  }
 
-*::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
+  @media (min-width: 1024px) {
+    html {
+      font-size: 13px;
+    }
+  }
 
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
+  body {
+    @apply bg-surface text-body text-content antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
+  }
 
-*::-webkit-scrollbar-thumb {
-  background-color: #2a323d;
-  border-radius: 5px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: rgb(var(--accent));
+  }
 
-/* Focus is always visible: the workspace is keyboard-driven. */
-:focus-visible {
-  @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-surface;
+  ::selection {
+    background: rgb(var(--accent) / 0.16);
+  }
+
+  /* Focus is always visible: the workspace is keyboard-driven. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/60 ring-offset-2 ring-offset-surface;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--surface-strong)) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--surface-strong));
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
 @layer components {
+  /* ---- Layout -------------------------------------------------------- */
+
+  /**
+   * A page's content column. Readable by default; `page-wide` for workspaces.
+   *
+   * Widens on large screens: beside the 16rem sidebar a 1920px (FHD) display
+   * leaves ~1650px, and a fixed 1120px column left a wide empty band on both
+   * sides while squeezing two-column pages into a narrow middle.
+   */
+  .page {
+    @apply mx-auto w-full max-w-[1120px] px-4 py-8 sm:px-8 lg:px-12 lg:py-12 2xl:max-w-[1280px];
+  }
+
+  .page-wide {
+    @apply mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8;
+  }
+
+  .page-narrow {
+    @apply mx-auto w-full max-w-[720px] px-4 py-8 sm:px-8 lg:py-12;
+  }
+
+  /* ---- Surfaces ------------------------------------------------------ */
+
+  /**
+   * A contained group. Lightweight: a hairline border on the raised surface,
+   * no shadow. Use only when the content genuinely needs containment.
+   */
   .panel {
-    @apply rounded-lg border border-surface-border bg-surface-raised;
+    @apply rounded-card border border-surface-border bg-surface-raised;
   }
 
   .panel-header {
-    @apply flex items-center justify-between border-b border-surface-border px-4 py-3;
+    @apply flex items-center justify-between gap-4 px-5 pb-3 pt-5 sm:px-6;
   }
+
+  .panel-body {
+    @apply px-5 pb-5 sm:px-6 sm:pb-6;
+  }
+
+  .divider {
+    @apply border-t border-surface-border;
+  }
+
+  /* ---- Typography ---------------------------------------------------- */
 
   .panel-title {
-    @apply text-2xs font-semibold uppercase tracking-widest text-content-subtle;
+    @apply text-headline text-content;
   }
 
+  .section-title {
+    @apply text-title text-content;
+  }
+
+  /** A small label above a value or a group. Sentence case, never shouted. */
+  .eyebrow {
+    @apply text-meta font-medium text-content-subtle;
+  }
+
+  .meta {
+    @apply text-meta text-content-subtle;
+  }
+
+  .mono-meta {
+    @apply font-mono text-caption text-content-subtle;
+  }
+
+  .link {
+    @apply font-medium text-accent underline-offset-4 transition-colors hover:underline;
+  }
+
+  .link-quiet {
+    @apply text-content-muted underline-offset-4 transition-colors hover:text-content hover:underline;
+  }
+
+  /** Inline code and identifiers. */
+  .code-chip {
+    @apply rounded-md bg-surface-overlay px-1.5 py-0.5 font-mono text-caption text-content-muted;
+  }
+
+  /* ---- Forms --------------------------------------------------------- */
+
   .field-label {
-    @apply mb-1.5 block text-xs font-medium text-content-muted;
+    @apply mb-2 block text-callout font-medium text-content;
+  }
+
+  .field-hint {
+    @apply mt-1.5 text-meta text-content-subtle;
+  }
+
+  .field-error {
+    @apply mt-1.5 text-meta text-state-failure;
   }
 
   .field-input {
-    @apply w-full rounded-md border border-surface-border bg-surface px-3 py-2 text-sm
-      text-content placeholder:text-content-subtle focus:border-accent focus:outline-none;
+    @apply w-full rounded-control border border-surface-border bg-surface-raised px-3.5 py-2.5
+      text-body text-content transition-colors placeholder:text-content-subtle
+      hover:border-surface-strong focus:border-accent focus:outline-none focus:ring-4
+      focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60;
   }
+
+  /* ---- Buttons ------------------------------------------------------- */
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm
-      font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex h-10 select-none items-center justify-center gap-2 whitespace-nowrap
+      rounded-control px-4 text-callout font-medium transition-colors
+      disabled:cursor-not-allowed disabled:opacity-50;
   }
 
+  /** The one dominant action on a screen. */
   .btn-primary {
     @apply btn bg-accent text-white hover:bg-accent-hover;
   }
 
   .btn-secondary {
-    @apply btn border border-surface-border bg-surface-overlay text-content
-      hover:border-content-subtle;
+    @apply btn border border-surface-border bg-surface-raised text-content
+      hover:border-surface-strong hover:bg-surface-overlay;
+  }
+
+  .btn-ghost {
+    @apply btn text-content-muted hover:bg-surface-overlay hover:text-content;
   }
 
   /**
@@ -78,11 +280,328 @@ body {
    * red button invites the click it is warning about.
    */
   .btn-danger {
-    @apply btn border border-state-failure/50 bg-state-failure/10 text-state-failure
-      hover:border-state-failure hover:bg-state-failure/20;
+    @apply btn border border-state-failure/30 bg-transparent text-state-failure
+      hover:border-state-failure/60 hover:bg-state-failure/5;
   }
 
-  .btn-ghost {
-    @apply btn text-content-muted hover:bg-surface-overlay hover:text-content;
+  /** Compact size; combine with a variant, e.g. `btn-secondary btn-sm`. */
+  .btn-sm {
+    @apply h-8 rounded-lg px-3 text-meta;
+  }
+
+  .icon-btn {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-control text-content-muted
+      transition-colors hover:bg-surface-overlay hover:text-content
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /* ---- Lists --------------------------------------------------------- */
+
+  /** A row in an open list: generous height, a hover fill, no border of its own. */
+  .list-row {
+    @apply flex items-center gap-4 rounded-xl px-4 py-3.5 transition-colors hover:bg-surface-overlay/70;
+  }
+
+  /* ---- Tables -------------------------------------------------------- */
+
+  .data-table {
+    @apply w-full border-collapse text-left text-callout;
+  }
+
+  .data-table th {
+    @apply border-b border-surface-border px-4 pb-3 text-meta font-medium text-content-subtle;
+  }
+
+  .data-table td {
+    @apply border-b border-surface-border/70 px-4 py-3.5 align-middle;
+  }
+
+  .data-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  /* ---- Feedback ------------------------------------------------------ */
+
+  .skeleton {
+    @apply animate-pulse rounded-md bg-surface-overlay;
   }
 }
+
+/*
+ * AI Office (ADR-066). Each figure moves only while the task it stands for is in
+ * a state that means something is happening. The motion is small on purpose: a
+ * floor of people bobbing constantly is noise, and it would imply activity a
+ * queued task does not have.
+ */
+@keyframes agent-type-arm {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  25% { transform: translate(0.6px, -0.6px) rotate(-2deg); }
+  75% { transform: translate(-0.4px, 0.4px) rotate(2deg); }
+}
+
+@keyframes agent-type-arm-back {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-0.5px, 0.3px); }
+}
+
+@keyframes agent-code-scroll {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-11px); }
+}
+
+@keyframes agent-breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-0.5px); }
+}
+
+@keyframes agent-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.15); }
+}
+
+@keyframes agent-wave-arm {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-12deg); }
+}
+
+@keyframes agent-bubble-pop {
+  0% { opacity: 0; transform: scale(0.4) translateY(3px); }
+  60% { opacity: 1; transform: scale(1.08) translateY(0); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes agent-bubble-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+
+@keyframes agent-cheer-arm {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-1.5px) rotate(6deg); }
+}
+
+@keyframes agent-think-rise {
+  0% { opacity: 0; transform: translateY(2px) scale(0.7); }
+  15%, 80% { opacity: 0.9; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-2px) scale(0.85); }
+}
+
+@keyframes office-arrive {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes office-feed-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes office-monitor-glow {
+  0%, 100% { filter: drop-shadow(0 0 0px rgb(var(--state-running) / 0)); }
+  50% { filter: drop-shadow(0 0 3px rgb(var(--state-running) / 0.5)); }
+}
+
+.agent-figure { overflow: visible; transform-box: fill-box; }
+.agent-figure .agent-body,
+.agent-figure .agent-head { transform-box: fill-box; transform-origin: 50% 100%; }
+
+.agent-pose-working .agent-body { animation: agent-breathe 2.4s ease-in-out infinite; }
+.agent-pose-working .agent-arm-front { animation: agent-type-arm 0.5s ease-in-out infinite; transform-box: fill-box; transform-origin: 25% 60%; }
+.agent-pose-working .agent-arm-back { animation: agent-type-arm-back 0.5s ease-in-out infinite reverse; transform-box: fill-box; transform-origin: 25% 60%; }
+.agent-pose-working .agent-code { animation: agent-code-scroll 2.6s linear infinite alternate; }
+.agent-pose-working { animation: office-monitor-glow 2.6s ease-in-out infinite; }
+
+.agent-pose-waiting .agent-wave { animation: agent-wave-arm 1.1s ease-in-out infinite; transform-box: fill-box; transform-origin: 25% 100%; }
+.agent-pose-waiting .agent-bubble { animation: agent-bubble-pop 260ms ease-out both, agent-bubble-pulse 1.6s ease-in-out 260ms infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+
+.agent-pose-done .agent-cheer { animation: agent-cheer-arm 1.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100%; }
+.agent-pose-done .agent-bubble { animation: agent-bubble-pop 260ms ease-out both; transform-box: fill-box; transform-origin: 50% 50%; }
+
+.agent-pose-failed .agent-bubble { animation: agent-bubble-pop 260ms ease-out both; transform-box: fill-box; transform-origin: 50% 50%; }
+
+.agent-pose-thinking .agent-think-1 { animation: agent-think-rise 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+.agent-pose-thinking .agent-think-2 { animation: agent-think-rise 2.4s ease-in-out 0.3s infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+.agent-pose-thinking .agent-think-3 { animation: agent-think-rise 2.4s ease-in-out 0.6s infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+
+.agent-eye { animation: agent-blink 4.5s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+
+.office-desk { animation: office-arrive 320ms ease-out both; }
+.office-desk-arrive { animation: office-arrive 320ms ease-out both; transform-box: fill-box; transform-origin: 50% 100%; }
+.office-feed-item { animation: office-feed-in 240ms ease-out both; }
+
+.office-seat:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
+
+@keyframes office-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+.office-blink { animation: office-blink 1.2s ease-in-out infinite; }
+.office-blink-0 { animation-delay: 0ms; }
+.office-blink-1 { animation-delay: 220ms; }
+.office-blink-2 { animation-delay: 440ms; }
+
+@keyframes office-recent-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.office-recent-item { animation: office-recent-in 260ms ease-out both; }
+
+/* The floor texture: a quiet tile grid, drawn with the theme's border colour. */
+.office-floor {
+  background-image:
+    linear-gradient(rgb(var(--surface-border) / 0.55) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--surface-border) / 0.55) 1px, transparent 1px);
+  background-size: 28px 28px;
+  background-position: -1px -1px;
+}
+
+/* ---- The spatial floor ------------------------------------------------- */
+
+/*
+ * A room is a floor slab with two walls. Its furniture is static; what moves
+ * is only what means something: a route carrying a task, the dispatch slots
+ * while a task changes state, a running desk's screen light.
+ *
+ * The frame carries a soft vignette (`::after`) so the middle of the floor,
+ * where the dispatch point and the routes are, holds the eye.
+ */
+.office-canvas {
+  background-image: radial-gradient(
+    circle at 50% 0%,
+    rgb(var(--surface-overlay) / 0.6),
+    transparent 60%
+  );
+}
+.office-canvas::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 70% 55% at 50% 52%,
+    transparent 0%,
+    rgb(var(--surface) / 0.45) 100%
+  );
+}
+
+/* The monitor's light on a desk whose task is running. */
+@keyframes office-screen-glow {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+.office-screen-glow {
+  animation: office-screen-glow 2.6s ease-in-out infinite;
+}
+
+.office-room {
+  transition: opacity 200ms ease;
+}
+
+/* The flow along an active route: a dashed line travelling the path. */
+@keyframes office-flow-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+.office-flow {
+  animation: office-flow-dash 1.6s linear infinite;
+}
+
+@keyframes office-dispatch-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.office-dispatch-pulse {
+  animation: office-dispatch-pulse 1.1s ease-in-out infinite;
+}
+
+/* The task bubble belongs to the states a human should see without clicking. */
+@keyframes office-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.office-bubble {
+  animation: office-bubble-in 220ms ease-out both;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+
+.office-control {
+  @apply flex h-7 w-7 items-center justify-center rounded-md text-content-muted transition-colors;
+}
+.office-control:hover {
+  @apply bg-surface-overlay text-content;
+}
+.office-control:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+.office-legend-dot {
+  @apply inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-[9px] leading-none;
+}
+.office-tone-running {
+  background: rgb(var(--state-running) / 0.14);
+  color: rgb(var(--state-running));
+}
+.office-tone-waiting {
+  background: rgb(var(--state-waiting) / 0.14);
+  color: rgb(var(--state-waiting));
+}
+.office-tone-success {
+  background: rgb(var(--state-success) / 0.14);
+  color: rgb(var(--state-success));
+}
+.office-tone-failure {
+  background: rgb(var(--state-failure) / 0.14);
+  color: rgb(var(--state-failure));
+}
+.office-tone-idle {
+  background: rgb(var(--state-idle) / 0.14);
+  color: rgb(var(--state-idle));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-pose-working .agent-body,
+  .agent-pose-working .agent-arm-front,
+  .agent-pose-working .agent-arm-back,
+  .agent-pose-working .agent-code,
+  .agent-pose-working,
+  .agent-pose-waiting .agent-wave,
+  .agent-pose-waiting .agent-bubble,
+  .agent-pose-done .agent-cheer,
+  .agent-pose-done .agent-bubble,
+  .agent-pose-failed .agent-bubble,
+  .agent-pose-thinking .agent-think-1,
+  .agent-pose-thinking .agent-think-2,
+  .agent-pose-thinking .agent-think-3,
+  .agent-eye,
+  .office-desk,
+  .office-desk-arrive,
+  .office-blink,
+  .office-recent-item,
+  .office-feed-item,
+  .office-flow,
+  .office-screen-glow,
+  .office-dispatch-pulse,
+  .office-bubble {
+    animation: none;
+  }
+}
+

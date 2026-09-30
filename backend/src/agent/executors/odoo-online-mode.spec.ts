@@ -42,6 +42,20 @@ describe('the odoo_online execution mode', () => {
     ]);
   });
 
+  it('reaches odoo_create_model in this mode, behind its own approval (ADR-068)', () => {
+    // Not in the list above because it is never allowed unapproved; the point
+    // here is that the mode gate lets it through to the approval gate, rather
+    // than denying it outright.
+    const decision = validator.validate(
+      { toolName: 'odoo_create_model', input: validInputFor('odoo_create_model') },
+      { ...policy('odoo_online'), taskKind: 'chat' },
+    );
+    expect(decision.outcome).toBe('approval_required');
+    expect(decision.outcome === 'approval_required' && decision.approvalAction).toBe(
+      'odoo_model_create',
+    );
+  });
+
   it('refuses every filesystem and Git tool, by name and with a reason', () => {
     for (const toolName of ['read_file', 'update_file', 'create_file', 'delete_file', 'git_commit', 'git_push']) {
       const decision = validator.validate(
@@ -56,7 +70,7 @@ describe('the odoo_online execution mode', () => {
   it('does not offer the Odoo Online tools to a repository-backed task', () => {
     // The converse of the above: the mode gate cuts both ways, so an odoo_sh task
     // cannot reach a live instance through the tools meant for a different mode.
-    for (const toolName of ['odoo_create_field', 'odoo_add_field_to_view']) {
+    for (const toolName of ['odoo_create_field', 'odoo_create_model', 'odoo_add_field_to_view']) {
       const decision = validator.validate(
         { toolName, input: validInputFor(toolName) },
         policy('odoo_sh'),
@@ -107,6 +121,8 @@ function validInputFor(toolName: string): Record<string, unknown> {
       return { model: 'sale.order' };
     case 'odoo_create_field':
       return { model: 'sale.order', name: 'po_number', label: 'PO Number', type: 'char' };
+    case 'odoo_create_model':
+      return { model: 'x_servis', label: 'Servis' };
     case 'odoo_add_field_to_view':
       return { model: 'sale.order', field: 'x_po_number', after: 'payment_term_id' };
     default:

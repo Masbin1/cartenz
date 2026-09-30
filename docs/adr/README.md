@@ -57,3 +57,12 @@ with the condition under which it is retired.
 | [ADR-055](ADR-055-per-project-on-host-models-only.md) | A per-project "on-host models only" flag | Accepted |
 | [ADR-056](ADR-056-module-selection-at-project-creation.md) | Module selection at project creation | Accepted |
 | [ADR-057](ADR-057-merge-to-main-and-project-restart.md) | Merge staging into main, and restart the running instance | Accepted |
+| [ADR-060](ADR-060-one-approval-per-push-and-verified-delivery.md) | One approval per push, and a push is not delivered until it is verified | Accepted |
+| [ADR-061](ADR-061-calm-content-first-portal-design.md) | A calm, content-first portal design | Accepted |
+| [ADR-062](ADR-062-task-pulls-its-branch.md) | A task can pull the branch it works on, and "nothing new" is a success | Accepted |
+| [ADR-063](ADR-063-project-local-checkout.md) | A connected project keeps a local clone that syncs on request | Accepted |
+| [ADR-064](ADR-064-odoo-online-record-writes.md) | Odoo Online records are reachable, gated by permission and approval | Accepted |
+| [ADR-065](ADR-065-web-push-notifications.md) | Web push notifications for approval, completion and failure | Accepted |
+| [ADR-066](ADR-066-ai-office-read-only-board.md) | AI Office is a read-only board over tasks, not a multi-agent runtime | Accepted |
+| [ADR-067](ADR-067-restored-copy-of-connected-project.md) | Restored copy of a connected odoo.sh project | Accepted |
+| [ADR-068](ADR-068-odoo-online-model-creation.md) | Odoo Online can create a model, as one Studio-shaped sequence | Accepted |

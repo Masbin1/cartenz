@@ -8,13 +8,32 @@ import { APP_CONFIG } from './core/config/config.module';
 import type { AppConfig } from './core/config/configuration';
 import { RedisService } from './core/redis/redis.service';
 import { AgentWorkflow } from './agent/orchestration/agent-workflow';
-import { AGENT_TASK_QUEUE, PROJECT_PROVISIONING_QUEUE, PROJECT_RESTART_JOB } from './core/redis/redis.constants';
+import { WorkspaceManager } from './agent/workspace/workspace-manager';
+import {
+  AGENT_TASK_QUEUE,
+  PROJECT_PROVISIONING_QUEUE,
+  PROJECT_RESTART_JOB,
+  PROJECT_RESTORED_INSTANCE_JOB,
+  PROJECT_CONNECTED_INSTANCE_JOB,
+} from './core/redis/redis.constants';
 import type { AgentJobData } from './agent/orchestration/queue-agent-orchestrator';
 import { ProjectsService } from './modules/projects/projects.service';
 import type {
+  ConnectedInstanceJobData,
   ProjectRestartJobData,
+  RestoredInstanceJobData,
   SelectiveProvisionJobData,
 } from './modules/projects/project-provisioning.queue';
+import { ProjectRestoreService } from './modules/projects/project-restore.service';
+import { ProjectConnectedInstanceService } from './modules/projects/project-connected-instance.service';
+
+/**
+ * How often the worker reclaims workspaces whose task has settled but which a
+ * run never released. Bounded below by "long enough that a live run cannot be
+ * mistaken for a dead one" - the reclaim only touches rows whose task is
+ * already terminal, so the interval is about promptness, not safety.
+ */
+const WORKSPACE_RECLAIM_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * Agent worker entry point.
@@ -52,6 +71,8 @@ async function bootstrap(): Promise<void> {
   const redis = app.get(RedisService);
   const workflow = app.get(AgentWorkflow);
   const projects = app.get(ProjectsService);
+  const restore = app.get(ProjectRestoreService);
+  const connectedInstance = app.get(ProjectConnectedInstanceService);
 
   const worker = new Worker<AgentJobData>(
     AGENT_TASK_QUEUE,
@@ -84,14 +105,47 @@ async function bootstrap(): Promise<void> {
    * run has not yet bound.
    */
   const provisioningWorker = new Worker<
-    SelectiveProvisionJobData | ProjectRestartJobData
+    | SelectiveProvisionJobData
+    | ProjectRestartJobData
+    | RestoredInstanceJobData
+    | ConnectedInstanceJobData
   >(
     PROJECT_PROVISIONING_QUEUE,
-    async (job: Job<SelectiveProvisionJobData | ProjectRestartJobData>) => {
+    async (
+      job: Job<
+        | SelectiveProvisionJobData
+        | ProjectRestartJobData
+        | RestoredInstanceJobData
+        | ConnectedInstanceJobData
+      >,
+    ) => {
       if (job.name === PROJECT_RESTART_JOB) {
         const data = job.data as ProjectRestartJobData;
         logger.log(`Restarting project ${data.technicalName} (${data.branch})`);
         await projects.completeRestart(data);
+        return;
+      }
+
+      /**
+       * ADR-067. Loading a real customer database is the slowest thing this
+       * worker does; a failure is written onto the project row (the script
+       * cleans up after itself) rather than retried.
+       */
+      if (job.name === PROJECT_RESTORED_INSTANCE_JOB) {
+        const data = job.data as RestoredInstanceJobData;
+        logger.log(`Restoring instance ${data.instanceName} from ${data.backupFilename}`);
+        await restore.complete(data);
+        return;
+      }
+
+      /**
+       * ADR-069. A connected project's own, empty instance: the same
+       * create_project chain plus HTTPS. Outcome written onto the project row.
+       */
+      if (job.name === PROJECT_CONNECTED_INSTANCE_JOB) {
+        const data = job.data as ConnectedInstanceJobData;
+        logger.log(`Creating connected instance ${data.instanceName} on port ${data.port}`);
+        await connectedInstance.complete(data);
         return;
       }
 
@@ -116,10 +170,40 @@ async function bootstrap(): Promise<void> {
 
   let shuttingDown = false;
 
+  /**
+   * Reclaims workspaces left behind by a run that never reached its release -
+   * a worker killed mid-task (SIGKILL, OOM, a crash-looped unit) or a run that
+   * exited before it could observe a cancellation. A worktree workspace left
+   * like that keeps pinning its branch in the project's clone, so every later
+   * task on that branch fails with "already checked out" until it is cleared.
+   *
+   * Runs once at boot - the moment right after the most likely cause, a worker
+   * that died - and then periodically, because a leak can also happen while
+   * this process stays up. Only workspaces of tasks already in a terminal
+   * state are touched (see `reclaimOrphans`), so this is safe beside live runs.
+   */
+  const workspaces = app.get(WorkspaceManager);
+  let reclaiming = false;
+  const reclaim = async (): Promise<void> => {
+    if (reclaiming || shuttingDown) return;
+    reclaiming = true;
+    try {
+      await workspaces.reclaimOrphans();
+    } catch (error) {
+      logger.error(`Workspace reclaim failed: ${(error as Error).message}`);
+    } finally {
+      reclaiming = false;
+    }
+  };
+  void reclaim();
+  const reclaimTimer = setInterval(() => void reclaim(), WORKSPACE_RECLAIM_INTERVAL_MS);
+  reclaimTimer.unref();
+
   const shutdown = async (signal: string): Promise<void> => {
     // A second signal during shutdown must not start a second shutdown.
     if (shuttingDown) return;
     shuttingDown = true;
+    clearInterval(reclaimTimer);
 
     logger.log(`Received ${signal}; draining the worker`);
 

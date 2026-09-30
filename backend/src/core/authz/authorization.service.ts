@@ -61,6 +61,35 @@ export class AuthorizationService {
   ) {}
 
   /**
+   * The projects a user may read, for a caller that needs the whole set rather
+   * than a yes/no on one project (the AI Office board and its realtime feed).
+   *
+   * Returns `null` for an admin - "every project" - rather than an actual list
+   * of every id, so the caller is not tempted to iterate it. Otherwise: created
+   * or granted, mirroring `decideProjectAccess`. Region is deliberately not
+   * included - a same-region project is listed but locked (ADR-043), and a
+   * caller reading task prompts or activity must not see a locked one.
+   */
+  async readableProjectIds(user: AuthenticatedUser): Promise<string[] | null> {
+    if (user.isAdmin) return null;
+
+    const [memberRows, ownedRows] = await Promise.all([
+      this.database.db
+        .select({ projectId: projectMembers.projectId })
+        .from(projectMembers)
+        .where(eq(projectMembers.userId, user.userId)),
+      this.database.db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.createdByUserId, user.userId)),
+    ]);
+
+    return [
+      ...new Set([...memberRows.map((row) => row.projectId), ...ownedRows.map((row) => row.id)]),
+    ];
+  }
+
+  /**
    * Requires the caller to be an admin.
    *
    * The flag is already on the verified token, so this is a comparison rather
@@ -131,10 +160,7 @@ export class AuthorizationService {
             .select({ id: projectMembers.id })
             .from(projectMembers)
             .where(
-              and(
-                eq(projectMembers.projectId, project.id),
-                eq(projectMembers.userId, user.userId),
-              ),
+              and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, user.userId)),
             )
             .limit(1)
         ).length > 0;

@@ -1,5 +1,10 @@
 import type {
   AgentCapabilities,
+  AiOfficeActivityItem,
+  AiOfficeAttentionItem,
+  AiOfficeBoard,
+  AiOfficeQueue,
+  NotificationPreferences,
   AgentSession,
   AuditLogEntry,
   AuthTokens,
@@ -17,6 +22,8 @@ import type {
   PendingApprovalSummary,
   ProjectAccessMember,
   BackupSummary,
+  CheckoutStatus,
+  CheckoutSyncResult,
   ProjectDetail,
   ProjectDocument,
   ProjectDocumentDetail,
@@ -40,32 +47,65 @@ const BASE = `${API_URL}/api/v1`;
 
 const ACCESS_TOKEN_KEY = 'linkederp.accessToken';
 const REFRESH_TOKEN_KEY = 'linkederp.refreshToken';
+const EXPIRY_KEY = 'linkederp.sessionExpiry';
+
+/**
+ * How long a session survives without being used, in the browser.
+ *
+ * A sliding window, not an absolute one: every token write pushes the deadline
+ * out, and the deadline is only reached after this much *inactivity*. The
+ * server's refresh token lives longer (`JWT_REFRESH_TTL`), so the browser is
+ * what decides an idle session is over - a deployment that wants a different
+ * window sets the refresh TTL and this together.
+ */
+const SESSION_IDLE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Token storage.
  *
- * sessionStorage rather than localStorage: a token that survives the browser
- * being closed is a token an unattended machine still holds. Refresh tokens are
- * single-use server-side, so the cost of losing them on close is one sign-in.
+ * localStorage rather than sessionStorage: sessionStorage is cleared when the
+ * tab closes, so an operator who closed a tab came back to a sign-in page while
+ * the server still held a valid 30-day refresh token for them. The session is
+ * bounded here instead - by an explicit deadline, so the token a shared or
+ * unattended machine holds still expires, which is what sessionStorage was
+ * standing in for.
  */
 export const tokenStore = {
   get access(): string | null {
     if (typeof window === 'undefined') return null;
-    return window.sessionStorage.getItem(ACCESS_TOKEN_KEY);
+    if (this.expired) {
+      this.clear();
+      return null;
+    }
+    return window.localStorage.getItem(ACCESS_TOKEN_KEY);
   },
   get refresh(): string | null {
     if (typeof window === 'undefined') return null;
-    return window.sessionStorage.getItem(REFRESH_TOKEN_KEY);
+    if (this.expired) {
+      this.clear();
+      return null;
+    }
+    return window.localStorage.getItem(REFRESH_TOKEN_KEY);
+  },
+  /** True when a stored session exists but its idle window has passed. */
+  get expired(): boolean {
+    if (typeof window === 'undefined') return false;
+    const raw = window.localStorage.getItem(EXPIRY_KEY);
+    if (!raw) return false;
+    const deadline = Number(raw);
+    return Number.isFinite(deadline) && Date.now() >= deadline;
   },
   set(tokens: { accessToken: string; refreshToken: string }): void {
     if (typeof window === 'undefined') return;
-    window.sessionStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken);
-    window.sessionStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken);
+    window.localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
+    window.localStorage.setItem(EXPIRY_KEY, String(Date.now() + SESSION_IDLE_WINDOW_MS));
   },
   clear(): void {
     if (typeof window === 'undefined') return;
-    window.sessionStorage.removeItem(ACCESS_TOKEN_KEY);
-    window.sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+    window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+    window.localStorage.removeItem(EXPIRY_KEY);
   },
 };
 
@@ -567,6 +607,47 @@ export const api = {
       ),
 
     /**
+     * A restored copy of a connected odoo.sh project (ADR-067).
+     * `restoreBackups` lists the zips an operator has staged on the host and
+     * whether this deployment can build one; `restoreFromBackup` queues the
+     * build. The project's own `restoredInstance` block is what a caller polls.
+     */
+    restoreBackups: (projectId: string) =>
+      request<{ available: boolean; reason: string | null; backups: string[] }>(
+        `/projects/${projectId}/restored-instance/backups`,
+      ),
+
+    restoreFromBackup: (projectId: string, backupFile: string) =>
+      request<{ queued: boolean; instanceName: string }>(
+        `/projects/${projectId}/restored-instance`,
+        { method: 'POST', body: { backupFile } },
+      ),
+
+    /**
+     * A connected project's own instance (ADR-069). `connectedInstanceAvailability`
+     * reports whether this deployment can create one (provisioning and HTTPS
+     * both on); `createConnectedInstance` queues the creation. The project's own
+     * `connectedInstance` block is what a caller polls. `revealConnectedInstanceMasterPassword`
+     * is admin/owner only — a 403 means the viewer's role, not a client bug.
+     */
+    connectedInstanceAvailability: (projectId: string) =>
+      request<{ available: boolean; reason: string | null }>(
+        `/projects/${projectId}/connected-instance/availability`,
+      ),
+
+    createConnectedInstance: (projectId: string) =>
+      request<{ queued: boolean; instanceName: string; port: number }>(
+        `/projects/${projectId}/connected-instance`,
+        { method: 'POST' },
+      ),
+
+    revealConnectedInstanceMasterPassword: (projectId: string) =>
+      request<{ masterPassword: string }>(
+        `/projects/${projectId}/connected-instance/master-password/reveal`,
+        { method: 'POST' },
+      ),
+
+    /**
      * The ephemeral preview instance (ADR-052): a short-lived running Odoo built
      * from a task's retained draft, so a reviewer sees the real UI before
      * approving. `preview` reads the live one, `startPreview` builds it,
@@ -613,6 +694,26 @@ export const api = {
         reason: string | null;
         modules: { name: string; state: string }[];
       }>(`/projects/${projectId}/installed-modules`),
+
+    /**
+     * The local clone this host keeps for a project (ADR-063). The GET reads
+     * disk only, so `behind` is as of the last sync and the page says so; `sync`
+     * is the call that reaches the remote.
+     */
+    checkoutStatus: (projectId: string) =>
+      request<CheckoutStatus>(`/projects/${projectId}/checkout`),
+
+    syncCheckout: (projectId: string, branch: string | null) =>
+      request<CheckoutSyncResult>(`/projects/${projectId}/checkout/sync`, {
+        method: 'POST',
+        body: { branch },
+      }),
+
+    analyzeCheckout: (projectId: string, branch: string | null) =>
+      request<{ branch: string | null; modules: number | null; message: string }>(
+        `/projects/${projectId}/checkout/analyze`,
+        { method: 'POST', body: { branch } },
+      ),
 
     update: (projectId: string, body: Record<string, unknown>) =>
       request<ProjectDetail>(`/projects/${projectId}`, { method: 'PATCH', body }),
@@ -842,6 +943,39 @@ export const api = {
 
   agent: {
     capabilities: () => request<AgentCapabilities>('/agent/capabilities'),
+  },
+
+  aiOffice: {
+    board: () => request<AiOfficeBoard>('/ai-office/board'),
+    attention: () => request<AiOfficeAttentionItem[]>('/ai-office/attention'),
+    queue: () => request<AiOfficeQueue>('/ai-office/queue'),
+    activity: (query: { before?: string; limit?: number } = {}) => {
+      const params = new URLSearchParams();
+      if (query.before) params.set('before', query.before);
+      if (query.limit) params.set('limit', String(query.limit));
+      const suffix = params.toString();
+      return request<AiOfficeActivityItem[]>(`/ai-office/activity${suffix ? `?${suffix}` : ''}`);
+    },
+  },
+
+  notifications: {
+    /** Whether the deployment has push configured, and the key to subscribe with. */
+    config: () => request<{ enabled: boolean; publicKey: string | null }>('/notifications/config'),
+
+    subscribe: (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+      request<void>('/notifications/subscriptions', { method: 'POST', body: subscription }),
+
+    unsubscribe: (endpoint: string) =>
+      request<void>('/notifications/subscriptions', { method: 'DELETE', body: { endpoint } }),
+
+    subscriptionCount: () => request<{ count: number }>('/notifications/subscriptions'),
+
+    preferences: () => request<NotificationPreferences>('/notifications/preferences'),
+
+    updatePreferences: (body: Partial<NotificationPreferences>) =>
+      request<NotificationPreferences>('/notifications/preferences', { method: 'PUT', body }),
+
+    test: () => request<{ sent: number }>('/notifications/test', { method: 'POST' }),
   },
 
   health: {

@@ -98,6 +98,20 @@ export interface ImplementationLoopOutcome {
   readonly providerId: string;
   readonly model: string;
   readonly calledExternalService: boolean;
+  /**
+   * The last successful `git_pull` this loop made, if any.
+   *
+   * Read by the workflow's no-change gate: a plan that was purely "pull the
+   * latest changes" leaves nothing in the diff for that gate to see, and
+   * without this the gate could not tell that apart from a model that did
+   * nothing. `git_pull`'s own output carries these fields (see the tool), so
+   * this only has to remember the last one, not reshape it.
+   */
+  readonly pulled?: {
+    readonly outcome: 'up_to_date' | 'fast_forwarded';
+    readonly branch: string;
+    readonly commits: number;
+  } | null;
 }
 
 /**
@@ -149,12 +163,24 @@ export class ModelImplementationLoop {
     });
 
     let suspended = false;
+    let pulled: ImplementationLoopOutcome['pulled'] = null;
 
     const execute = async (
       name: string,
       args: Record<string, unknown>,
     ): Promise<ToolCallOutcome> => {
       const outcome = await input.run({ name, input: args });
+
+      if (name === 'git_pull' && outcome.status === 'succeeded') {
+        const reported = outcome.output.outcome;
+        if (reported === 'up_to_date' || reported === 'fast_forwarded') {
+          pulled = {
+            outcome: reported,
+            branch: String(outcome.output.branch ?? input.branch),
+            commits: Number(outcome.output.commits ?? 0) || 0,
+          };
+        }
+      }
 
       if (outcome.status === 'approval_required') {
         // Halts the loop. The task suspends, a person decides, and a fresh run
@@ -231,6 +257,7 @@ export class ModelImplementationLoop {
       steps: result.steps,
       haltReason: result.value.haltReason,
       suspended,
+      pulled,
       usage: result.usage,
       boundaryFindings: result.boundaryFindings,
       redactionCount: result.redactionCount,
@@ -313,6 +340,7 @@ const IMPLEMENTATION_INSTRUCTION = [
   '  working tree. A plan whose files you only read is not carried out, whatever',
   '  your summary says. Apply every planned change FIRST, confirmed by its tool',
   '  result, before writing your summary — git decides completion, not prose.',
+  '  (A plan with an empty file list - a pull-only request - has no file to write.)',
   '',
   'How to work:',
   '- To change a file that already exists, use edit_file. Pass the exact existing',
@@ -326,7 +354,15 @@ const IMPLEMENTATION_INSTRUCTION = [
   '  do the smaller correct thing and explain the difference in your summary rather',
   '  than improvising something larger.',
   '- Use git_status or git_diff to check your own work before you finish.',
+  '- When the request asks to pull, update or sync the branch, call git_pull FIRST,',
+  '  before reading or writing anything, so you work on the latest code. If git_pull',
+  '  reports "up_to_date", nothing new existed on the remote: that is a successful',
+  '  pull, not a failure. If it is refused (diverged history, uncommitted changes),',
+  '  report the refusal as it was given; do not try to work around it.',
+  '- When the plan lists no files to modify and the request was only to pull, the',
+  '  pull IS the whole task: do not invent a file change to have something to show.',
   '- Do not commit or push. Those happen after validation, and are not yours to do.',
+  '  After a pull there is nothing to commit, and the platform knows that.',
   '- Stop when the plan is carried out. Do not look for further improvements.',
   '',
   'Finish with a short summary of what you changed and anything the reviewer should',
@@ -351,10 +387,15 @@ const ODOO_ONLINE_INSTRUCTION = [
   '- Every change you make takes effect immediately on a running system. There is no',
   '  branch and no undo: create exactly what the plan describes and nothing else.',
   '- odoo_create_field takes the field name WITHOUT the "x_" prefix; Odoo adds it.',
+  '  odoo_create_model takes the model name WITH the "x_" prefix and a human label.',
   '  odoo_add_field_to_view takes the full name INCLUDING "x_", which the create',
   '  result gives you.',
-  '- Read with odoo_list_fields before you create, so you do not create a field that',
-  '  already exists or place one after a field that does not.',
+  '- Read with odoo_list_fields before you create a custom field, so you do not',
+  '  create one that already exists or place one after a field that does not.',
+  '- odoo_create_records and odoo_update_records write business records (products,',
+  '  customers, and the like), when the plan calls for data rather than schema.',
+  '  Use odoo_search_records first when the plan updates existing records, to find',
+  '  the ids.',
   '- Stop when the plan is carried out. Do not look for further improvements.',
   '',
   'Finish with a short summary of what you changed. Do not claim to have created',

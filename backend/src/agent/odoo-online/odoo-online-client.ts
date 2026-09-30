@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { recordModelRefusal } from './odoo-record-surface';
 
 /**
- * The Odoo Online execution surface (ADR-028): no filesystem, no Git, no clone.
+ * The Odoo Online execution surface (ADR-028, extended by ADR-064): no
+ * filesystem, no Git, no clone.
  *
  * Customization happens through the Odoo JSON-RPC API, driven with the project's
  * credentials (URL, database, login and API key). This is the same mechanism Odoo
@@ -9,18 +11,50 @@ import { Injectable, Logger } from '@nestjs/common';
  * the form - and it was verified against a live Odoo Online instance rather than
  * assumed: the API key authenticates and creates fields and inherited views.
  *
- * The client exposes only the customization surface. Business records
- * (`res.partner`, `sale.order` rows and so on) are never read or written here;
- * the model allow-list below is what enforces the data-blind posture for this
- * mode, in code rather than by prompt.
+ * Record data (`product.template`, `res.partner` rows and so on) is reachable
+ * too, since ADR-064: this mode's whole reason to exist is often "make me some
+ * sample data" or "add these five customers", and a client that could never
+ * write a record could never do that. What stays fixed here rather than left to
+ * the tool layer is the *shape* of a record call - only `search_read`,
+ * `search_count`, `create` and `write` reach a model at all, `unlink` and
+ * `execute` do not exist on this client - because a client method is a smaller,
+ * more auditable boundary than trusting every caller to ask for the right thing.
+ * Which models and how many records is the record surface's job
+ * (`odoo-record-surface.ts`), reached through the tool and permission layers, not
+ * this file.
  */
 
-/** The JSON-RPC models the client may touch. Customization metadata only. */
+/** The JSON-RPC models the client may touch for customization. Metadata only. */
 const CUSTOMIZATION_MODELS = new Set([
   'ir.model',
   'ir.model.fields',
+  'ir.model.access',
   'ir.ui.view',
 ]);
+
+/**
+ * Models the client may *read* metadata from, and never write to (ADR-068).
+ *
+ * `ir.model.data` maps an xmlid (`base.group_user`) to a record id, which is how
+ * the create-model sequence resolves the groups its access rules need. That is a
+ * metadata lookup rather than a read of the group itself, and it is kept in a
+ * separate set so the distinction is structural: adding a model here can never
+ * grant a write, because only the read methods below are permitted against it.
+ */
+const READ_ONLY_MODELS = new Set(['ir.model.data']);
+
+/** The methods permitted against a `READ_ONLY_MODELS` entry. */
+const READ_ONLY_METHODS = new Set(['search_read', 'search_count']);
+
+/**
+ * The record methods the client may address to a business model.
+ *
+ * A fixed list rather than "whatever the caller asks for": `unlink` is absent
+ * deliberately (deleting customer records is not sample data, and nothing in this
+ * mode asks for it), as is `execute` - a method that runs arbitrary server-side
+ * code is the whole allow-list defeated in one call.
+ */
+const RECORD_METHODS = new Set(['search_read', 'search_count', 'create', 'write']);
 
 export interface OdooOnlineCredentials {
   /** Instance root, e.g. `https://vania-uat123.odoo.com`. Must be https. */
@@ -184,6 +218,170 @@ export class OdooOnlineClient {
     ])) as number;
   }
 
+  /**
+   * Creates a manual model the way Studio does (ADR-068), returning what was made.
+   *
+   * One `ir.model` row is not a usable model: nobody could open it (no access
+   * rule), records would have no title (no `x_name`), and `odoo_add_field_to_view`
+   * could never place a field on it (no materialised form view to inherit from).
+   * So this is the sequence Studio's `studio_model_create` runs, done over RPC:
+   *
+   *   1. `ir.model` create, with `x_name` nested in `field_id` as Studio nests it;
+   *   2. two `ir.model.access` rows, `base.group_system` full and
+   *      `base.group_user` without unlink, as `_setup_access_rights` creates;
+   *   3. a form view and a list view, so the model opens and can be extended.
+   *
+   * Studio's own helpers (`create_automatic_views`) are not called: they exist
+   * only where the Studio app is installed, and an Odoo Online instance without a
+   * Studio subscription would fail the whole call on step 3.
+   *
+   * Once step 1 succeeds the model exists and cannot be removed from here, so a
+   * later failure is reported with the model id rather than as a clean failure -
+   * a person has to know the model is there, half made.
+   */
+  async createModel(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    values: { model: string; label: string },
+  ): Promise<{
+    modelId: number;
+    accessIds: number[];
+    formViewId: number;
+    listViewId: number;
+  }> {
+    const existing = (await this.call(
+      credentials,
+      uid,
+      'ir.model',
+      'search_read',
+      [[['model', '=', values.model]]],
+      { fields: ['id'], limit: 1 },
+    )) as { id: number }[];
+    if (existing.length > 0) {
+      throw new OdooRpcError(
+        `A model named "${values.model}" already exists (id ${existing[0].id}). ` +
+          'Use odoo_create_field to extend it instead.',
+      );
+    }
+
+    // Resolved before anything is written, so a missing group is a clean refusal.
+    const groups = await this.groupIds(credentials, uid, ['group_system', 'group_user']);
+
+    const modelId = (await this.call(credentials, uid, 'ir.model', 'create', [
+      {
+        name: values.label,
+        model: values.model,
+        state: 'manual',
+        field_id: [
+          [
+            0,
+            0,
+            {
+              name: 'x_name',
+              field_description: 'Name',
+              ttype: 'char',
+              required: true,
+              state: 'manual',
+            },
+          ],
+        ],
+      },
+    ])) as number;
+
+    try {
+      const accessIds: number[] = [];
+      for (const [group, unlink] of [
+        ['group_system', true],
+        ['group_user', false],
+      ] as const) {
+        accessIds.push(
+          (await this.call(credentials, uid, 'ir.model.access', 'create', [
+            {
+              name: `${values.label} ${group}`,
+              model_id: modelId,
+              group_id: groups[group],
+              perm_read: true,
+              perm_write: true,
+              perm_create: true,
+              perm_unlink: unlink,
+            },
+          ])) as number,
+        );
+      }
+
+      const formViewId = (await this.call(credentials, uid, 'ir.ui.view', 'create', [
+        {
+          name: `Default form view for ${values.model}`,
+          model: values.model,
+          type: 'form',
+          arch:
+            '<form><sheet>' +
+            '<div class="oe_title"><h1>' +
+            '<field name="x_name" required="1" placeholder="Name..."/>' +
+            '</h1></div>' +
+            '<group name="main"/>' +
+            '</sheet></form>',
+        },
+      ])) as number;
+
+      const listViewId = (await this.call(credentials, uid, 'ir.ui.view', 'create', [
+        {
+          name: `Default list view for ${values.model}`,
+          model: values.model,
+          type: 'list',
+          arch: '<list><field name="x_name"/></list>',
+        },
+      ])) as number;
+
+      return { modelId, accessIds, formViewId, listViewId };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new OdooRpcError(
+        `The model "${values.model}" was created (id ${modelId}) but setting it up ` +
+          `failed: ${detail}. It exists on the instance without its access rules or views.`,
+      );
+    }
+  }
+
+  /**
+   * Ids of `base.<name>` groups, read from `ir.model.data`.
+   *
+   * `res.groups` is never addressed: it is protected on the record surface, and a
+   * group's id is a metadata lookup, not a group record read. `ir.model.data` is
+   * reachable only through this method and only with `search_read`
+   * (READ_ONLY_MODELS), never to write.
+   */
+  private async groupIds<T extends string>(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    names: readonly T[],
+  ): Promise<Record<T, number>> {
+    const rows = (await this.call(
+      credentials,
+      uid,
+      'ir.model.data',
+      'search_read',
+      [
+        [
+          ['module', '=', 'base'],
+          ['model', '=', 'res.groups'],
+          ['name', 'in', [...names]],
+        ],
+      ],
+      { fields: ['name', 'res_id'], limit: names.length },
+    )) as { name: string; res_id: number }[];
+
+    const ids = {} as Record<T, number>;
+    for (const name of names) {
+      const row = rows.find((candidate) => candidate.name === name);
+      if (!row) {
+        throw new OdooRpcError(`The group base.${name} was not found on the instance`);
+      }
+      ids[name] = row.res_id;
+    }
+    return ids;
+  }
+
   /** The base form view of a model (the one Studio inherits from). */
   async baseFormViewId(
     credentials: OdooOnlineCredentials,
@@ -229,6 +427,67 @@ export class OdooOnlineClient {
   }
 
   /**
+   * Record reads, restricted to the record surface (ADR-064).
+   *
+   * The model is checked again here although the tool validated it first: the
+   * client is the last point before the network, and a caller added later that
+   * forgets the tool-level check must still fail closed.
+   */
+  async searchRecords(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    domain: unknown[],
+    fields: readonly string[],
+    limit: number,
+  ): Promise<Record<string, unknown>[]> {
+    return (await this.recordCall(credentials, uid, model, 'search_read', [domain], {
+      fields: [...fields],
+      limit,
+    })) as Record<string, unknown>[];
+  }
+
+  /** How many records match, so a model can report totals without reading rows. */
+  async countRecords(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    domain: unknown[],
+  ): Promise<number> {
+    return (await this.recordCall(credentials, uid, model, 'search_count', [domain])) as number;
+  }
+
+  /**
+   * Creates records in one call, returning the ids Odoo assigned.
+   *
+   * Odoo 17+ accepts a list of value dicts to `create` and returns a list of ids;
+   * older versions returned a single id for a single dict. Both are normalised to
+   * an array so a caller never has to know which it is talking to.
+   */
+  async createRecords(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    records: readonly Record<string, unknown>[],
+  ): Promise<number[]> {
+    const result = await this.recordCall(credentials, uid, model, 'create', [[...records]]);
+    if (Array.isArray(result)) return result as number[];
+    if (typeof result === 'number') return [result];
+    throw new OdooRpcError(`create on ${model} returned no ids`);
+  }
+
+  /** Writes the same values to existing records. Odoo answers `true`. */
+  async updateRecords(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    ids: readonly number[],
+    values: Record<string, unknown>,
+  ): Promise<boolean> {
+    return (await this.recordCall(credentials, uid, model, 'write', [[...ids], values])) === true;
+  }
+
+  /**
    * Generic execute_kw, restricted to the customization allow-list.
    *
    * `kwargs` is a seventh element of the RPC argument list, not a trailing entry
@@ -245,13 +504,61 @@ export class OdooOnlineClient {
     args: unknown[],
     kwargs: Record<string, unknown> = {},
   ): Promise<unknown> {
+    if (READ_ONLY_MODELS.has(model)) {
+      if (!READ_ONLY_METHODS.has(method)) {
+        throw new OdooRpcError(
+          `The model "${model}" is read-only on this client; ` +
+            `"${method}" is not one of ${[...READ_ONLY_METHODS].join(', ')}.`,
+        );
+      }
+      return this.executeKw(credentials, uid, model, method, args, kwargs);
+    }
+
     if (!CUSTOMIZATION_MODELS.has(model)) {
       throw new OdooRpcError(
         `The model "${model}" is not part of the customization surface. ` +
-          'The Odoo Online agent may only read and write schema and views, never business records.',
+          'Schema and view changes go through ir.model, ir.model.fields, ' +
+          'ir.model.access and ir.ui.view only.',
       );
     }
 
+    return this.executeKw(credentials, uid, model, method, args, kwargs);
+  }
+
+  /**
+   * execute_kw against a business model, for the record surface (ADR-064).
+   *
+   * Two checks, both before anything leaves the platform: the method must be one
+   * of the four record methods, and the model must be outside the protected set
+   * (users, groups, `ir.*` and the rest in `odoo-record-surface.ts`).
+   */
+  private async recordCall(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    method: string,
+    args: unknown[],
+    kwargs: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    if (!RECORD_METHODS.has(method)) {
+      throw new OdooRpcError(`The record method "${method}" is not permitted on Odoo Online.`);
+    }
+    const refusal = recordModelRefusal(model);
+    if (refusal) {
+      throw new OdooRpcError(`Refused: ${refusal}.`);
+    }
+
+    return this.executeKw(credentials, uid, model, method, args, kwargs);
+  }
+
+  private async executeKw(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    method: string,
+    args: unknown[],
+    kwargs: Record<string, unknown>,
+  ): Promise<unknown> {
     return this.request(credentials, 'object', 'execute_kw', [
       credentials.db,
       uid,

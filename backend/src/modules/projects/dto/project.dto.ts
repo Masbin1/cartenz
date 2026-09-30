@@ -472,3 +472,18 @@ export class RestartProjectDto {
   })
   branch!: string;
 }
+
+/**
+ * ADR-067: which staged odoo.sh backup zip to build a restored copy from.
+ * A bare file name, never a path: the root script looks it up inside its own
+ * fixed staging directory.
+ */
+export class RestoreFromBackupDto {
+  @IsString()
+  @IsNotEmpty({ message: 'backupFile is required' })
+  @MaxLength(132)
+  @Matches(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.zip$/, {
+    message: 'backupFile must be a bare .zip file name with no directory',
+  })
+  backupFile!: string;
+}

@@ -1,5 +1,6 @@
 import type { AgentTaskStatus } from '@/lib/types';
 import { TASK_STATUS_LABELS, isActiveStatus, statusTone } from '@/lib/format';
+import { StatusDot } from '@/components/ui/status-dot';
 
 /**
  * The task status, shown consistently wherever a task appears. A pulsing dot
@@ -8,20 +9,18 @@ import { TASK_STATUS_LABELS, isActiveStatus, statusTone } from '@/lib/format';
  */
 export function StatusBadge({
   status,
+  size = 'small',
   className = '',
 }: {
   status: AgentTaskStatus;
+  size?: 'default' | 'small';
   className?: string;
 }) {
-  const tone = statusTone(status);
   const active = isActiveStatus(status) && status !== 'waiting_approval';
 
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-2xs font-medium ${tone.chip} ${className}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${tone.dot} ${active ? 'animate-pulse' : ''}`} />
+    <StatusDot tone={statusTone(status).tone} pulse={active} size={size} className={className}>
       {TASK_STATUS_LABELS[status]}
-    </span>
+    </StatusDot>
   );
 }

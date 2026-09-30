@@ -1,6 +1,8 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { ChevronRight } from 'lucide-react';
+import { Alert } from '@/components/ui/alert';
 import { parseUnifiedDiff, type DiffFile, type DiffLine } from './parse-diff';
 
 /**
@@ -14,6 +16,10 @@ import { parseUnifiedDiff, type DiffFile, type DiffLine } from './parse-diff';
  * file at a time and a single scrolling wall of text is how review gets skipped.
  * Line numbers come from the hunk headers, so a reviewer can find the line in
  * their own editor.
+ *
+ * Colours are tokens throughout (a tinted success or failure background with the
+ * marker in the same tone), so the diff stays legible in the light theme and the
+ * dark one.
  */
 export function DiffViewer({
   patch,
@@ -35,8 +41,8 @@ export function DiffViewer({
 
   if (files.length === 0) {
     return (
-      <p className="px-4 py-6 text-center text-xs text-content-subtle">
-        The diff could not be parsed for display. The patch is available through the API.
+      <p className="py-6 text-center text-callout text-content-subtle">
+        The diff could not be shown here. The patch is available through the API.
       </p>
     );
   }
@@ -53,10 +59,10 @@ export function DiffViewer({
       ))}
 
       {truncated ? (
-        <p className="rounded-md border border-state-waiting/30 bg-state-waiting/10 px-3 py-2 text-2xs text-state-waiting">
-          The diff was truncated at the size limit. The remainder is not shown; review the branch
-          directly for the full change.
-        </p>
+        <Alert tone="warning" title="Diff truncated">
+          The diff reached the size limit and the remainder is not shown. Review the branch directly
+          for the full change.
+        </Alert>
       ) : null}
     </div>
   );
@@ -79,39 +85,46 @@ function FilePanel({
         : 'text-state-running';
 
   return (
-    <div className="overflow-hidden rounded-md border border-surface-border bg-surface">
+    <div className="overflow-hidden rounded-xl border border-surface-border bg-surface-raised">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-surface-overlay"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-overlay/60"
         aria-expanded={!collapsed}
       >
-        <span className="flex min-w-0 items-center gap-2">
-          <span className={`shrink-0 font-mono text-2xs ${tone}`}>
+        <span className="flex min-w-0 items-center gap-2.5">
+          <ChevronRight
+            className={`h-4 w-4 shrink-0 text-content-subtle transition-transform ${
+              collapsed ? '' : 'rotate-90'
+            }`}
+            strokeWidth={1.75}
+            aria-hidden="true"
+          />
+          <span className={`shrink-0 font-mono text-caption ${tone}`}>
             {file.change === 'added' ? '+' : file.change === 'deleted' ? '-' : '~'}
           </span>
-          <span className="truncate font-mono text-2xs text-content">{file.path}</span>
+          <span className="min-w-0 truncate font-mono text-meta text-content">{file.path}</span>
           {file.oldPath ? (
-            <span className="shrink-0 font-mono text-2xs text-content-subtle">
+            <span className="hidden shrink-0 font-mono text-caption text-content-subtle sm:inline">
               (was {file.oldPath})
             </span>
           ) : null}
         </span>
 
-        <span className="flex shrink-0 items-center gap-2 font-mono text-2xs">
+        <span className="flex shrink-0 items-center gap-2 font-mono text-caption tabular-nums">
           <span className="text-state-success">+{file.linesAdded}</span>
           <span className="text-state-failure">-{file.linesRemoved}</span>
-          <span className="text-content-subtle">{collapsed ? 'show' : 'hide'}</span>
+          <span className="sr-only">{collapsed ? 'Show file' : 'Hide file'}</span>
         </span>
       </button>
 
       {collapsed ? null : file.binary ? (
-        <p className="border-t border-surface-border px-3 py-3 text-2xs text-content-subtle">
-          Binary file. No textual diff is available.
+        <p className="border-t border-surface-border px-4 py-3 text-meta text-content-subtle">
+          Binary file. No text diff is available.
         </p>
       ) : (
         <div className="overflow-x-auto border-t border-surface-border">
-          <table className="w-full border-collapse font-mono text-2xs">
+          <table className="w-full border-collapse font-mono text-caption leading-5 text-content">
             <tbody>
               {file.hunks.map((hunk) => (
                 <HunkRows key={hunk.header} header={hunk.header} lines={hunk.lines} />
@@ -128,7 +141,7 @@ function HunkRows({ header, lines }: { header: string; lines: readonly DiffLine[
   return (
     <>
       <tr>
-        <td colSpan={3} className="bg-surface-overlay px-3 py-1 text-content-subtle">
+        <td colSpan={3} className="bg-surface-overlay/60 px-4 py-1.5 text-content-subtle">
           {header}
         </td>
       </tr>
@@ -151,7 +164,7 @@ function LineRow({ line }: { line: DiffLine }) {
       : line.kind === 'removed'
         ? 'bg-state-failure/10'
         : line.kind === 'meta'
-          ? 'bg-surface-overlay text-content-subtle'
+          ? 'bg-surface-overlay/60 text-content-subtle'
           : '';
 
   const marker = line.kind === 'added' ? '+' : line.kind === 'removed' ? '-' : ' ';
@@ -165,14 +178,14 @@ function LineRow({ line }: { line: DiffLine }) {
 
   return (
     <tr className={rowClass}>
-      <td className="w-10 select-none px-2 text-right align-top text-content-subtle">
+      <td className="w-12 select-none border-r border-surface-border/70 px-2 text-right align-top tabular-nums text-content-subtle">
         {line.oldLine ?? ''}
       </td>
-      <td className="w-10 select-none px-2 text-right align-top text-content-subtle">
+      <td className="w-12 select-none border-r border-surface-border/70 px-2 text-right align-top tabular-nums text-content-subtle">
         {line.newLine ?? ''}
       </td>
-      <td className="whitespace-pre px-2 align-top">
-        <span className={`select-none ${markerClass}`}>{marker}</span>
+      <td className="whitespace-pre px-3 align-top">
+        <span className={`mr-1 select-none ${markerClass}`}>{marker}</span>
         <span className={line.kind === 'meta' ? 'italic' : ''}>{line.text}</span>
       </td>
     </tr>

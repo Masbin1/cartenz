@@ -335,6 +335,60 @@ export const projects = pgTable(
      * to choose which one it is talking to.
      */
     isOdoosh: boolean('is_odoosh').notNull().default(false),
+    /**
+     * A restored copy of the customer's instance (ADR-067): a NEW Odoo on this
+     * host, loaded from an odoo.sh backup zip and neutralized before it ever
+     * starts. For a person to look at real data - never where the agent works,
+     * which stays the project's own template-built database (ADR-050 §3).
+     *
+     * 'none' until an operator asks for one; 'pending' while the worker runs
+     * the root script; 'restored' once the unit is listening; 'failed' with
+     * the script's own reason otherwise (the script has already cleaned up).
+     */
+    restoredStatus: text('restored_status', {
+      enum: ['none', 'pending', 'restored', 'failed'],
+    })
+      .notNull()
+      .default('none'),
+    /** The instance's name: its directory, database and `odoo-<name>` unit. */
+    restoredInstanceName: text('restored_instance_name'),
+    /** The loopback port the restored instance listens on. */
+    restoredPort: integer('restored_port'),
+    /** The backup file it was built from, by basename inside the staging dir. */
+    restoredBackupFile: text('restored_backup_file'),
+    restoredError: text('restored_error'),
+    restoredAt: timestamp('restored_at', { withTimezone: true }),
+    /**
+     * A provisioned instance for a connected project (ADR-069): a NEW, empty
+     * Odoo instance the platform stands up for a connected `odoo_sh` project,
+     * the same chain `create_project`/`create_project_enterprise` run for
+     * "Create with AI", so the project owner can reach `/web/database/manager`
+     * over HTTPS and restore their own database into it.
+     *
+     * Distinct from `restored*` above: that instance is preloaded from an
+     * odoo.sh backup and stays locked to localhost; this one starts empty and
+     * is reachable at `connectedInstanceUrl`. A project may have both.
+     */
+    connectedInstanceStatus: text('connected_instance_status', {
+      enum: ['none', 'pending', 'ready', 'failed'],
+    })
+      .notNull()
+      .default('none'),
+    /** The instance's name: its directory, database and `odoo-<name>` unit. */
+    connectedInstanceName: text('connected_instance_name'),
+    connectedInstancePort: integer('connected_instance_port'),
+    /** The public URL, always `https://` once issuance succeeds (ADR-069). */
+    connectedInstanceUrl: text('connected_instance_url'),
+    /** Reference into secret_records for the generated Odoo master password. */
+    connectedInstanceMasterPasswordRef: text('connected_instance_master_password_ref'),
+    connectedInstanceError: text('connected_instance_error'),
+    connectedInstanceCreatedAt: timestamp('connected_instance_created_at', { withTimezone: true }),
+    /**
+     * True once create_project + the addons grant built this instance on the
+     * host. A retry after a failure past that point resumes at the pull/HTTPS
+     * steps instead of re-running create, which refuses an existing name.
+     */
+    connectedInstanceHostReady: boolean('connected_instance_host_ready').notNull().default(false),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
@@ -1324,3 +1378,52 @@ export const projectEnvironments = pgTable(
 );
 
 export type ProjectEnvironmentRow = typeof projectEnvironments.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Web push (ADR-065). A subscription is one browser's registration with a
+// push service (its endpoint is that service's URL, unique to the browser
+// install); a user with several devices holds several rows.
+// ---------------------------------------------------------------------------
+
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** The push service URL the browser registered. Unique: re-subscribing updates the row. */
+    endpoint: text('endpoint').notNull(),
+    /** The two keys `PushSubscription.toJSON()` returns, needed to encrypt a message to this browser. */
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    userAgent: text('user_agent'),
+    lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => ({
+    endpointUnique: uniqueIndex('push_subscriptions_endpoint_unique').on(table.endpoint),
+    byUser: index('push_subscriptions_user_idx').on(table.userId),
+  }),
+);
+
+export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
+
+/**
+ * Per-user, per-event opt-in. A row only exists once a user has changed a
+ * default; the service reads a missing row as "all events on, sound on",
+ * which is the platform default (ADR-065) and keeps the common case free of
+ * a row nobody asked for.
+ */
+export const notificationPreferences = pgTable('notification_preferences', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  approvalRequired: boolean('approval_required').notNull().default(true),
+  taskCompleted: boolean('task_completed').notNull().default(true),
+  taskFailed: boolean('task_failed').notNull().default(true),
+  soundEnabled: boolean('sound_enabled').notNull().default(true),
+  ...timestamps,
+});
+
+export type NotificationPreferenceRow = typeof notificationPreferences.$inferSelect;

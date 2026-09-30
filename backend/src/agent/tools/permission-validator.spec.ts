@@ -103,6 +103,53 @@ describe('ToolPermissionValidator', () => {
     );
   });
 
+  it('requires approval for a model creation, as a separate action from a record write', () => {
+    const decision = validator.validate(
+      { toolName: 'odoo_create_model', input: { model: 'x_servis', label: 'Servis' } },
+      policy({ odoo_customize: true }, [], 'odoo_online'),
+    );
+    expect(decision.outcome).toBe('approval_required');
+    expect(decision.outcome === 'approval_required' && decision.approvalAction).toBe(
+      'odoo_model_create',
+    );
+  });
+
+  it('does not treat a record-write approval as consent to create a model', () => {
+    // The two grants are distinct: a plan that said "create sample data" is not
+    // consent to change the shape of the database (ADR-068).
+    const decision = validator.validate(
+      { toolName: 'odoo_create_model', input: { model: 'x_servis', label: 'Servis' } },
+      policy({ odoo_customize: true }, ['odoo_record_write'], 'odoo_online'),
+    );
+    expect(decision.outcome).toBe('approval_required');
+  });
+
+  it('allows a model creation once its own approval has been granted', () => {
+    const decision = validator.validate(
+      { toolName: 'odoo_create_model', input: { model: 'x_servis', label: 'Servis' } },
+      policy({ odoo_customize: true }, ['odoo_model_create'], 'odoo_online'),
+    );
+    expect(decision.outcome).toBe('allowed');
+  });
+
+  it('lets an approved change-task plan stand in for a model creation on Odoo Online', () => {
+    // The same relationship odoo_record_write already has with implementation_plan.
+    const decision = validator.validate(
+      { toolName: 'odoo_create_model', input: { model: 'x_servis', label: 'Servis' } },
+      policy({ odoo_customize: true }, ['implementation_plan'], 'odoo_online', 'change'),
+    );
+    expect(decision.outcome).toBe('allowed');
+  });
+
+  it('refuses a model name that does not start with x_, before it leaves the platform', () => {
+    const decision = validator.validate(
+      { toolName: 'odoo_create_model', input: { model: 'servis', label: 'Servis' } },
+      policy({ odoo_customize: true }, ['odoo_model_create'], 'odoo_online'),
+    );
+    expect(decision.outcome).toBe('denied');
+    expect(decision.outcome === 'denied' && decision.reason).toContain('x_');
+  });
+
   it('refuses a branch name that could be read as a command option', () => {
     for (const name of ['--upload-pack=evil', '-x', 'branch;rm -rf /', 'branch name']) {
       const decision = validator.validate({ toolName: 'git_branch', input: { name } }, policy());
@@ -257,14 +304,19 @@ describe('tool registry', () => {
       'git_branch',
       'git_commit',
       'git_diff',
+      'git_pull',
       'git_push',
       'git_status',
       'list_directory',
       'list_modules',
       'odoo_add_field_to_view',
       'odoo_create_field',
+      'odoo_create_model',
+      'odoo_create_records',
       'odoo_list_fields',
       'odoo_list_models',
+      'odoo_search_records',
+      'odoo_update_records',
       'read_file',
       'search_code',
       'update_file',

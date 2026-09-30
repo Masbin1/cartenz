@@ -7,7 +7,15 @@ import type { ProjectAnalysis } from './odoo-project-analyser';
 
 export interface RecordAnalysisInput {
   readonly projectId: string;
-  readonly taskId: string;
+  /**
+   * The task this analysis came from, or null when no task did.
+   *
+   * Null is the case a local-clone sync produces (ADR-063): the analysis was
+   * run because a person asked for a project's code to be read, not because a
+   * task was executing, and inventing an id would attribute the result to a run
+   * that never happened.
+   */
+  readonly taskId: string | null;
   readonly analysis: ProjectAnalysis;
 }
 

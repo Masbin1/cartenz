@@ -2,10 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { WebSocket, WebSocketServer as WsServer } from 'ws';
 import type { Server } from 'node:http';
 import { RedisService } from '../../core/redis/redis.service';
-import {
-  TASK_EVENT_CHANNEL_PATTERN,
-  taskIdFromChannel,
-} from '../../core/redis/redis.constants';
+import { TASK_EVENT_CHANNEL_PATTERN, taskIdFromChannel } from '../../core/redis/redis.constants';
 import { TokenService } from '../auth/token.service';
 import { DatabaseService } from '../../core/database/database.service';
 import { agentTasks } from '../../core/database/schema';
@@ -13,11 +10,30 @@ import { AuthorizationService } from '../../core/authz/authorization.service';
 import { eq } from 'drizzle-orm';
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 
-/** A connected client and the tasks it is following. */
+/** How long a task's access decision is reused for one socket, in ms. */
+const ACCESS_TTL_MS = 60_000;
+
+/** Upper bound on the task-to-project cache, so a long-lived socket cannot grow it without limit. */
+const PROJECT_CACHE_MAX = 5_000;
+
+/** How often a socket's readable-project set is refreshed, in ms (AI Office). */
+const SCOPE_TTL_MS = 60_000;
+
+/** A connected client, what it follows, and what it may see. */
 interface Subscriber {
   readonly socket: WebSocket;
   readonly user: AuthenticatedUser;
   readonly taskIds: Set<string>;
+  /** True once the socket asked for the cross-project AI Office feed. */
+  office: boolean;
+  /** Readable projects, refreshed on `scopeAt`. Null until first resolved. */
+  scopes: Set<string> | null;
+  scopeAt: number;
+  /**
+   * Per-task access decisions, so an event burst for one task costs one check
+   * rather than one per event. Expires, because a grant can be revoked.
+   */
+  readonly access: Map<string, { allowed: boolean; at: number }>;
 }
 
 /**
@@ -43,6 +59,11 @@ export class TaskEventsGateway implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TaskEventsGateway.name);
   private server?: WsServer;
   private readonly subscribers = new Map<WebSocket, Subscriber>();
+  /**
+   * Task to project. A task never changes project, so entries do not expire;
+   * the size cap is what keeps the map bounded on a long-running process.
+   */
+  private readonly projectOfTask = new Map<string, string>();
 
   constructor(
     private readonly redis: RedisService,
@@ -100,7 +121,15 @@ export class TaskEventsGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    this.subscribers.set(socket, { socket, user, taskIds: new Set() });
+    this.subscribers.set(socket, {
+      socket,
+      user,
+      taskIds: new Set(),
+      office: false,
+      scopes: null,
+      scopeAt: 0,
+      access: new Map(),
+    });
 
     socket.on('message', (raw) => {
       void this.onMessage(socket, raw.toString());
@@ -115,11 +144,32 @@ export class TaskEventsGateway implements OnModuleInit, OnModuleDestroy {
     const subscriber = this.subscribers.get(socket);
     if (!subscriber) return;
 
-    let message: { action?: string; taskId?: string };
+    let message: { action?: string; taskId?: string; scope?: string };
     try {
       message = JSON.parse(raw);
     } catch {
       this.send(socket, { type: 'error', message: 'Malformed message' });
+      return;
+    }
+
+    /**
+     * The AI Office feed: every task event for every project the socket's user
+     * may read. Separate from a task subscription because the authorisation
+     * question is different - "which projects" instead of "this task" - and it
+     * is answered once here rather than per event.
+     */
+    if (message.action === 'subscribe' && (message as { scope?: string }).scope === 'ai-office') {
+      subscriber.office = true;
+      subscriber.scopes = null;
+      subscriber.scopeAt = 0;
+      await this.readableProjects(subscriber);
+      this.send(socket, { type: 'subscribed', scope: 'ai-office' });
+      return;
+    }
+
+    if (message.action === 'unsubscribe' && (message as { scope?: string }).scope === 'ai-office') {
+      subscriber.office = false;
+      this.send(socket, { type: 'unsubscribed', scope: 'ai-office' });
       return;
     }
 
@@ -178,10 +228,90 @@ export class TaskEventsGateway implements OnModuleInit, OnModuleDestroy {
 
   private fanOut(taskId: string, payload: string): void {
     for (const subscriber of this.subscribers.values()) {
-      if (!subscriber.taskIds.has(taskId)) continue;
       if (subscriber.socket.readyState !== WebSocket.OPEN) continue;
-      subscriber.socket.send(payload);
+
+      if (subscriber.taskIds.has(taskId)) {
+        subscriber.socket.send(payload);
+        continue;
+      }
+
+      // An AI Office subscriber is checked asynchronously - the project lookup
+      // and the authorisation call are both awaited - so it cannot be decided
+      // in this loop. Fire it and let it deliver when it resolves.
+      if (subscriber.office) void this.deliverToOffice(subscriber, taskId, payload);
     }
+  }
+
+  /**
+   * Delivers one event to an AI Office subscriber if the event's task belongs to
+   * a project that subscriber may read.
+   *
+   * The decision is cached per task for `ACCESS_TTL_MS`: a check per event would
+   * mean a database read and an authorisation call on every tool call of every
+   * running task, for every open board. A denial is cached too, so a socket
+   * cannot use the feed to probe for task identifiers.
+   */
+  private async deliverToOffice(
+    subscriber: Subscriber,
+    taskId: string,
+    payload: string,
+  ): Promise<void> {
+    try {
+      const cached = subscriber.access.get(taskId);
+      let allowed: boolean;
+
+      if (cached && Date.now() - cached.at < ACCESS_TTL_MS) {
+        allowed = cached.allowed;
+      } else {
+        const scopes = await this.readableProjects(subscriber);
+        const projectId = await this.projectForTask(taskId);
+        allowed = projectId !== null && scopes.has(projectId);
+        subscriber.access.set(taskId, { allowed, at: Date.now() });
+      }
+
+      if (!allowed) return;
+      if (subscriber.socket.readyState !== WebSocket.OPEN) return;
+      subscriber.socket.send(payload);
+    } catch (error) {
+      this.logger.warn(`AI Office delivery failed for task ${taskId}: ${(error as Error).message}`);
+    }
+  }
+
+  /** The task's project, remembered for the process's lifetime (the value is immutable). */
+  private async projectForTask(taskId: string): Promise<string | null> {
+    if (!isUuid(taskId)) return null;
+
+    const known = this.projectOfTask.get(taskId);
+    if (known !== undefined) return known;
+
+    const [task] = await this.database.db
+      .select({ projectId: agentTasks.projectId })
+      .from(agentTasks)
+      .where(eq(agentTasks.id, taskId))
+      .limit(1);
+
+    if (!task) return null;
+
+    if (this.projectOfTask.size >= PROJECT_CACHE_MAX) this.projectOfTask.clear();
+    this.projectOfTask.set(taskId, task.projectId);
+    return task.projectId;
+  }
+
+  /**
+   * The projects whose events this socket may receive, resolved through the same
+   * authorisation service the HTTP layer uses and refreshed on `SCOPE_TTL_MS`.
+   *
+   * Admin reads everything, expressed as a set that matches any project id.
+   */
+  private async readableProjects(subscriber: Subscriber): Promise<Set<string>> {
+    if (subscriber.scopes && Date.now() - subscriber.scopeAt < SCOPE_TTL_MS) {
+      return subscriber.scopes;
+    }
+
+    const projects = await this.authz.readableProjectIds(subscriber.user);
+    subscriber.scopes = projects === null ? ANY_PROJECT : new Set(projects);
+    subscriber.scopeAt = Date.now();
+    return subscriber.scopes;
   }
 
   private send(socket: WebSocket, payload: unknown): void {
@@ -199,8 +329,16 @@ export class TaskEventsGateway implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/**
+ * A set that report any project id as present. Used for an admin, who may read
+ * every project, so the fan-out needs no special case.
+ */
+const ANY_PROJECT: Set<string> = {
+  has: () => true,
+  size: 0,
+} as unknown as Set<string>;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value);

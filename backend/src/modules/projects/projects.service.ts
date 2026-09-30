@@ -71,6 +71,7 @@ import type {
 } from './project-provisioning.queue';
 import { ProjectDeploymentService, technicalNameFromOnPremisePath } from './project-deployment.service';
 import { ProjectMergeService } from './project-merge.service';
+import { ProjectCheckoutService } from './project-checkout.service';
 import {
   GitHubRepositoryService,
   type GitHubConnectionResult,
@@ -79,6 +80,10 @@ import { WorkspaceManager } from '../../agent/workspace/workspace-manager';
 import { TERMINAL_TASK_STATUSES } from '../../agent/task-state';
 import { assertSafeRemoteUrl, UnsafeRemoteUrlError } from '../../agent/git/git-url';
 import { GitService } from '../../agent/git/git.service';
+import {
+  readProjectGitCredential,
+  resolveProjectGitAccess,
+} from '../../agent/git/project-git-access';
 import {
   databaseFromUrl,
   instanceRootOf,
@@ -169,6 +174,7 @@ export class ProjectsService {
     private readonly githubRepositories: GitHubRepositoryService,
     private readonly deployment: ProjectDeploymentService,
     private readonly merge: ProjectMergeService,
+    private readonly checkouts: ProjectCheckoutService,
   ) {}
   /**
    * Brings a project's provisioned instance up to date with its repository
@@ -760,6 +766,9 @@ export class ProjectsService {
         projectType: projects.projectType,
         repositoryUrl: projects.repositoryUrl,
         environmentConfig: projects.environmentConfig,
+        gitCredentialId: projects.gitCredentialId,
+        gitUsername: projects.gitUsername,
+        gitTransport: projects.gitTransport,
       })
       .from(projects)
       .where(eq(projects.id, projectId))
@@ -767,16 +776,27 @@ export class ProjectsService {
 
     if (!project) throw new NotFoundException('Project not found');
 
-    // ADR-041's lesson, same as pull/merge/restart: a platform-created
-    // repository lives as a connection, not in the project's own column.
-    const connections = await this.database.db
-      .select({
-        connectionType: projectConnections.connectionType,
-        metadata: projectConnections.metadata,
-      })
-      .from(projectConnections)
-      .where(eq(projectConnections.projectId, projectId));
-    const repositoryUrl = effectiveRepositoryUrl(project.repositoryUrl, connections);
+    /**
+     * The same resolution the checkout, the task clone and the push use
+     * (ADR-059): the project's chosen credential, else its Git connection's
+     * secret, else the deployment default for the host — and the URL with the
+     * project's transport applied. Probing anonymously here is what produced
+     * `Permission denied (publickey)` on a project whose Git access was correctly
+     * configured: every other git operation presented the key, this one did not.
+     * It also reads the URL from the connection when the column is empty
+     * (ADR-041), which the previous inline query did as well.
+     */
+    const access = await resolveProjectGitAccess(
+      { database: this.database, gitCredentials: this.gitCredentials },
+      {
+        projectId,
+        repositoryUrl: project.repositoryUrl,
+        gitCredentialId: project.gitCredentialId,
+        gitUsername: project.gitUsername,
+        gitTransport: project.gitTransport,
+      },
+    );
+    const repositoryUrl = access.repositoryUrl;
 
     if (project.projectType === 'on_premise' && !repositoryUrl) {
       const path = readOnPremisePath(project.environmentConfig);
@@ -792,7 +812,9 @@ export class ProjectsService {
       throw new BadRequestException('This project has no repository to read branches from.');
     }
 
-    return { branches: await this.readRemoteBranches(repositoryUrl) };
+    const credential = await readProjectGitCredential(this.secrets, access);
+
+    return { branches: await this.readRemoteBranches(repositoryUrl, credential) };
   }
 
   /**
@@ -1054,7 +1076,43 @@ export class ProjectsService {
         })
       : null;
 
+    /**
+     * A connected project's code is brought down to this host now (ADR-063).
+     *
+     * After the response is assembled, and best-effort: the project exists and is
+     * usable whether or not the clone succeeds, and a repository that is
+     * unreachable or needs a credential nobody has yet must not turn a successful
+     * connection into a failed request. The failure is logged and recorded, and
+     * the project page offers the same sync as a button.
+     */
+    await this.warmCheckout(project.id, user.userId, project.name);
+
     return github ? { ...this.present(project), github } : this.present(project);
+  }
+
+  /**
+   * Clones the project once, every branch, when this deployment keeps local
+   * clones (ADR-063).
+   *
+   * One clone holds every branch, so connecting costs one download however many
+   * environments the project declares, and the branch a task works on is picked
+   * later from the ones already there. `PROJECT_CHECKOUT_REUSE` decides whether
+   * tasks take worktrees from it or keep cloning for themselves.
+   */
+  private async warmCheckout(projectId: string, userId: string, projectName: string): Promise<void> {
+    if (!this.checkouts.enabled) return;
+
+    try {
+      const result = await this.checkouts.sync(projectId, userId);
+      this.logger.log(
+        `Local clone for "${projectName}": ${result.outcome} — ${result.message}`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Local clone for "${projectName}" could not be prepared: ${(error as Error).message}. ` +
+          'The project is unaffected; the project page can retry the sync.',
+      );
+    }
   }
 
   /**
@@ -2681,6 +2739,19 @@ export class ProjectsService {
     restartCommit?: string | null;
     restartBranch?: string | null;
     restartedAt?: Date | null;
+    restoredStatus?: string;
+    restoredInstanceName?: string | null;
+    restoredPort?: number | null;
+    restoredBackupFile?: string | null;
+    restoredError?: string | null;
+    restoredAt?: Date | null;
+    connectedInstanceStatus?: string;
+    connectedInstanceName?: string | null;
+    connectedInstancePort?: number | null;
+    connectedInstanceUrl?: string | null;
+    connectedInstanceMasterPasswordRef?: string | null;
+    connectedInstanceError?: string | null;
+    connectedInstanceCreatedAt?: Date | null;
     /** ADR-050/ADR-054: the linked instance this connect points at. */
     projectUrl?: string | null;
     projectDatabase?: string | null;
@@ -2735,6 +2806,36 @@ export class ProjectsService {
         commit: project.restartCommit ?? null,
         branch: project.restartBranch ?? null,
         restartedAt: project.restartedAt ?? null,
+      },
+      /**
+       * A restored copy of this connected project's odoo.sh instance (ADR-067):
+       * real customer data, on this host, for a person to look at. Never where
+       * the agent works - that stays the `provisioning` instance above, on an
+       * always-empty standard database (ADR-050 §3). Null-ish ('none') until an
+       * operator asks for one.
+       */
+      restoredInstance: {
+        status: project.restoredStatus ?? 'none',
+        instanceName: project.restoredInstanceName ?? null,
+        port: project.restoredPort ?? null,
+        backupFile: project.restoredBackupFile ?? null,
+        error: project.restoredError ?? null,
+        restoredAt: project.restoredAt ?? null,
+      },
+      /**
+       * A connected project's own provisioned instance (ADR-069): empty,
+       * HTTPS, database manager open so the project owner restores their own
+       * backup into it. `hasMasterPassword` is a boolean only, same rule as
+       * `provisioning` above.
+       */
+      connectedInstance: {
+        status: project.connectedInstanceStatus ?? 'none',
+        instanceName: project.connectedInstanceName ?? null,
+        port: project.connectedInstancePort ?? null,
+        url: project.connectedInstanceUrl ?? null,
+        error: project.connectedInstanceError ?? null,
+        createdAt: project.connectedInstanceCreatedAt ?? null,
+        hasMasterPassword: Boolean(project.connectedInstanceMasterPasswordRef),
       },
       /**
        * The linked instance this project points at (ADR-050, ADR-054), when the

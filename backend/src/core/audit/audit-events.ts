@@ -145,7 +145,31 @@ export const AUDIT_EVENTS = {
    * that requested it - the restore point is what matters afterwards.
    */
   PROJECT_BACKUP_CREATED: 'project.backup_created',
+  /** ADR-067: a restored copy of an odoo.sh backup was requested / built / failed. */
+  PROJECT_RESTORED_INSTANCE_REQUESTED: 'project.restored_instance_requested',
+  PROJECT_RESTORED_INSTANCE_CREATED: 'project.restored_instance_created',
+  PROJECT_RESTORED_INSTANCE_FAILED: 'project.restored_instance_failed',
+  /**
+   * ADR-069: a connected project's own provisioned instance was requested /
+   * created / failed, and its master password revealed.
+   */
+  PROJECT_CONNECTED_INSTANCE_REQUESTED: 'project.connected_instance_requested',
+  PROJECT_CONNECTED_INSTANCE_CREATED: 'project.connected_instance_created',
+  PROJECT_CONNECTED_INSTANCE_FAILED: 'project.connected_instance_failed',
+  PROJECT_CONNECTED_INSTANCE_PASSWORD_REVEALED: 'project.connected_instance_password_revealed',
   PROJECT_BACKUP_FAILED: 'project.backup_failed',
+
+  /**
+   * A project's repository was cloned to this host, or its local clone was
+   * brought up to date with the remote (ADR-063).
+   *
+   * Its own event rather than a task's: this is the platform holding a project's
+   * source outside any task, and what it recorded - which branch, which commit,
+   * how far behind - is what makes the local copy's staleness answerable later.
+   */
+  PROJECT_CHECKOUT_SYNCED: 'project.checkout_synced',
+  /** The local clone was read back and the project's memory rewritten from it. */
+  PROJECT_CHECKOUT_ANALYSED: 'project.checkout_analysed',
 
   /** The per-version Odoo source catalog was changed (ADR-045). */
   ODOO_VERSION_REPOSITORY_CREATED: 'odoo_version_repository.created',

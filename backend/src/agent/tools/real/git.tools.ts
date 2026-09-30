@@ -4,6 +4,7 @@ import { assertSafeRefName } from '../../git/git-url';
 import {
   GIT_BRANCH_SCHEMA,
   GIT_COMMIT_SCHEMA,
+  GIT_PULL_SCHEMA,
   GIT_PUSH_SCHEMA,
   NO_ARGUMENTS_SCHEMA,
 } from '../tool-schemas';
@@ -41,8 +42,107 @@ export class RealGitTools {
   ) {}
 
   get definitions(): readonly AnyToolDefinition[] {
-    return [this.gitStatus, this.gitDiff, this.gitBranch, this.gitCommit, this.gitPush];
+    return [
+      this.gitStatus,
+      this.gitDiff,
+      this.gitPull,
+      this.gitBranch,
+      this.gitCommit,
+      this.gitPush,
+    ];
   }
+
+  /**
+   * Brings the task branch up to date with the remote, fast-forward only.
+   *
+   * Offered to the model, unlike commit and push, because "pull the latest
+   * changes first" is a request a person makes of the agent in words, and the
+   * only way to honour it without a tool was for the model to say it could not -
+   * or, worse, for the planner to invent a file change so the plan had one.
+   *
+   * It is safe to offer for the reasons that make push unsafe to offer, in
+   * reverse: nothing leaves the platform (a fetch sends no repository content
+   * out), the branch only ever moves forward to a commit the remote already
+   * holds, and a divergence or an unclean tree is refused by git with the branch
+   * left where it was. `repository_write` is the permission because the working
+   * tree does change.
+   *
+   * The credential is unsealed here, on demand, exactly as for push (ADR-021,
+   * ADR-058, ADR-059): the project's stored connection, never a host SSH key.
+   */
+  private readonly gitPull: ToolDefinition<Record<string, never>> = {
+    name: 'git_pull',
+    description:
+      'Pull the latest commits of the task branch from the connected repository (fast-forward only). ' +
+      'Use this first when the request asks to pull or update the branch. Reports "up_to_date" when there is nothing new.',
+    permission: 'repository_write',
+    modes: ['odoo_sh', 'on_premise'],
+    leavesPlatform: false,
+    simulated: false,
+    parameters: GIT_PULL_SCHEMA,
+    availableToModel: true,
+    validate: requireObject,
+    execute: async (_input, context) => {
+      assertRepository(context);
+
+      const remoteUrl =
+        context.workspace.repositoryUrl ??
+        (await this.git.originUrl(context.workspace.repositoryPath));
+
+      if (!remoteUrl) {
+        throw new Error(
+          'There is no remote to pull from: this workspace has no repository URL and ' +
+            'the repository has no "origin" remote.',
+        );
+      }
+
+      const credential = context.workspace.credentialRef
+        ? {
+            kind: context.workspace.credentialKind,
+            value: await this.secrets.read(context.workspace.credentialRef),
+            hostKey: context.workspace.sshHostKey,
+            username: context.workspace.credentialUsername,
+          }
+        : null;
+
+      const lease = {
+        credentialDirectory: context.workspace.metadataPath,
+        credential,
+      };
+
+      /**
+       * The branch the task works on is normally the branch a person chose, which
+       * exists on the remote (ADR-046). Where the task works on a branch of its
+       * own - a main-targeted environment - that branch may not exist remotely
+       * yet, and the branch it was cut from is the one with anything to pull.
+       */
+      let source = context.workspace.branch;
+      if (source !== context.workspace.baseBranch) {
+        const remoteTip = await this.git.remoteBranchCommit(remoteUrl, source, lease);
+        if (remoteTip === null) source = context.workspace.baseBranch;
+      }
+
+      const result = await this.git.pullFastForward(
+        context.workspace.repositoryPath,
+        remoteUrl,
+        source,
+        lease,
+      );
+
+      return {
+        branch: context.workspace.branch,
+        pulledFrom: `origin/${result.branch}`,
+        outcome: result.outcome,
+        upToDate: result.outcome === 'up_to_date',
+        before: result.before,
+        after: result.after,
+        remoteCommit: result.remoteCommit,
+        commits: result.commits,
+        filesChanged: result.filesChanged,
+        files: result.files,
+      };
+    },
+  };
 
   private readonly gitStatus: ToolDefinition<Record<string, never>> = {
     name: 'git_status',

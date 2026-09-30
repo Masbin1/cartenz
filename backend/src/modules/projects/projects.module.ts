@@ -12,6 +12,12 @@ import { ProjectBackupService } from './project-backup.service';
 import { ProjectBackupController } from './project-backup.controller';
 import { ProjectModulesService } from './project-modules.service';
 import { ProjectModulesController } from './project-modules.controller';
+import { ProjectRestoreService } from './project-restore.service';
+import { ProjectRestoreController } from './project-restore.controller';
+import { ProjectConnectedInstanceService } from './project-connected-instance.service';
+import { ProjectConnectedInstanceController } from './project-connected-instance.controller';
+import { ProjectCheckoutService } from './project-checkout.service';
+import { ProjectCheckoutController } from './project-checkout.controller';
 import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
 
@@ -32,6 +38,9 @@ import { ProjectsService } from './projects.service';
     ProjectPreviewController,
     ProjectBackupController,
     ProjectModulesController,
+    ProjectCheckoutController,
+    ProjectRestoreController,
+    ProjectConnectedInstanceController,
   ],
   providers: [
     ProjectsService,
@@ -43,6 +52,9 @@ import { ProjectsService } from './projects.service';
     ProjectPreviewService,
     ProjectBackupService,
     ProjectModulesService,
+    ProjectCheckoutService,
+    ProjectRestoreService,
+    ProjectConnectedInstanceService,
     GitHubRepositoryService,
   ],
   exports: [
@@ -55,6 +67,9 @@ import { ProjectsService } from './projects.service';
     ProjectPreviewService,
     ProjectBackupService,
     ProjectModulesService,
+    ProjectCheckoutService,
+    ProjectRestoreService,
+    ProjectConnectedInstanceService,
     GitHubRepositoryService,
   ],
 })

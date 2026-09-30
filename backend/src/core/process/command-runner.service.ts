@@ -188,6 +188,8 @@ export class CommandRunner {
   private readonly modulesListScript: string;
   /** The project-restart script sudo may be asked to run (ADR-057). */
   private readonly restartScript: string;
+  /** The restored-copy script sudo may be asked to run (ADR-067). */
+  private readonly restoreScript: string;
   /** Settings that enable a guarded subcommand, by setting name. */
   private readonly enabled: Readonly<Record<string, boolean>>;
 
@@ -244,6 +246,11 @@ export class CommandRunner {
     // value is the only thing that keeps it off.
     this.restartScript = config.provisioning?.enabled
       ? (config.provisioning.restartScript ?? '')
+      : '';
+    // ADR-067. Same posture again: empty PROJECT_RESTORE_SCRIPT is the off
+    // switch, and it must hold even when provisioning is on.
+    this.restoreScript = config.provisioning?.enabled
+      ? (config.provisioning.restoreScript ?? '')
       : '';
 
     if (config.validation.enabled) {
@@ -341,6 +348,7 @@ export class CommandRunner {
         this.backupScript || null,
         this.modulesListScript || null,
         this.restartScript || null,
+        this.restoreScript || null,
       );
     }
 
@@ -583,6 +591,16 @@ const PULL_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const PREVIEW_REF = /^[a-z0-9]{16}$/;
 
 /**
+ * A backup file name the restore script will accept (ADR-067).
+ *
+ * A basename only, ending in .zip - no separator anywhere in it, so this
+ * cannot be made to name a file outside the script's own fixed staging
+ * directory. The script re-checks this itself; this is the platform's own
+ * opinion, independent of the script.
+ */
+const RESTORE_BACKUP_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.zip$/;
+
+/**
  * Refuses a sudo invocation that is not exactly a provisioning run (ADR-039)
  * or an HTTPS-issuance run (ADR-040).
  *
@@ -640,6 +658,7 @@ export function assertProvisioningInvocation(
   backupScript: string | null = null,
   modulesListScript: string | null = null,
   restartScript: string | null = null,
+  restoreScript: string | null = null,
 ): void {
   if (args[0] !== '-n') {
     throw new CommandArgumentError(
@@ -662,6 +681,7 @@ export function assertProvisioningInvocation(
   const isBackup = backupScript !== null && script === backupScript;
   const isModulesList = modulesListScript !== null && script === modulesListScript;
   const isRestart = restartScript !== null && script === restartScript;
+  const isRestore = restoreScript !== null && script === restoreScript;
 
   if (
     !isCreate &&
@@ -671,7 +691,8 @@ export function assertProvisioningInvocation(
     !isPreview &&
     !isBackup &&
     !isModulesList &&
-    !isRestart
+    !isRestart &&
+    !isRestore
   ) {
     const configured = [
       ...createScripts,
@@ -682,6 +703,7 @@ export function assertProvisioningInvocation(
       ...(backupScript ? [backupScript] : []),
       ...(modulesListScript ? [modulesListScript] : []),
       ...(restartScript ? [restartScript] : []),
+      ...(restoreScript ? [restoreScript] : []),
     ];
     throw new CommandArgumentError(
       `"${script}" is not a configured provisioning script. Configured: ` +
@@ -848,6 +870,63 @@ export function assertProvisioningInvocation(
       );
     }
     return;
+  }
+
+  // ADR-067. `<instance-name> <port> <zip-basename> [<repository-url> <branch>]`.
+  // The zip is a basename, never a path: the script looks it up inside its own
+  // fixed staging directory, and this check refuses anything that could name a
+  // file elsewhere before the script ever sees it.
+  if (isRestore) {
+    const restoreName = args[2];
+    if (!restoreName || !PROVISIONING_PROJECT_NAME.test(restoreName)) {
+      throw new CommandArgumentError(
+        'sudo restore requires a valid instance name as the second argument: lowercase ' +
+          `letters, digits, "_" and "-", 2 to 31 characters, not beginning with a hyphen; ` +
+          `got "${String(restoreName)}".`,
+      );
+    }
+    const restorePort = args[3];
+    if (
+      !restorePort ||
+      !/^[0-9]+$/.test(restorePort) ||
+      Number(restorePort) < 1024 ||
+      Number(restorePort) > 65534
+    ) {
+      throw new CommandArgumentError(
+        'sudo restore requires a numeric HTTP port between 1024 and 65534 as the third argument.',
+      );
+    }
+    const zip = args[4];
+    if (!zip || !RESTORE_BACKUP_FILENAME.test(zip) || zip.includes('..')) {
+      throw new CommandArgumentError(
+        'sudo restore requires a backup file name as the fourth argument: a bare *.zip name ' +
+          `with no directory; got "${String(zip)}".`,
+      );
+    }
+    if (args.length === 5) {
+      return;
+    }
+    if (args.length === 7) {
+      const repositoryUrl = args[5];
+      const branch = args[6];
+      if (!repositoryUrl || !PULL_REPOSITORY_URL.test(repositoryUrl)) {
+        throw new CommandArgumentError(
+          'sudo restore accepts a repository URL as the fifth argument: https://… or ' +
+            `scp-style git@host:owner/repo.git; got "${String(repositoryUrl)}".`,
+        );
+      }
+      if (!branch || !PULL_BRANCH.test(branch)) {
+        throw new CommandArgumentError(
+          'sudo restore accepts a branch name as the sixth argument: it may not begin ' +
+            `with a hyphen; got "${String(branch)}".`,
+        );
+      }
+      return;
+    }
+    throw new CommandArgumentError(
+      `The restore script takes exactly "-n <script> <instance-name> <port> <zip> ` +
+        `[<repository-url> <branch>]"; got ${args.length} arguments.`,
+    );
   }
 
   const port = args[3];

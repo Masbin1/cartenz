@@ -1,8 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { UserCheck } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { Alert } from '@/components/ui/alert';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Section } from '@/components/ui/section';
+import { SkeletonRows } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { relativeTime } from '@/lib/format';
 import type { PendingAccessRequest } from '@/lib/types';
@@ -16,8 +20,12 @@ import type { PendingAccessRequest } from '@/lib/types';
  * There is no notification behind this panel deliberately: few people, and a
  * request that waits an hour costs nothing. The count here is the whole
  * mechanism until a request is seen getting stuck.
+ *
+ * Rendered as an open section of the page it sits on: the requester and the
+ * project lead each row, the reason and the time recede, and the decision sits
+ * on the right (below on a phone) as one primary and one quiet action.
  */
-export function AccessRequestsPanel() {
+export function AccessRequestsPanel({ id = 'access-requests' }: { id?: string }) {
   const [requests, setRequests] = useState<PendingAccessRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -48,55 +56,74 @@ export function AccessRequestsPanel() {
     }
   };
 
-  return (
-    <section className="panel mt-5">
-      <div className="panel-header">
-        <h2 className="panel-title">Access requests</h2>
-        <span className="text-2xs text-content-subtle">{requests?.length ?? 0}</span>
-      </div>
+  const count = requests?.length ?? 0;
 
-      <div className="space-y-4 px-4 py-4">
+  return (
+    <Section
+      id={id}
+      title="Access requests"
+      description="Everyone waiting to join a project, across all projects."
+      actions={
+        requests !== null && count > 0 ? (
+          <span className="meta">{count === 1 ? '1 waiting' : `${count} waiting`}</span>
+        ) : null
+      }
+    >
+      <div className="space-y-4">
         {error ? <Alert tone="error">{error}</Alert> : null}
 
         {requests === null ? (
-          <div className="flex items-center gap-2 text-2xs text-content-subtle">
-            <Spinner /> Loading requests
-          </div>
+          error ? null : <SkeletonRows rows={2} className="-mx-4" />
         ) : requests.length === 0 ? (
-          <p className="text-2xs text-content-subtle">Nobody is waiting for access.</p>
+          <div className="rounded-card border border-dashed border-surface-border">
+            <EmptyState
+              compact
+              icon={UserCheck}
+              title="Nobody is waiting"
+              description="Requests to join a project appear here for you to approve or reject."
+            />
+          </div>
         ) : (
-          <ul className="divide-y divide-surface-border rounded border border-surface-border">
+          <ul className="-mx-4 space-y-1">
             {requests.map((row) => {
               const rowBusy = busyId === row.id;
 
               return (
-                <li key={row.id} className="flex flex-wrap items-start gap-3 px-3 py-2.5">
+                <li
+                  key={row.id}
+                  className="list-row flex-col items-stretch gap-3 sm:flex-row sm:items-start"
+                >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-medium">
-                      {row.userName || row.userEmail} · {row.projectName}
+                    <p className="text-body font-medium text-content">
+                      <span className="break-words">{row.userName || row.userEmail}</span>
+                      <span className="text-content-subtle"> wants access to </span>
+                      <span className="break-words">{row.projectName}</span>
                     </p>
-                    <p className="truncate text-2xs text-content-subtle">
-                      {row.userEmail} · {relativeTime(row.createdAt)}
+                    <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-meta text-content-subtle">
+                      <span className="truncate">{row.userEmail}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="whitespace-nowrap">{relativeTime(row.createdAt)}</span>
                     </p>
                     {row.reason ? (
-                      <p className="mt-1 text-2xs text-content-muted">{row.reason}</p>
+                      <p className="mt-2 max-w-2xl text-callout text-content-muted">{row.reason}</p>
                     ) : null}
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-3">
+                  <div className="flex shrink-0 items-center gap-2">
                     <button
                       type="button"
                       disabled={rowBusy}
                       onClick={() => void decide(row, 'approved')}
-                      className="text-2xs text-content-subtle underline hover:text-content disabled:opacity-40"
+                      className="btn-primary btn-sm"
                     >
-                      {rowBusy ? <Spinner /> : 'Approve'}
+                      {rowBusy ? <Spinner className="h-3.5 w-3.5" /> : null}
+                      Approve
                     </button>
                     <button
                       type="button"
                       disabled={rowBusy}
                       onClick={() => void decide(row, 'rejected')}
-                      className="text-2xs text-content-subtle underline hover:text-state-failure disabled:opacity-40"
+                      className="btn-ghost btn-sm"
                     >
                       Reject
                     </button>
@@ -107,6 +134,6 @@ export function AccessRequestsPanel() {
           </ul>
         )}
       </div>
-    </section>
+    </Section>
   );
 }

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { CommandRunner, type CommandResult } from '../../core/process/command-runner.service';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
@@ -91,6 +92,16 @@ export interface GitCloneOptions {
    * stays shallow; the merge path needs the history, and passes this.
    */
   readonly full?: boolean;
+  /**
+   * Take every branch, not only the one checked out (ADR-063).
+   *
+   * A task clones one branch because one branch is all it works on. The
+   * long-lived clone a project keeps is the opposite: it is cloned once and then
+   * asked for any of the project's branches, so a `--single-branch` clone would
+   * make every other branch a network round trip and, without a remote-tracking
+   * ref, would leave `behind` unanswerable for all of them.
+   */
+  readonly allBranches?: boolean;
 }
 
 export interface GitCloneResult {
@@ -136,6 +147,37 @@ export interface GitPushResult {
   readonly branch: string;
 }
 
+export interface GitPullResult {
+  /** `up_to_date` is a successful pull with nothing to take. */
+  readonly outcome: 'up_to_date' | 'fast_forwarded';
+  readonly branch: string;
+  readonly before: string;
+  readonly after: string;
+  readonly remoteCommit: string;
+  readonly commits: number;
+  readonly files: readonly string[];
+  readonly filesChanged: number;
+}
+
+/**
+ * A pull the platform refused to make, before or without moving the branch.
+ *
+ * Thrown rather than returned as a result because neither outcome it names is
+ * a pull: `dirty` means the request was made at the wrong moment, `diverged`
+ * means the histories no longer share a future. The execution layer records the
+ * thrown message as the tool's failure, which is what a person and the model
+ * both read.
+ */
+export class GitPullRefusedError extends Error {
+  constructor(
+    readonly kind: 'dirty' | 'diverged',
+    detail: string,
+  ) {
+    super(`The pull was refused: ${detail}`);
+    this.name = 'GitPullRefusedError';
+  }
+}
+
 export class GitCommandError extends Error {
   constructor(
     readonly command: string,
@@ -179,6 +221,16 @@ export class GitService {
     });
     const branch = assertSafeRefName(options.branch);
     const depth = options.depth ?? this.config.git.cloneDepth;
+    /**
+     * `depth` of 0 or less means the whole history, which is what a request for
+     * a full clone asks for either way.
+     *
+     * A shallow clone is enough for a task, which only needs the tip, but not for
+     * reading: an agent asked why a file looks the way it does cannot answer from
+     * one commit, and neither can a reviewer. `GIT_CLONE_DEPTH=0` is therefore a
+     * supported value rather than a misconfiguration.
+     */
+    const fullHistory = options.full === true || depth <= 0;
 
     const lease = await leaseGitCredential({
       directory: options.credentialDirectory,
@@ -201,10 +253,12 @@ export class GitService {
           ...HARDENING_ARGS,
           'clone',
           '--quiet',
-          '--single-branch',
+          // One branch per task, or every branch for the clone a project keeps
+          // between tasks (ADR-063).
+          ...(options.allBranches === true ? [] : ['--single-branch']),
           '--no-recurse-submodules',
           '--no-tags',
-          ...(options.full ? [] : [`--depth=${depth}`]),
+          ...(fullHistory ? [] : [`--depth=${depth}`]),
           `--branch=${branch}`,
           // Everything after `--` is an operand, so neither the URL nor the
           // destination can be read as an option even if validation is bypassed.
@@ -264,10 +318,15 @@ export class GitService {
       allowLocal: this.config.git.allowLocalRemotes,
     });
 
-    // Without a credential there is nothing to write, so the lease has no files
-    // and any directory serves as the working directory for a command that does
-    // not read one.
-    const directory = options.credentialDirectory ?? tmpdir();
+    // Without a credential there is nothing to write, so any directory serves as
+    // the working directory for a command that does not read one. With a
+    // credential the files must go somewhere that is ours alone: `mkdtemp` under
+    // the system temp, where `release` is the only thing that deletes them.
+    const directory = options.credentialDirectory
+      ? options.credentialDirectory
+      : options.credential && options.credential.value.length > 0
+        ? await mkdtemp(join(tmpdir(), 'cartenz-ls-remote-'))
+        : tmpdir();
     const lease = await leaseGitCredential({
       directory,
       credential: options.credential ?? null,
@@ -302,6 +361,11 @@ export class GitService {
       return [...new Set(branches)].sort().slice(0, MAX_REMOTE_BRANCHES);
     } finally {
       await lease.release();
+      // Only ours, only when we made it: an explicitly supplied directory
+      // belongs to the caller (and to the tests that assert its contents).
+      if (directory.startsWith(join(tmpdir(), 'cartenz-ls-remote-'))) {
+        await rm(directory, { recursive: true, force: true });
+      }
     }
   }
 
@@ -395,6 +459,64 @@ export class GitService {
       throw new GitCommandError('rev-parse --abbrev-ref HEAD', result.exitCode, summariseFailure(result));
     }
     return result.stdout.trim();
+  }
+
+  /**
+   * A ref's commit, or null when it does not resolve.
+   *
+   * The null-returning counterpart of `revParse`, for the callers that ask about
+   * a ref which may legitimately not exist yet - a remote branch before the first
+   * fetch, a cache directory before the first clone. Those are questions about
+   * state, not failures, and an exception would make the caller's ordinary path
+   * the catch block.
+   */
+  async headOf(repositoryPath: string, ref: string): Promise<string | null> {
+    const result = await this.run(repositoryPath, ['rev-parse', '--verify', `${ref}^{commit}`]);
+    return result.exitCode === 0 ? result.stdout.trim() : null;
+  }
+
+  /** Whether `ref` exists in this repository. */
+  async hasRef(repositoryPath: string, ref: string): Promise<boolean> {
+    return (await this.headOf(repositoryPath, ref)) !== null;
+  }
+
+  /**
+   * How many commits are reachable from `to` and not from `from`.
+   *
+   * The number of commits a branch is behind or ahead, depending on which way
+   * round the range is given. Reported to a person, so it must be a count of
+   * commits rather than a boolean "differs": "3 commits behind" tells an operator
+   * whether to look now or later, and "out of date" does not.
+   *
+   * Returns null when the two refs share no history at all (a shallow clone whose
+   * boundary the range crosses, a rewritten remote), because that is not a count
+   * and reporting it as one - 0, most likely - would say "up to date" about a
+   * branch that cannot be compared.
+   */
+  async countCommits(repositoryPath: string, from: string, to: string): Promise<number | null> {
+    return this.countWithArgs(repositoryPath, ['rev-list', '--count', `${from}..${to}`]);
+  }
+
+  /**
+   * How much history this repository has: every commit reachable from `ref`.
+   *
+   * Read to tell a full clone from a shallow one, which is the difference
+   * ADR-063 is about - a checkout exists to be read, and `git log` over one
+   * commit answers nothing. Null when the count cannot be taken.
+   */
+  async countReachable(repositoryPath: string, ref: string): Promise<number | null> {
+    return this.countWithArgs(repositoryPath, ['rev-list', '--count', ref]);
+  };
+
+  private async countWithArgs(
+    repositoryPath: string,
+    args: readonly string[],
+  ): Promise<number | null> {
+    const result = await this.run(repositoryPath, [...args]);
+    if (result.exitCode !== 0) return null;
+
+    const count = Number.parseInt(result.stdout.trim(), 10);
+    return Number.isFinite(count) ? count : null;
   }
 
   async revParse(repositoryPath: string, ref: string): Promise<string> {
@@ -678,6 +800,271 @@ export class GitService {
   }
 
   /**
+   * Refreshes every branch a remote advertises into `refs/remotes/origin/*`
+   * (ADR-063).
+   *
+   * The counterpart of `fetchBranch` for a clone that outlives a task: the
+   * project's clone is cloned once and then asked for any of the project's
+   * branches, so the remote-tracking refs are what make "N commits behind"
+   * answerable for a branch that is not checked out. Nothing is merged and no
+   * working tree moves - this reads the remote's state.
+   *
+   * The forced refspec (`+`) means a branch the remote rewrote still updates
+   * its remote-tracking ref; no local branch follows it, which is what keeps
+   * this safe while a task's worktree is checked out on one of them.
+   */
+  async fetchAll(
+    repositoryPath: string,
+    remoteUrl: string,
+    options: {
+      readonly credentialDirectory: string;
+      readonly credential: GitCredential | null;
+    },
+  ): Promise<void> {
+    const remote = assertSafeRemoteUrl(remoteUrl, {
+      allowLocal: this.config.git.allowLocalRemotes,
+    });
+
+    const lease = await leaseGitCredential({
+      directory: options.credentialDirectory,
+      credential: options.credential,
+      hostKeyPolicy: this.config.git.sshHostKeyPolicy,
+    });
+
+    const fetchUrl =
+      remote.scheme === 'https' && options.credential?.kind === 'token'
+        ? `https://${httpsUsername(options.credential, remote.host)}@${remote.host}/${remote.path}`
+        : remote.url;
+
+    try {
+      const result = await this.commands.run(
+        'git',
+        [
+          ...HARDENING_ARGS,
+          'fetch',
+          '--quiet',
+          '--prune',
+          '--no-tags',
+          '--',
+          fetchUrl,
+          '+refs/heads/*:refs/remotes/origin/*',
+        ],
+        { cwd: repositoryPath, env: lease.env, timeoutMs: this.config.process.maxTimeoutMs },
+      );
+
+      if (result.exitCode !== 0) {
+        throw new GitCommandError('fetch', result.exitCode, summariseFailure(result));
+      }
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /**
+   * Checks a branch out in a working tree of its own, attached to an existing
+   * clone (ADR-063).
+   *
+   * This is how a task gets a directory without downloading the repository
+   * again: the objects live once, in the project's clone, and each task gets a
+   * working tree over them. `-B` points the local branch at `startPoint` - the
+   * remote-tracking ref, so a task starts from the remote's tip exactly as a
+   * fresh clone would.
+   *
+   * git refuses a branch already checked out in another worktree, so two tasks
+   * on one branch cannot share a working tree; the second fails with git's own
+   * message. `--force` is deliberately not passed: it is precisely the flag
+   * that would override that refusal.
+   */
+  async worktreeAdd(
+    repositoryPath: string,
+    worktreePath: string,
+    branch: string,
+    fromRemoteBranch: string,
+  ): Promise<void> {
+    const safeBranch = assertSafeRefName(branch);
+    // Built here rather than accepted as a ref, so a caller cannot start a
+    // worktree from an arbitrary revision expression.
+    const startPoint = `refs/remotes/origin/${assertSafeRefName(fromRemoteBranch)}`;
+    const result = await this.run(repositoryPath, [
+      'worktree',
+      'add',
+      '--quiet',
+      '-B',
+      safeBranch,
+      '--',
+      worktreePath,
+      startPoint,
+    ]);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('worktree add', result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * Detaches a clone's own checkout to a branch's tip (ADR-063).
+   *
+   * Detached on purpose: a branch checked out here would be unavailable to
+   * every task worktree, because git allows a branch in one worktree only. The
+   * files are still there to read and analyse; no branch is held.
+   *
+   * `source` picks which tip: `'local'` for the project's own local branch -
+   * the one a task may have committed to and not pushed, so this is what a
+   * person reading the clone should see - and `'remote'` for the
+   * remote-tracking ref, used right after a clone when no local branch exists
+   * yet.
+   */
+  async detachAt(
+    repositoryPath: string,
+    branch: string,
+    source: 'local' | 'remote',
+  ): Promise<void> {
+    const safeBranch = assertSafeRefName(branch);
+    const ref = source === 'local' ? `refs/heads/${safeBranch}` : `refs/remotes/origin/${safeBranch}`;
+    const result = await this.run(repositoryPath, ['checkout', '--quiet', '--detach', ref]);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('checkout --detach', result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * A working tree of its own on a branch that already exists locally
+   * (ADR-063).
+   *
+   * The counterpart to `worktreeAdd`: no `-B`, so an existing local branch keeps
+   * exactly the commits it has - a previous task's work included. Fails when the
+   * branch has no local ref yet; callers create one with `branchAt` first, which
+   * is equally non-destructive.
+   */
+  async worktreeAttach(
+    repositoryPath: string,
+    worktreePath: string,
+    branch: string,
+  ): Promise<void> {
+    const safeBranch = assertSafeRefName(branch);
+    const result = await this.run(repositoryPath, [
+      'worktree',
+      'add',
+      '--quiet',
+      '--',
+      worktreePath,
+      safeBranch,
+    ]);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('worktree add', result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * Creates a local branch at a remote branch's tip, when it does not exist
+   * (ADR-063).
+   *
+   * Existence is checked rather than the command's failure ignored, because a
+   * local branch that exists must keep its own position: a task part-way through
+   * work has commits this would otherwise throw away.
+   */
+  async branchAt(repositoryPath: string, name: string, fromRemoteBranch: string): Promise<void> {
+    const safeBranch = assertSafeRefName(name);
+    if (await this.hasRef(repositoryPath, `refs/heads/${safeBranch}`)) return;
+
+    const startPoint = `refs/remotes/origin/${assertSafeRefName(fromRemoteBranch)}`;
+    const result = await this.run(repositoryPath, ['branch', safeBranch, startPoint, '--']);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('branch', result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * Moves a local branch to a new commit, but only when it is still at the
+   * commit the caller last saw (ADR-063).
+   *
+   * A compare-and-swap: used to fast-forward a branch nobody has checked out,
+   * where "nobody" was established by reading `git worktree list` moments
+   * earlier. Passing the expected old value makes the two atomic - if a task took
+   * the branch into a worktree in between, this fails instead of moving a branch
+   * out from under it.
+   */
+  async updateBranchRef(
+    repositoryPath: string,
+    branch: string,
+    to: string,
+    expectedCurrent: string,
+  ): Promise<void> {
+    const safeBranch = assertSafeRefName(branch);
+    const result = await this.run(repositoryPath, [
+      'update-ref',
+      `refs/heads/${safeBranch}`,
+      to,
+      expectedCurrent,
+    ]);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError('update-ref', result.exitCode, summariseFailure(result));
+    }
+  }
+
+  /**
+   * The `.git` directory of the repository this working tree belongs to, or
+   * null when there is none (ADR-063).
+   *
+   * How release finds the clone to detach from: a task's directory is a
+   * worktree whose metadata lives in the project's clone, so removing the
+   * directory must also drop the worktree's record - a record left behind pins
+   * its branch and would refuse every later task over a directory nobody can
+   * see. For an ordinary per-task clone this returns its own `.git`, which is
+   * how the caller tells the two apart: a main working tree is never detached.
+   */
+  async gitCommonDir(repositoryPath: string): Promise<string | null> {
+    const result = await this.run(repositoryPath, [
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-common-dir',
+    ]);
+    if (result.exitCode !== 0) return null;
+    const dir = result.stdout.trim();
+    return dir.length > 0 ? dir : null;
+  }
+
+  /**
+   * Detaches a task's working tree from the clone; the clone itself stays.
+   *
+   * `--force` here discards the worktree's uncommitted changes, which is what
+   * releasing a task has always meant - the per-task clone this replaces was
+   * deleted with `rm -rf`. A worktree already gone is the goal state.
+   */
+  async worktreeRemove(repositoryPath: string, worktreePath: string): Promise<void> {
+    await this.run(repositoryPath, ['worktree', 'remove', '--force', '--', worktreePath]);
+    // Whatever the removal said, drop records whose directory is gone: a stale
+    // record pins its branch, and every later task on that branch would then be
+    // refused over a directory nobody can see.
+    await this.run(repositoryPath, ['worktree', 'prune']);
+  }
+
+  /** The branches currently checked out in any worktree of this clone. */
+  async worktreeBranches(repositoryPath: string): Promise<Map<string, string>> {
+    /**
+     * Pruned first, because a worktree directory can disappear without git
+     * hearing about it - a `rm -rf` from `reclaimOrphans`, a workspace released
+     * after its record was lost, a killed worker. Its record would still pin the
+     * branch, so `worktree add` on that branch would be refused over a directory
+     * nobody can see. Pruning drops exactly the records whose directory is gone,
+     * so this read leaves live worktrees alone.
+     */
+    await this.run(repositoryPath, ['worktree', 'prune']);
+
+    const result = await this.run(repositoryPath, ['worktree', 'list', '--porcelain']);
+    const branches = new Map<string, string>();
+    if (result.exitCode !== 0) return branches;
+
+    let path: string | null = null;
+    for (const line of result.stdout.split(NEWLINE)) {
+      if (line.startsWith('worktree ')) path = line.slice('worktree '.length);
+      else if (line.startsWith('branch refs/heads/') && path) {
+        branches.set(line.slice('branch refs/heads/'.length), path);
+      }
+    }
+    return branches;
+  }
+
+  /**
    * Fetches one branch from a remote into a local repository, without checking
    * it out. Used ahead of a merge (ADR-057): the workspace is cloned at the
    * *target* branch's tip, and the *source* branch is fetched into it so the
@@ -733,6 +1120,154 @@ export class GitService {
     } finally {
       await lease.release();
     }
+  }
+
+  /**
+   * Brings the checked-out branch up to date with a branch on the remote, by
+   * fast-forward only (the `git_pull` tool).
+   *
+   * Fetch, then `merge --ff-only`, and nothing else - no rebase, no merge
+   * commit, no `-X theirs`. A pull that cannot fast-forward (the local branch
+   * has commits the remote does not, or the remote was rewritten) is refused by
+   * git itself with the working tree untouched, and reported as that refusal.
+   * Resolving a divergence is a decision about whose work wins, and no person
+   * is in this loop to make it.
+   *
+   * A working tree with uncommitted changes is refused before anything is
+   * fetched. git would fast-forward around unrelated local edits, but a pull
+   * that sometimes proceeds and sometimes refuses depending on which files the
+   * remote touched is harder to reason about than one that always wants a clean
+   * tree - and the implementation instruction asks for the pull first.
+   *
+   * The fetch refspec is forced (`+`) so a remote-tracking ref that the remote
+   * rewrote is still updated; whether the *branch* may follow it is then decided
+   * by the fast-forward check, which is the check that matters.
+   *
+   * Shallow clones are fine: verified against a depth-1 clone, a fetch brings
+   * the new commits down to the shallow boundary and the fast-forward succeeds,
+   * and a diverged history is refused exactly as in a full clone.
+   */
+  async pullFastForward(
+    repositoryPath: string,
+    remoteUrl: string,
+    branch: string,
+    options: {
+      readonly credentialDirectory: string;
+      readonly credential: GitCredential | null;
+    },
+  ): Promise<GitPullResult> {
+    const remote = assertSafeRemoteUrl(remoteUrl, {
+      allowLocal: this.config.git.allowLocalRemotes,
+    });
+    const safeBranch = assertSafeRefName(branch);
+    const trackingRef = `refs/remotes/origin/${safeBranch}`;
+
+    const status = await this.status(repositoryPath);
+    if (!status.clean) {
+      throw new GitPullRefusedError(
+        'dirty',
+        `the working tree has uncommitted changes in ${status.entries.length} file(s), ` +
+          'so nothing was pulled. Pull before changing files.',
+      );
+    }
+
+    const before = await this.revParse(repositoryPath, 'HEAD');
+
+    const lease = await leaseGitCredential({
+      directory: options.credentialDirectory,
+      credential: options.credential,
+      hostKeyPolicy: this.config.git.sshHostKeyPolicy,
+    });
+
+    const fetchUrl =
+      remote.scheme === 'https' && options.credential?.kind === 'token'
+        ? `https://${httpsUsername(options.credential, remote.host)}@${remote.host}/${remote.path}`
+        : remote.url;
+
+    try {
+      const fetched = await this.commands.run(
+        'git',
+        [
+          ...HARDENING_ARGS,
+          'fetch',
+          '--quiet',
+          '--no-tags',
+          '--',
+          fetchUrl,
+          `+refs/heads/${safeBranch}:${trackingRef}`,
+        ],
+        { cwd: repositoryPath, env: lease.env, timeoutMs: this.config.process.maxTimeoutMs },
+      );
+
+      if (fetched.exitCode !== 0) {
+        throw new GitCommandError('fetch', fetched.exitCode, summariseFailure(fetched));
+      }
+    } finally {
+      await lease.release();
+    }
+
+    const remoteCommit = await this.revParse(repositoryPath, trackingRef);
+
+    if (remoteCommit === before) {
+      return {
+        outcome: 'up_to_date',
+        branch: safeBranch,
+        before,
+        after: before,
+        remoteCommit,
+        commits: 0,
+        files: [],
+        filesChanged: 0,
+      };
+    }
+
+    const merged = await this.run(repositoryPath, [
+      'merge',
+      '--ff-only',
+      '--no-edit',
+      '--quiet',
+      trackingRef,
+      '--',
+    ]);
+
+    if (merged.exitCode !== 0) {
+      // Whatever git's reason - diverged history, unrelated histories after a
+      // rewrite - the branch has not moved, and saying so is the result.
+      const current = await this.revParse(repositoryPath, 'HEAD').catch(() => before);
+      if (current !== before) {
+        throw new GitCommandError('merge --ff-only', merged.exitCode, summariseFailure(merged));
+      }
+      throw new GitPullRefusedError(
+        'diverged',
+        `${safeBranch} cannot be fast-forwarded to the remote (${remoteCommit.slice(0, 8)}): ` +
+          `${summariseFailure(merged)}. The branch was left at ${before.slice(0, 8)}; ` +
+          'the local and remote histories have diverged and must be reconciled by a person.',
+      );
+    }
+
+    const after = await this.revParse(repositoryPath, 'HEAD');
+
+    const counted = await this.run(repositoryPath, ['rev-list', '--count', `${before}..${after}`]);
+    const commits = counted.exitCode === 0 ? Number.parseInt(counted.stdout.trim(), 10) || 0 : 0;
+
+    const names = await this.run(repositoryPath, [
+      'diff', '--name-only', '--no-color', '--no-ext-diff', before, after, '--',
+    ]);
+    const allFiles =
+      names.exitCode === 0
+        ? names.stdout.split(NEWLINE).map((line) => line.trim()).filter((line) => line.length > 0)
+        : [];
+
+    return {
+      outcome: 'fast_forwarded',
+      branch: safeBranch,
+      before,
+      after,
+      remoteCommit,
+      commits,
+      files: allFiles.slice(0, 200),
+      filesChanged: allFiles.length,
+    };
   }
 
   /**

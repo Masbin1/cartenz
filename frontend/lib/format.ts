@@ -1,5 +1,8 @@
 import type { AgentTaskStatus } from './types';
 
+/** The meaning a status colour carries. See components/ui/status-dot.tsx. */
+export type StatusTone = 'running' | 'waiting' | 'success' | 'failure' | 'idle' | 'neutral';
+
 /** Human labels for task states. Mirrors TASK_STATUS_LABELS on the server. */
 export const TASK_STATUS_LABELS: Record<AgentTaskStatus, string> = {
   created: 'Created',
@@ -18,53 +21,24 @@ export const TASK_STATUS_LABELS: Record<AgentTaskStatus, string> = {
 };
 
 /**
- * Status colour classes. Grouped by meaning rather than by state, so the palette
- * carries information: blue is working, amber needs you, green succeeded, red
- * failed, grey is inert.
+ * The status tone for a task state. Grouped by meaning rather than by state, so
+ * the palette carries information: blue is working, amber needs you, green
+ * succeeded, red failed, grey is inert.
  */
-export function statusTone(status: AgentTaskStatus): {
-  dot: string;
-  text: string;
-  chip: string;
-} {
+export function statusTone(status: AgentTaskStatus): { tone: StatusTone } {
   switch (status) {
     case 'completed':
-      return {
-        dot: 'bg-state-success',
-        text: 'text-state-success',
-        chip: 'border-state-success/30 bg-state-success/10 text-state-success',
-      };
+      return { tone: 'success' };
     case 'failed':
-      return {
-        dot: 'bg-state-failure',
-        text: 'text-state-failure',
-        chip: 'border-state-failure/30 bg-state-failure/10 text-state-failure',
-      };
+      return { tone: 'failure' };
     case 'cancelled':
-      return {
-        dot: 'bg-state-idle',
-        text: 'text-content-subtle',
-        chip: 'border-state-idle/30 bg-state-idle/10 text-content-subtle',
-      };
-    case 'waiting_approval':
-      return {
-        dot: 'bg-state-waiting',
-        text: 'text-state-waiting',
-        chip: 'border-state-waiting/30 bg-state-waiting/10 text-state-waiting',
-      };
     case 'created':
     case 'queued':
-      return {
-        dot: 'bg-state-idle',
-        text: 'text-content-muted',
-        chip: 'border-state-idle/30 bg-state-idle/10 text-content-muted',
-      };
+      return { tone: 'idle' };
+    case 'waiting_approval':
+      return { tone: 'waiting' };
     default:
-      return {
-        dot: 'bg-state-running',
-        text: 'text-state-running',
-        chip: 'border-state-running/30 bg-state-running/10 text-state-running',
-      };
+      return { tone: 'running' };
   }
 }
 
@@ -72,22 +46,22 @@ export function isActiveStatus(status: AgentTaskStatus): boolean {
   return !['completed', 'failed', 'cancelled'].includes(status);
 }
 
-/** Short relative time. Kept terse: the workspace shows many timestamps. */
+/** Short relative time, in words that read naturally: "3 min ago". */
 export function relativeTime(iso: string): string {
   const elapsed = Date.now() - new Date(iso).getTime();
   const seconds = Math.round(elapsed / 1000);
 
   if (seconds < 10) return 'just now';
-  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 60) return 'less than a minute ago';
 
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return `${minutes} min ago`;
 
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
 
   const days = Math.round(hours / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return days === 1 ? 'yesterday' : `${days} days ago`;
 
   return new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
 }

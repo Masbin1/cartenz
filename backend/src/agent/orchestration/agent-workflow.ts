@@ -145,11 +145,27 @@ export class AgentWorkflow {
         snapshot = await this.tasks.snapshot(taskId);
       }
     } finally {
+      /**
+       * `snapshot.status` can be stale here: `shouldStop` returns as soon as it
+       * sees the task's status diverge (a cancellation landing mid-step is the
+       * common case), but it never writes that new status back onto `snapshot`
+       * before returning. Re-reading from the database is what makes this
+       * `finally` see the status the task actually settled at.
+       *
+       * Without this, a task cancelled while a step is in flight releases with
+       * the pre-cancellation status - e.g. `analyzing`, which
+       * `releaseWorkspace` treats as non-terminal - so the workspace is kept
+       * forever instead of released. The clone's worktree entry then keeps
+       * pinning the branch after the task is gone, and every later task
+       * targeting that branch fails with "already checked out" until someone
+       * finds and removes it by hand.
+       */
+      const finalStatus = await this.tasks.currentStatus(taskId).catch(() => snapshot.status);
       // A workspace is released when the task settles, or when the run ends
       // without settling - a suspension at an approval, or a yield. Holding a
       // clone open across a human wait of unknown length would be worse than
       // re-cloning on resumption.
-      await this.releaseWorkspace(taskId, snapshot.status);
+      await this.releaseWorkspace(taskId, finalStatus);
     }
   }
 
@@ -254,6 +270,16 @@ export class AgentWorkflow {
       case 'chat_edit':
         return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'implementing', {
           message: 'Approved. Continuing.',
+        });
+
+      case 'odoo_record_write':
+        return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'implementing', {
+          message: 'The Odoo data change was approved. Writing the records.',
+        });
+
+      case 'odoo_model_create':
+        return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'implementing', {
+          message: 'The new Odoo model was approved. Creating it.',
         });
 
       default:
@@ -867,6 +893,52 @@ export class AgentWorkflow {
 
     if (modified.length === 0) {
       /**
+       * A pull that reported success is work, even though it changed no file.
+       *
+       * "Pull the latest changes" is a request whose whole result is that the
+       * branch moved - or that there was nothing to move, which is the same
+       * success. The diff is empty in both cases, so the gate below would read a
+       * fulfilled request as a model that did nothing and fail the task, which is
+       * exactly what happened: the model correctly refused to invent a file
+       * change and was failed for it.
+       *
+       * The task completes here rather than moving on to commit and push: there
+       * is nothing to commit, and pushing would be a no-op the platform would
+       * then have to report as a delivery (ADR-060).
+       */
+      if (outcome.pulled) {
+        const { outcome: pull, branch, commits } = outcome.pulled;
+
+        await this.tasks.saveDiffStats(snapshot.taskId, {
+          filesChanged: 0,
+          linesAdded: 0,
+          linesRemoved: 0,
+          patchTruncated: false,
+          toolCalls: outcome.toolCalls,
+          pull: { outcome: pull, branch, commits },
+        });
+
+        await this.narrate(
+          snapshot,
+          pull === 'up_to_date'
+            ? `${branch} was already up to date with the remote; nothing to pull.`
+            : `Pulled ${commits} commit(s) into ${branch}. No file in this plan needed changing.`,
+        );
+
+        // Straight to testing rather than committing: there is nothing to
+        // commit, and validation is where a repository task settles when it has
+        // no commit to make - which is exactly how a chat task completes (see
+        // `completeChat`). The edge out of `implementing` exists for that reason
+        // and this is the same shape of task.
+        return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
+          message:
+            pull === 'up_to_date'
+              ? `${branch} is already at the remote tip. There was nothing new to pull.`
+              : `Pulled ${commits} commit(s) into ${branch}. Nothing further was asked for.`,
+        });
+      }
+
+      /**
        * The model reported completion but changed nothing.
        *
        * Reported as a failure rather than passed on, because the alternative is a
@@ -1052,6 +1124,9 @@ export class AgentWorkflow {
       });
     }
 
+    // Same exit as a change task that changed nothing: the repository lifecycle
+    // owns `implementing -> testing`, so a conversation that only answered uses
+    // it instead of completing here.
     return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
       message: `Answered in ${outcome.steps} step(s) across ${outcome.toolCalls} tool call(s).`,
     });
@@ -1138,6 +1213,25 @@ export class AgentWorkflow {
     if (workspace.simulated) {
       return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
         message: 'Validation passed. No repository is connected, so no commit was made.',
+      });
+    }
+
+    /**
+     * Nothing to commit, so nothing to push: the task is done.
+     *
+     * A pull-only request reaches here with a clean tree and no file change to
+     * commit, and the previous behaviour fell through to `git_commit`, which
+     * stages nothing and fails with "nothing to commit" - a task failed for
+     * having done exactly what was asked. `git status` is the authority on
+     * whether there is anything to commit, and it is the same call the commit
+     * itself would make implicitly.
+     */
+    const status = await this.git.status(workspace.repositoryPath);
+    if (status.clean) {
+      return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
+        message:
+          'The working tree is unchanged: there is nothing to commit or push. ' +
+          'Any work this task did was on the branch itself.',
       });
     }
 
@@ -1797,7 +1891,7 @@ export class AgentWorkflow {
           taskReference: snapshot.reference,
                     action: error.approvalAction,
           requiredReason: error.reason,
-          context: { toolName: error.toolName, branch: workspace.branch, path: input.path },
+          context: approvalContextFor(error.toolName, workspace.branch, input),
           taskStatus: snapshot.status,
         });
 
@@ -1891,6 +1985,34 @@ function toLoopResult(status: 'succeeded' | 'failed' | 'denied' | 'suspended'): 
   return status === 'suspended' ? 'approval_required' : status;
 }
 
+/**
+ * What a reviewer is shown next to an approval request.
+ *
+ * A file write is identified by its path. A record write on Odoo Online has no
+ * path: what the person is deciding on is which model, how many records, and
+ * what they look like - so those are what the context carries. The preview is
+ * capped; the approval row is a summary, not a copy of the payload (and it passes
+ * through `redactMetadata` before it is stored).
+ */
+export function approvalContextFor(
+  toolName: string,
+  branch: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  if (toolName === 'odoo_create_records' || toolName === 'odoo_update_records') {
+    const records = Array.isArray(input.records) ? input.records : [];
+    const ids = Array.isArray(input.ids) ? input.ids : [];
+    return {
+      toolName,
+      model: input.model,
+      ...(toolName === 'odoo_create_records'
+        ? { recordCount: records.length, preview: records.slice(0, 5) }
+        : { recordCount: ids.length, ids: ids.slice(0, 20), values: input.values }),
+    };
+  }
+  return { toolName, branch, path: input.path };
+}
+
 function humanise(value: string): string {
   return value.replace(/_/g, ' ');
 }
@@ -1916,12 +2038,33 @@ export type { AgentTaskStatus };
  * The implementation step counts these rather than trusting the model's summary,
  * which is the same rule the repository modes apply by trusting `git diff`.
  */
-const CHANGING_ODOO_TOOLS = ['odoo_create_field', 'odoo_add_field_to_view'];
+const CHANGING_ODOO_TOOLS = [
+  'odoo_create_field',
+  'odoo_create_model',
+  'odoo_add_field_to_view',
+  'odoo_create_records',
+  'odoo_update_records',
+];
 
 /** One applied change, in the terms a reviewer reads in the activity log. */
 function describeOdooChange(toolName: string, output: Record<string, unknown>): string {
   if (toolName === 'odoo_create_field') {
     return `Created field ${String(output.field)} on ${String(output.model)} (id ${String(output.fieldId)}).`;
+  }
+  if (toolName === 'odoo_create_model') {
+    return (
+      `Created model ${String(output.model)} "${String(output.label)}" (id ${String(output.modelId)}) ` +
+      `with access rights and form/list views (view ids ${String(output.formViewId)}, ` +
+      `${String(output.listViewId)}).`
+    );
+  }
+  if (toolName === 'odoo_create_records') {
+    const ids = Array.isArray(output.ids) ? output.ids.join(', ') : '';
+    return `Created ${String(output.created)} ${String(output.model)} record(s) (ids ${ids}).`;
+  }
+  if (toolName === 'odoo_update_records') {
+    const ids = Array.isArray(output.ids) ? output.ids.join(', ') : '';
+    return `Updated ${String(output.updated)} ${String(output.model)} record(s) (ids ${ids}).`;
   }
   return (
     `Placed ${String(output.field)} after ${String(output.after)} on the ${String(output.model)} ` +
