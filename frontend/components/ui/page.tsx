@@ -44,11 +44,11 @@ export function PageHeader({
   );
 }
 
-export function BackLink({ href, label }: { href: string; label: string }) {
+export function BackLink({ href, label, className = 'mb-4' }: { href: string; label: string; className?: string }) {
   return (
     <Link
       href={href}
-      className="-ml-1 mb-4 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-callout text-content-subtle transition-colors hover:text-content"
+      className={`-ml-1 ${className} inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-callout text-content-subtle transition-colors hover:text-content`}
     >
       <ChevronLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
       {label}

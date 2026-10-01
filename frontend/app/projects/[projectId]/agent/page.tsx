@@ -7,6 +7,8 @@ import {
   FileText,
   Image as ImageIcon,
   MessagesSquare,
+  PanelLeft,
+  PanelRight,
   Paperclip,
   Plus,
   Sparkles,
@@ -24,7 +26,7 @@ import { StatusDot } from '@/components/ui/status-dot';
 import { Alert } from '@/components/ui/alert';
 import { BackLink } from '@/components/ui/page';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Skeleton, SkeletonRows, SkeletonText } from '@/components/ui/skeleton';
+import { Skeleton, SkeletonText } from '@/components/ui/skeleton';
 import { CartenzMark } from '@/components/ui/cartenz-mark';
 import { ActivityTimeline } from '@/components/agent/activity-timeline';
 import { ChatMarkdown } from '@/components/agent/chat-markdown';
@@ -34,7 +36,6 @@ import { PreviewPanel } from '@/components/projects/preview-panel';
 import { TaskInspector } from '@/components/agent/task-inspector';
 import { DiffViewer } from '@/components/diff/diff-viewer';
 import { isActiveStatus, relativeTime } from '@/lib/format';
-import { EnvironmentKindBadge } from '@/components/projects/environment-editor';
 import type {
   AgentCapabilities,
   AgentSession,
@@ -100,6 +101,10 @@ export default function AgentWorkspacePage() {
   const [uploading, setUploading] = useState(false);
   /** Whether the composer's document list is expanded. Presentation only. */
   const [attachOpen, setAttachOpen] = useState(false);
+  // From lg the conversation list and the request details are side panels the
+  // person opens on demand, so the conversation has the width by default.
+  const [conversationsOpen, setConversationsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { events, connected } = useTaskStream(selectedTaskId);
@@ -108,7 +113,6 @@ export default function AgentWorkspacePage() {
 
   const canDecide = user?.isAdmin ?? false;
 
-  const selectedEnvironment = environments.find((entry) => entry.id === environmentId) ?? null;
   const productionEnvironments = environments.filter((entry) => entry.kind === 'production');
   const openSession = sessions.find((entry) => entry.id === sessionId) ?? null;
 
@@ -436,16 +440,16 @@ export default function AgentWorkspacePage() {
     <AppShell>
       <div className="page-wide">
         {/*
-          Compact header: the project name at title size rather than display
-          size, because this is a working surface and vertical space belongs to
-          the conversation. The facts the old project panel carried sit in one
-          quiet line beneath it.
+          One-line header: on a working surface vertical space belongs to the
+          conversation, so the back link, project name and its facts share a row.
         */}
-        <header className="mb-8 animate-rise-in">
-          <BackLink href={`/projects/${project.id}`} label="Project overview" />
-          <p className="eyebrow">Agent workspace</p>
-          <h1 className="mt-0.5 truncate text-title text-content">{project.name}</h1>
-          <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-content-subtle">
+        <header className="mb-4 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 animate-rise-in">
+          <BackLink href={`/projects/${project.id}`} label="Project overview" className="mb-0" />
+          <span className="text-content-subtle" aria-hidden="true">
+            /
+          </span>
+          <h1 className="min-w-0 truncate text-headline text-content">{project.name}</h1>
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-content-subtle">
             <span>{project.odooVersion ? `Odoo ${project.odooVersion}` : 'Odoo version not set'}</span>
             <span aria-hidden="true">·</span>
             <span>
@@ -461,11 +465,21 @@ export default function AgentWorkspacePage() {
           </p>
         </header>
 
-        <div className="grid gap-12 lg:grid-cols-[216px_minmax(0,1fr)] lg:gap-6 xl:grid-cols-[224px_minmax(0,1fr)_300px] xl:gap-8">
+        <div
+          className={`grid gap-12 lg:gap-8 ${
+            conversationsOpen && detailsOpen
+              ? 'lg:grid-cols-[224px_minmax(0,1fr)_300px]'
+              : conversationsOpen
+                ? 'lg:grid-cols-[224px_minmax(0,1fr)]'
+                : detailsOpen
+                  ? 'lg:grid-cols-[minmax(0,1fr)_300px]'
+                  : 'lg:grid-cols-1'
+          }`}
+        >
           {/* LEFT: conversation history. Last on a phone, where the conversation comes first. */}
           <aside
             aria-label="Conversations"
-            className="order-last min-w-0 lg:order-none lg:row-span-2 xl:row-span-1"
+            className={`order-last min-w-0 lg:order-none ${conversationsOpen ? '' : 'lg:hidden'}`}
           >
             <div className="lg:sticky lg:top-6">
               <div className="mb-2 flex items-center justify-between gap-2 pl-3">
@@ -531,15 +545,35 @@ export default function AgentWorkspacePage() {
           </aside>
 
           {/* CENTRE: the conversation, then the run's narration and its review. */}
-          <div className="min-w-0 space-y-12">
-            <section aria-labelledby="conversation-title" className="space-y-6">
+          <div className="mx-auto w-full min-w-0 max-w-5xl space-y-12">
+            {/*
+              From lg the conversation is one viewport tall: the composer keeps its
+              natural height and the thread takes whatever is left, so the chat is
+              the first thing on screen rather than a strip above the composer.
+              6.5rem is the one-line header and the page padding around it.
+            */}
+            <section
+              aria-labelledby="conversation-title"
+              className="space-y-6 lg:flex lg:h-[calc(100dvh-6.5rem)] lg:min-h-[30rem] lg:flex-col lg:space-y-3"
+            >
               <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setConversationsOpen((open) => !open)}
+                  aria-pressed={conversationsOpen}
+                  className={`btn-secondary btn-sm hidden shrink-0 lg:inline-flex ${conversationsOpen ? 'bg-surface-overlay' : ''}`}
+                  title="Your earlier conversations with the agent on this project"
+                >
+                  <PanelLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                  {conversationsOpen ? 'Hide conversations' : 'Show conversations'}
+                  <span className="tabular-nums text-content-subtle">{sessions.length}</span>
+                </button>
+                <div className="min-w-0 flex-1 lg:text-center">
                   <h2 id="conversation-title" className="truncate text-headline text-content">
                     {sessionId ? (openSession?.title ?? 'Current conversation') : 'New conversation'}
                   </h2>
                   {thread.length > 0 ? (
-                    <p className="meta mt-0.5">
+                    <p className="meta mt-0.5 lg:sr-only">
                       {thread.length} request{thread.length === 1 ? '' : 's'}
                     </p>
                   ) : null}
@@ -548,7 +582,7 @@ export default function AgentWorkspacePage() {
                   type="button"
                   onClick={startNewConversation}
                   disabled={submitting || !sessionId}
-                  className="btn-ghost btn-sm shrink-0"
+                  className="btn-secondary btn-sm shrink-0"
                   title={
                     sessionId
                       ? 'Start a new conversation. The next request opens it.'
@@ -560,6 +594,16 @@ export default function AgentWorkspacePage() {
                     {sessionId ? 'New conversation' : 'New conversation (next request)'}
                   </span>
                   <span className="sm:hidden">New</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailsOpen((open) => !open)}
+                  aria-pressed={detailsOpen}
+                  className={`btn-secondary btn-sm hidden shrink-0 lg:inline-flex ${detailsOpen ? 'bg-surface-overlay' : ''}`}
+                  title="The selected request's status, changed files, validation and agent"
+                >
+                  {detailsOpen ? 'Hide request details' : 'Show request details'}
+                  <PanelRight className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
                 </button>
               </div>
 
@@ -574,7 +618,7 @@ export default function AgentWorkspacePage() {
                 told apart by position and surface rather than by colour.
               */}
               {thread.length > 0 ? (
-                <div className="-mx-2 max-h-[60vh] min-h-[16rem] space-y-6 overflow-y-auto px-2 py-1 lg:max-h-[calc(100vh-22rem)]">
+                <div className="-mx-2 max-h-[60vh] min-h-[16rem] space-y-6 overflow-y-auto px-2 py-1 lg:max-h-none lg:min-h-0 lg:flex-1">
                   {thread.map((turn) => {
                     const selected = turn.id === selectedTaskId;
                     return (
@@ -657,7 +701,7 @@ export default function AgentWorkspacePage() {
                   <textarea
                     id="prompt"
                     ref={promptRef}
-                    rows={3}
+                    rows={2}
                     value={prompt}
                     onChange={(event) => setPrompt(event.target.value)}
                     onKeyDown={(event) => {
@@ -669,7 +713,7 @@ export default function AgentWorkspacePage() {
                     }}
                     onPaste={(event) => void handlePaste(event)}
                     placeholder="Add a customer reference field to Sales Order and Invoice."
-                    className="block min-h-[6.5rem] w-full resize-none rounded-t-card bg-transparent px-4 pb-2 pt-4 text-body text-content placeholder:text-content-subtle focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:px-5"
+                    className="block min-h-[4.5rem] w-full resize-none rounded-t-card bg-transparent px-4 pb-2 pt-4 text-body text-content placeholder:text-content-subtle focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:px-5"
                   />
 
                   {attachedDocuments.length > 0 ? (
@@ -829,17 +873,16 @@ export default function AgentWorkspacePage() {
                               </option>
                             ))}
                         </select>
-                        {selectedEnvironment ? (
-                          <EnvironmentKindBadge kind={selectedEnvironment.kind} />
-                        ) : null}
                       </div>
                     ) : null}
 
                     <div className="ml-auto flex items-center gap-3">
-                      <span className="hidden text-caption text-content-subtle md:inline">
-                        ⌘ or Ctrl + Enter
-                      </span>
-                      <button type="submit" disabled={submitting} className="btn-primary btn-sm">
+                      <button
+                        type="submit"
+                        disabled={submitting}
+                        className="btn-primary btn-sm"
+                        title="Send (⌘ or Ctrl + Enter)"
+                      >
                         {submitting ? (
                           <Spinner className="h-3.5 w-3.5" />
                         ) : (
@@ -851,27 +894,17 @@ export default function AgentWorkspacePage() {
                   </div>
                 </form>
 
-                <div className="mt-3 space-y-1 px-1 text-meta text-content-subtle">
-                  {kind === 'chat' ? (
-                    <p>
-                      Chat reads the project and answers in plain language. Writing a file asks for
-                      your approval first.
-                    </p>
-                  ) : null}
-                  <p>
-                    The agent analyses the project, produces a plan and waits for your approval
-                    before changing anything.
-                    {capabilities && !capabilities.git.pushEnabled
-                      ? ' This server cannot push: the branch stays in the workspace for you to review.'
-                      : null}
-                  </p>
-                  {environments.length > 0 && productionEnvironments.length > 0 ? (
-                    <p>
-                      {productionEnvironments.map((environment) => environment.branch).join(', ')} is
-                      production and cannot be targeted.
-                    </p>
-                  ) : null}
-                </div>
+                <p className="mt-2 px-1 text-caption text-content-subtle">
+                  {kind === 'chat'
+                    ? 'Chat reads the project and answers; writing a file asks for your approval first.'
+                    : 'The agent plans first and waits for your approval before changing anything.'}
+                  {capabilities && !capabilities.git.pushEnabled
+                    ? ' This server cannot push: the branch stays in the workspace for review.'
+                    : null}
+                  {environments.length > 0 && productionEnvironments.length > 0
+                    ? ` ${productionEnvironments.map((environment) => environment.branch).join(', ')} is production and cannot be targeted.`
+                    : null}
+                </p>
               </div>
 
               {error ? <Alert tone="error">{error}</Alert> : null}
@@ -960,8 +993,8 @@ export default function AgentWorkspacePage() {
             {task?.plan ? <PlanView plan={task.plan} /> : null}
           </div>
 
-          {/* RIGHT: the selected request's outcome. Under the conversation below 1280px. */}
-          <aside aria-labelledby="request-title" className="min-w-0 lg:col-start-2 xl:col-start-auto">
+          {/* RIGHT: the selected request's outcome. Under the conversation below lg. */}
+          <aside aria-labelledby="request-title" className={`min-w-0 ${detailsOpen ? '' : 'lg:hidden'}`}>
             <div className="mb-5 flex items-center justify-between gap-3">
               <h2 id="request-title" className="text-headline text-content">
                 Request
@@ -1033,18 +1066,10 @@ function WorkspaceSkeleton({ error }: { error: string | null }) {
             <Alert tone="error">{error}</Alert>
           </div>
         ) : null}
-        <div className="grid gap-12 lg:grid-cols-[216px_minmax(0,1fr)] lg:gap-6 xl:grid-cols-[224px_minmax(0,1fr)_300px] xl:gap-8">
-          <div className="order-last lg:order-none">
-            <SkeletonRows rows={5} />
-          </div>
-          <div className="space-y-6">
-            <Skeleton className="ml-auto h-16 w-3/5 rounded-2xl" />
-            <SkeletonText lines={4} className="max-w-xl" />
-            <Skeleton className="h-40 w-full rounded-card" />
-          </div>
-          <div className="hidden xl:block">
-            <SkeletonText lines={6} />
-          </div>
+        <div className="mx-auto max-w-5xl space-y-6">
+          <Skeleton className="ml-auto h-16 w-3/5 rounded-2xl" />
+          <SkeletonText lines={4} className="max-w-xl" />
+          <Skeleton className="h-40 w-full rounded-card" />
         </div>
       </div>
     </AppShell>
