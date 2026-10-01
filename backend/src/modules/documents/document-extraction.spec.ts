@@ -5,6 +5,7 @@ import {
   isAcceptedDocumentMimeType,
   isAcceptedImageMimeType,
   normalizeMimeType,
+  resolveUploadMimeType,
 } from './document-extraction';
 
 describe('document-extraction', () => {
@@ -41,6 +42,28 @@ describe('document-extraction', () => {
 
     it('does not treat an image type as a document type', () => {
       expect(isAcceptedDocumentMimeType('image/png')).toBe(false);
+    });
+  });
+
+  describe('resolveUploadMimeType', () => {
+    it('falls back to the filename extension when the browser sends a generic type', () => {
+      // Linux desktops often have no `.md` entry, so Chrome/Firefox send this.
+      expect(resolveUploadMimeType('application/octet-stream', 'notes.md')).toBe('text/markdown');
+      expect(resolveUploadMimeType('application/octet-stream', 'README.MARKDOWN')).toBe(
+        'text/markdown',
+      );
+      expect(resolveUploadMimeType('', 'notes.txt')).toBe('text/plain');
+    });
+
+    it('trusts a specific type from the browser over the extension', () => {
+      expect(resolveUploadMimeType('text/markdown', 'notes.txt')).toBe('text/markdown');
+    });
+
+    it('leaves a generic type unresolved when the extension is unknown', () => {
+      expect(resolveUploadMimeType('application/octet-stream', 'archive.zip')).toBe(
+        'application/octet-stream',
+      );
+      expect(resolveUploadMimeType(undefined, undefined)).toBe('');
     });
   });
 

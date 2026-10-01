@@ -30,6 +30,43 @@ export function isAcceptedDocumentMimeType(value: string): value is AcceptedDocu
 }
 
 /**
+ * Extensions that identify a type the browser may not label. Browsers take the
+ * MIME type from the OS, and many systems (most Linux desktops among them) have
+ * no entry for `.md`, so a markdown file arrives as `application/octet-stream`
+ * or with no type at all and was refused as unsupported.
+ */
+const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+  txt: 'text/plain',
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+};
+
+/** Labels a browser sends when it does not know the type. */
+const GENERIC_MIME_TYPES = new Set(['', 'application/octet-stream', 'binary/octet-stream']);
+
+/**
+ * The MIME type to treat an upload as. A specific type from the browser is
+ * trusted as sent; a generic or missing one is resolved from the filename's
+ * extension. An unknown extension leaves the generic type in place, so the
+ * allowlist still refuses it.
+ */
+export function resolveUploadMimeType(mimeType: string | undefined, filename: string | undefined): string {
+  const normalized = normalizeMimeType(mimeType ?? '');
+  if (!GENERIC_MIME_TYPES.has(normalized)) return normalized;
+  const dot = (filename ?? '').lastIndexOf('.');
+  if (dot === -1) return normalized;
+  const extension = (filename ?? '').slice(dot + 1).toLowerCase();
+  return MIME_BY_EXTENSION[extension] ?? normalized;
+}
+
+/**
  * Image types the upload accepts (ADR-042). An image is not text-extracted; its
  * bytes are stored so a multimodal model can see it. Kept separate from the
  * document allowlist because the two are handled differently at every step.

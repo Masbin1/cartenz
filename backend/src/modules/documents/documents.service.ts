@@ -14,7 +14,7 @@ import {
   DocumentExtractionError,
   extractDocumentText,
   isAcceptedImageMimeType,
-  normalizeMimeType,
+  resolveUploadMimeType,
   IMAGE_MAX_FILE_BYTES,
 } from './document-extraction';
 
@@ -58,7 +58,9 @@ export class DocumentsService {
       throw new BadRequestException('The uploaded file is empty.');
     }
 
-    const mimeType = normalizeMimeType(file.mimetype);
+    // The browser's label is not reliable: a `.md` file commonly arrives as
+    // `application/octet-stream`, so a generic type is resolved from the name.
+    const mimeType = resolveUploadMimeType(file.mimetype, file.originalname);
     const isImage = isAcceptedImageMimeType(mimeType);
 
     let textContent: string;
@@ -78,7 +80,7 @@ export class DocumentsService {
       textContent = `[Image: ${file.originalname || 'image'}]`;
     } else {
       try {
-        textContent = await extractDocumentText(file.mimetype, file.buffer);
+        textContent = await extractDocumentText(mimeType, file.buffer);
       } catch (error) {
         if (error instanceof DocumentExtractionError) {
           throw new BadRequestException(error.message);
@@ -93,7 +95,7 @@ export class DocumentsService {
         projectId,
         uploadedByUserId: user.userId,
         filename: file.originalname || (isImage ? 'image' : 'document'),
-        mimeType: file.mimetype,
+        mimeType,
         byteSize: file.size,
         textContent,
         imageDataBase64,

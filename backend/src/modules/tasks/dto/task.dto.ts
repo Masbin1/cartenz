@@ -17,7 +17,7 @@ export class CreateTaskDto {
   @IsString()
   @IsNotEmpty({ message: 'A prompt is required' })
   @MinLength(10, { message: 'Describe the change in at least 10 characters' })
-  @MaxLength(8000)
+  @MaxLength(32000)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   prompt!: string;
 
