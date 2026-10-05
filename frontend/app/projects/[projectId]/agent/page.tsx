@@ -99,6 +99,8 @@ export default function AgentWorkspacePage() {
   const [documents, setDocuments] = useState<ProjectDocument[]>([]);
   const [attachedIds, setAttachedIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
+  /** Whether a dragged file is currently hovering the composer (ADR-030 drag-and-drop). */
+  const [dragActive, setDragActive] = useState(false);
   /** Whether the composer's document list is expanded. Presentation only. */
   const [attachOpen, setAttachOpen] = useState(false);
   // From lg the conversation list and the request details are side panels the
@@ -416,6 +418,36 @@ export default function AgentWorkspacePage() {
     }
   };
 
+  /**
+   * Dragging a file (or several) anywhere over the composer and dropping it
+   * uploads and attaches each one, in order, via the same `uploadFile` path as
+   * the picker and the paste handler (ADR-030). `dragActive` only drives the
+   * highlight, so a drag that leaves without dropping costs nothing.
+   */
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault();
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    // A dragleave fires when the pointer crosses a child element too, not only
+    // when it truly exits the composer - ignore those so the highlight does
+    // not flicker while dragging over the textarea or the attachment chips.
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setDragActive(false);
+  };
+
+  const handleDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    const files = Array.from(event.dataTransfer.files ?? []);
+    if (files.length === 0) return;
+    event.preventDefault();
+    setDragActive(false);
+    for (const file of files) {
+      await uploadFile(file);
+    }
+  };
+
   const active = useMemo(() => (task ? isActiveStatus(task.status) : false), [task]);
 
   /**
@@ -690,7 +722,19 @@ export default function AgentWorkspacePage() {
                 documents attached to it and, in its footer, the quiet options
                 (mode, attachments, target) beside the single Send action.
               */}
-              <div>
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={(event) => void handleDrop(event)}
+                className="relative"
+              >
+                {dragActive ? (
+                  <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-card border-2 border-dashed border-accent bg-accent/5">
+                    <p className="text-callout font-medium text-accent">
+                      Drop to attach · README, DOC/DOCX, PPTX, PDF, Markdown, images
+                    </p>
+                  </div>
+                ) : null}
                 <form
                   onSubmit={submitPrompt}
                   className="rounded-card border border-surface-border bg-surface-raised transition-colors focus-within:border-accent/50 focus-within:ring-4 focus-within:ring-accent/10"
@@ -757,7 +801,7 @@ export default function AgentWorkspacePage() {
                           <input
                             ref={fileInputRef}
                             type="file"
-                            accept=".md,.markdown,.txt,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/gif"
+                            accept=".md,.markdown,.txt,.pdf,.docx,.pptx,.png,.jpg,.jpeg,.webp,.gif,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg,image/webp,image/gif"
                             onChange={handleUpload}
                             disabled={uploading}
                             className="hidden"

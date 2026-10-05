@@ -21,6 +21,7 @@ export const ACCEPTED_DOCUMENT_MIME_TYPES = [
   'text/plain',
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ] as const;
 
 export type AcceptedDocumentMimeType = (typeof ACCEPTED_DOCUMENT_MIME_TYPES)[number];
@@ -41,6 +42,7 @@ const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
   txt: 'text/plain',
   pdf: 'application/pdf',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -124,6 +126,58 @@ async function extractDocx(buffer: Buffer): Promise<string> {
 }
 
 /**
+ * Extracts the visible text of a PPTX, slide by slide, in slide order.
+ *
+ * A PPTX is a zip of XML parts; each slide's text runs live in
+ * `ppt/slides/slideN.xml` as `<a:t>...</a:t>` elements (DrawingML text runs,
+ * inside shapes, tables and speaker-note-free body text). There is no library
+ * already in this project that reads pptx text directly (mammoth is docx-only,
+ * pdf-parse is pdf-only), so this unzips with the `jszip` dependency already
+ * used elsewhere in the monorepo and pulls text runs out of each slide's XML
+ * with a regex rather than a full XML parser - robust enough for this, since
+ * `<a:t>` never nests and its content cannot itself contain an unescaped `<`.
+ * Slides are read in numeric order (`slide1.xml`, `slide2.xml`, ...) rather than
+ * zip entry order, which a producer is free to write in any order.
+ */
+async function extractPptx(buffer: Buffer): Promise<string> {
+  const JSZip = (await import('jszip')).default;
+  const zip = await JSZip.loadAsync(buffer);
+
+  const slideFiles = Object.keys(zip.files)
+    .filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path))
+    .sort((a, b) => {
+      const numberOf = (path: string) => parseInt(path.match(/slide(\d+)\.xml$/)![1], 10);
+      return numberOf(a) - numberOf(b);
+    });
+
+  if (slideFiles.length === 0) {
+    return '';
+  }
+
+  const slideTexts: string[] = [];
+  for (const path of slideFiles) {
+    const xml = await zip.files[path].async('string');
+    const runs = [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((match) => decodeXmlEntities(match[1]));
+    const slideText = runs.join(' ').trim();
+    if (slideText.length > 0) {
+      slideTexts.push(slideText);
+    }
+  }
+
+  return slideTexts.join('\n\n');
+}
+
+/** Decodes the handful of XML entities that appear inside a `<a:t>` run. */
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
  * Turns an uploaded buffer into the text to store.
  *
  * Throws `DocumentExtractionError` when the type is not accepted or the
@@ -138,7 +192,7 @@ export async function extractDocumentText(
 
   if (!isAcceptedDocumentMimeType(normalized)) {
     throw new DocumentExtractionError(
-      `Unsupported file type "${normalized}". Accepts markdown, plain text, PDF and DOCX.`,
+      `Unsupported file type "${normalized}". Accepts markdown, plain text, PDF, DOCX and PPTX.`,
     );
   }
 
@@ -157,6 +211,11 @@ export async function extractDocumentText(
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ) {
       text = await extractDocx(buffer);
+    } else if (
+      normalized ===
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    ) {
+      text = await extractPptx(buffer);
     } else {
       text = buffer.toString('utf8');
     }

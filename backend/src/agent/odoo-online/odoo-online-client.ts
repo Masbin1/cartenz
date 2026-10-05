@@ -28,6 +28,7 @@ import { recordModelRefusal } from './odoo-record-surface';
 const CUSTOMIZATION_MODELS = new Set([
   'ir.model',
   'ir.model.fields',
+  'ir.model.fields.selection',
   'ir.model.access',
   'ir.ui.view',
 ]);
@@ -197,25 +198,72 @@ export class OdooOnlineClient {
       .sort((a, b) => a.model.localeCompare(b.model));
   }
 
-  /** Creates a custom field on a model, Studio-style (`x_` prefix, `manual`). */
+  /**
+   * Creates a custom field on a model, Studio-style (`x_` prefix, `manual`).
+   *
+   * A relational type (many2one/one2many/many2many) carries `relation` (the
+   * target model) and, for one2many, `relationField` (the many2one on the
+   * target that points back) — without these Odoo's own `ir.model.fields.create`
+   * either drops the field silently or raises a `UserError` that named nothing
+   * the model surface could not have refused first (ADR-068's
+   * `odoo-field-surface.ts` does refuse it first). A selection type carries
+   * `options`, created as `ir.model.fields.selection` rows right after the field,
+   * the same order Studio uses, so the field is never left with a `ttype` of
+   * `selection` and no value anyone could pick.
+   */
   async createField(
     credentials: OdooOnlineCredentials,
     uid: number,
     model: string,
-    values: { name: string; label: string; type: string; required?: boolean },
+    values: {
+      name: string;
+      label: string;
+      type: string;
+      required?: boolean;
+      relation?: string;
+      relationField?: string;
+      options?: readonly { value: string; label: string }[];
+    },
   ): Promise<number> {
     const modelId = await this.modelId(credentials, uid, model);
     const name = values.name.startsWith('x_') ? values.name : `x_${values.name}`;
 
-    return (await this.call(credentials, uid, 'ir.model.fields', 'create', [
-      {
-        name,
-        field_description: values.label,
-        ttype: values.type,
-        required: values.required ?? false,
-        model_id: modelId,
-      },
+    const vals: Record<string, unknown> = {
+      name,
+      field_description: values.label,
+      ttype: values.type,
+      required: values.required ?? false,
+      model_id: modelId,
+    };
+
+    if (values.relation) {
+      vals.relation = values.relation;
+    }
+    if (values.type === 'one2many' && values.relationField) {
+      const relationFieldName = values.relationField.startsWith('x_')
+        ? values.relationField
+        : `x_${values.relationField}`;
+      vals.relation_field = relationFieldName;
+    }
+
+    const fieldId = (await this.call(credentials, uid, 'ir.model.fields', 'create', [
+      vals,
     ])) as number;
+
+    if (values.type === 'selection' && values.options?.length) {
+      for (const [index, option] of values.options.entries()) {
+        await this.call(credentials, uid, 'ir.model.fields.selection', 'create', [
+          {
+            field_id: fieldId,
+            value: option.value,
+            name: option.label,
+            sequence: index,
+          },
+        ]);
+      }
+    }
+
+    return fieldId;
   }
 
   /**

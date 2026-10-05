@@ -17,13 +17,18 @@ describe('document-extraction', () => {
   });
 
   describe('isAcceptedDocumentMimeType', () => {
-    it('accepts the four documented types only', () => {
+    it('accepts the five documented types only', () => {
       expect(isAcceptedDocumentMimeType('text/markdown')).toBe(true);
       expect(isAcceptedDocumentMimeType('text/plain')).toBe(true);
       expect(isAcceptedDocumentMimeType('application/pdf')).toBe(true);
       expect(
         isAcceptedDocumentMimeType(
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ),
+      ).toBe(true);
+      expect(
+        isAcceptedDocumentMimeType(
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         ),
       ).toBe(true);
       expect(isAcceptedDocumentMimeType('application/octet-stream')).toBe(false);
@@ -74,6 +79,29 @@ describe('document-extraction', () => {
         Buffer.from('# PRD\n\n- requirement one\n'),
       );
       expect(text).toBe('# PRD\n\n- requirement one');
+    });
+
+    it('extracts text from a pptx, slide by slide in order', async () => {
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+      zip.file(
+        'ppt/slides/slide1.xml',
+        '<p:sld xmlns:a="a"><a:t>Judul Presentasi</a:t><a:t> &amp; Ringkasan</a:t></p:sld>',
+      );
+      zip.file(
+        'ppt/slides/slide2.xml',
+        '<p:sld xmlns:a="a"><a:t>Poin kedua</a:t></p:sld>',
+      );
+      // Out of zip-entry order on purpose - slide10 must still sort after slide2.
+      zip.file('ppt/slides/slide10.xml', '<p:sld xmlns:a="a"><a:t>Slide terakhir</a:t></p:sld>');
+      const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+
+      const text = await extractDocumentText(
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        buffer,
+      );
+
+      expect(text).toBe('Judul Presentasi  & Ringkasan\n\nPoin kedua\n\nSlide terakhir');
     });
 
     it('refuses an unsupported type', async () => {

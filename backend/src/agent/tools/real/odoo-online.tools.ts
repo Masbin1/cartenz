@@ -29,6 +29,10 @@ import {
   normalizeModelName,
   validateCreateModel,
 } from '../../odoo-online/odoo-model-surface';
+import {
+  normalizeSelectionOptions,
+  validateCreateField,
+} from '../../odoo-online/odoo-field-surface';
 import type { AnyToolDefinition, ToolDefinition, ToolExecutionContext } from '../tool.interface';
 
 /**
@@ -159,6 +163,9 @@ export class OdooOnlineTools {
     label: string;
     type: string;
     required?: boolean;
+    relation?: string;
+    relationField?: string;
+    options?: { value: string; label: string }[];
   }> = {
     name: 'odoo_create_field',
     description: 'Create a custom field on an Odoo model, as Odoo Studio does',
@@ -168,7 +175,7 @@ export class OdooOnlineTools {
     simulated: false,
     parameters: ODOO_CREATE_FIELD_SCHEMA,
     availableToModel: true,
-    validate: () => null,
+    validate: validateCreateField,
     execute: async (input, context) => {
       const credentials = await this.resolveCredentials(context);
       const uid = await this.client.authenticate(credentials);
@@ -177,6 +184,9 @@ export class OdooOnlineTools {
         label: input.label,
         type: input.type,
         required: input.required,
+        relation: input.relation,
+        relationField: input.relationField,
+        options: normalizeSelectionOptions(input.options),
       });
       return {
         model: input.model,

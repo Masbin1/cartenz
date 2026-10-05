@@ -255,12 +255,49 @@ export const ODOO_CREATE_FIELD_SCHEMA = {
     },
     type: {
       type: 'string',
-      description: 'Field type: char, text, integer, float, boolean, date, datetime, selection, many2one.',
+      description:
+        'Field type: char, text, html, integer, float, monetary, boolean, date, datetime, ' +
+        'selection, many2one, one2many, many2many. "selection" requires "options". ' +
+        '"many2one"/"one2many"/"many2many" require "relation" (the target model); ' +
+        '"one2many" also requires "relationField" (the many2one on the target model ' +
+        'that points back to this one).',
       maxLength: 40,
     },
     required: {
       type: 'boolean',
       description: 'Whether the field must always have a value. Defaults to false.',
+    },
+    relation: {
+      type: 'string',
+      description:
+        'For many2one/one2many/many2many only: the technical name of the target model, ' +
+        'e.g. "res.partner". Required for these types; ignored for others.',
+      pattern: '^[a-z0-9_]+(\\.[a-z0-9_]+)*$',
+      maxLength: 120,
+    },
+    relationField: {
+      type: 'string',
+      description:
+        'For one2many only: the technical name of the many2one field on the target model ' +
+        '("relation") that points back to this model, e.g. "x_parent_id". Required for one2many.',
+      pattern: '^[a-z0-9_]+$',
+      maxLength: 120,
+    },
+    options: {
+      type: 'array',
+      description:
+        'For selection only: the choices, in display order. Required for selection, ' +
+        'e.g. [{"value": "draft", "label": "Draft"}, {"value": "done", "label": "Done"}].',
+      items: {
+        type: 'object',
+        properties: {
+          value: { type: 'string', maxLength: 100 },
+          label: { type: 'string', maxLength: 200 },
+        },
+        required: ['value', 'label'],
+        additionalProperties: false,
+      },
+      maxItems: 50,
     },
   },
   required: ['model', 'name', 'label', 'type'],
