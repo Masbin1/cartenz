@@ -261,6 +261,34 @@ export default function ProjectSettingsPage() {
   };
 
   /**
+   * Restart instance, right here next to the field that sets the branch it
+   * restarts onto (ADR-057/ADR-069) — the project page's own restart button
+   * lives far from Settings and a connected odoo.sh project's instance isn't
+   * even in the section that button is part of (see `projects.service.ts`'s
+   * `restart`, which resolves either kind). Always restarts onto
+   * `project.defaultBranch` as currently saved, not `branchDraft`: an unsaved
+   * edit in the field above must not be silently what gets deployed.
+   */
+  const [restartingInstance, setRestartingInstance] = useState(false);
+  const [restartInstanceQueued, setRestartInstanceQueued] = useState(false);
+
+  const restartInstance = async () => {
+    if (!project) return;
+    setRestartingInstance(true);
+    setError(null);
+    setRestartInstanceQueued(false);
+    try {
+      await api.projects.restart(projectId, project.defaultBranch);
+      setRestartInstanceQueued(true);
+      setNotice(`Restart queued onto "${project.defaultBranch}".`);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The restart could not be queued.');
+    } finally {
+      setRestartingInstance(false);
+    }
+  };
+
+  /**
    * Asks the repository which branches it has, so the branch below is picked
    * rather than typed. Not read on load: it is a network call to the remote,
    * and most visits to this page are not about environments.
@@ -798,6 +826,39 @@ export default function ProjectSettingsPage() {
                     </button>
                   </div>
                 </form>
+              ) : null}
+
+              {canEdit ? (
+                <div className="border-t border-surface-border bg-surface/40 px-5 py-5 sm:px-6">
+                  <p className="field-label">Restart instance</p>
+                  <p className="field-hint">
+                    Pulls <span className="font-mono">{project.defaultBranch}</span>, upgrades every
+                    installed module, then bounces the service. The instance is briefly stopped
+                    while the upgrade runs.
+                  </p>
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={() => void restartInstance()}
+                      disabled={restartingInstance || project.restart.status === 'pending'}
+                      className="btn-secondary"
+                    >
+                      {restartingInstance || project.restart.status === 'pending' ? (
+                        <Spinner className="h-3.5 w-3.5" />
+                      ) : null}
+                      {restartingInstance
+                        ? 'Queuing…'
+                        : project.restart.status === 'pending'
+                          ? 'Restarting…'
+                          : 'Restart instance'}
+                    </button>
+                  </div>
+                  {restartInstanceQueued ? (
+                    <p className="mt-2 text-meta text-state-success">
+                      Restart queued onto {project.defaultBranch}.
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </SettingsGroup>
