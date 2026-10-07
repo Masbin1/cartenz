@@ -242,8 +242,12 @@ export default function ProjectSettingsPage() {
     setError(null);
     setNotice(null);
     try {
-      const updated = await api.projects.update(projectId, { defaultBranch: branch });
-      setProject(updated);
+      // Not `setProject(updated)`: the PATCH response is `present()`'s bare
+      // project shape, missing `connections`, `recentTasks`, `specification`
+      // and the rest this page reads off `project` elsewhere. Replacing the
+      // whole object with it is what threw "Something went wrong" on save.
+      await api.projects.update(projectId, { defaultBranch: branch });
+      setProject((previous) => (previous ? { ...previous, defaultBranch: branch } : previous));
       setNotice(
         `Default branch set to "${branch}". Restart the instance to bring it onto this branch.`,
       );
