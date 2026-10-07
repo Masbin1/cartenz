@@ -232,6 +232,8 @@ export class ProjectsService {
         name: projects.name,
         repositoryUrl: projects.repositoryUrl,
         environmentConfig: projects.environmentConfig,
+        connectedInstanceName: projects.connectedInstanceName,
+        connectedInstanceStatus: projects.connectedInstanceStatus,
       })
       .from(projects)
       .where(eq(projects.id, projectId))
@@ -270,10 +272,18 @@ export class ProjectsService {
       );
     }
 
-    const technicalName = technicalNameFromOnPremisePath(
-      project.environmentConfig,
-      this.config.provisioning.projectsDir,
-    );
+    // A project provisioned the normal way (ADR-039) records its instance
+    // under `environmentConfig.onPremisePath`; a connected odoo.sh project's
+    // own instance (ADR-069) is a separate row altogether — it was never
+    // provisioned through that chain, so the lookup above always misses it.
+    // Without this fallback, restart() silently thought every odoo.sh
+    // project's instance did not exist, no matter how long it had been
+    // running: the project page tells the operator to "change the branch,
+    // then restart" (Settings' "Instance branch" group), but with nothing to
+    // resolve to there was never a button to press.
+    const technicalName =
+      technicalNameFromOnPremisePath(project.environmentConfig, this.config.provisioning.projectsDir) ??
+      (project.connectedInstanceStatus === 'ready' ? project.connectedInstanceName : null);
 
     if (!technicalName) {
       throw new BadRequestException(

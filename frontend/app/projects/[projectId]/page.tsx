@@ -176,7 +176,8 @@ export default function ProjectDetailPage() {
   const grantedCount = grantedPermissions.filter(([, granted]) => granted).length;
   const odooOnline = project.projectType === 'odoo_online' ? odooOnlineInstanceOf(project) : null;
   const instance = odooOnline ? ODOO_ONLINE_STATE[odooOnline.status] : INSTANCE_STATE[project.provisioning.status];
-  const hasInstance = project.provisioning.status !== 'none';
+  const hasInstance =
+    project.provisioning.status !== 'none' || project.connectedInstance?.status === 'ready';
   const workspaceHref = `/projects/${project.id}/agent`;
 
   return (
@@ -291,6 +292,7 @@ export default function ProjectDetailPage() {
               <InstanceOperations
                 projectId={project.id}
                 provisioning={project.provisioning}
+                connectedInstanceReady={project.connectedInstance?.status === 'ready'}
                 restart={project.restart}
                 repositoryUrl={project.repositoryUrl}
                 defaultBranch={project.defaultBranch}
@@ -800,6 +802,7 @@ function Outcome({ tone, children }: { tone: 'success' | 'failure' | 'neutral'; 
 function InstanceOperations({
   projectId,
   provisioning,
+  connectedInstanceReady,
   restart,
   repositoryUrl,
   defaultBranch,
@@ -807,6 +810,7 @@ function InstanceOperations({
 }: {
   projectId: string;
   provisioning: ProjectProvisioningInfo;
+  connectedInstanceReady: boolean;
   restart: ProjectRestartInfo;
   repositoryUrl: string | null;
   defaultBranch: string;
@@ -947,10 +951,17 @@ function InstanceOperations({
     restartInstanceQueued;
 
   const provisioned = provisioning.status === 'provisioned';
+  // A connected odoo.sh project's own instance (ADR-069) is a separate
+  // record from `provisioning` (see projects.service.ts's `restart`): it is
+  // never "provisioned" the normal way, but restart() now resolves it too,
+  // so the button belongs here as well — otherwise there is no restart
+  // control for the one project type Settings' "Instance branch" text
+  // promises it to.
+  const canRestart = provisioned || connectedInstanceReady;
 
   // Every row below is gated on a provisioned instance or a held master
   // password; with neither, the section would be an empty box.
-  if (!provisioned && !provisioning.hasMasterPassword) return null;
+  if (!provisioned && !connectedInstanceReady && !provisioning.hasMasterPassword) return null;
 
   return (
     <Section
@@ -984,7 +995,7 @@ function InstanceOperations({
           </OperationRow>
         ) : null}
 
-        {canReveal && provisioned ? (
+        {canReveal && canRestart ? (
           <OperationRow
             title="Restart instance"
             description={
