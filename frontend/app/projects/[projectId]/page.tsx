@@ -293,6 +293,7 @@ export default function ProjectDetailPage() {
                 provisioning={project.provisioning}
                 restart={project.restart}
                 repositoryUrl={project.repositoryUrl}
+                defaultBranch={project.defaultBranch}
                 isAdmin={user.isAdmin}
               />
             ) : null}
@@ -801,12 +802,14 @@ function InstanceOperations({
   provisioning,
   restart,
   repositoryUrl,
+  defaultBranch,
   isAdmin,
 }: {
   projectId: string;
   provisioning: ProjectProvisioningInfo;
   restart: ProjectRestartInfo;
   repositoryUrl: string | null;
+  defaultBranch: string;
   isAdmin: boolean;
 }) {
   const canReveal = isAdmin;
@@ -863,6 +866,34 @@ function InstanceOperations({
   }, [projectId]);
 
   /**
+   * Restart instance: pull `defaultBranch` onto the running instance, upgrade
+   * every installed module (`-u all`), bounce the unit (ADR-057). Unlike Ship
+   * to production this does not touch GitHub — it restarts onto whatever the
+   * project's own default branch is set to, which the project's Settings page
+   * lets an admin change. Pointing that at a different branch and pressing
+   * this button is the whole "change the branch, then restart" flow.
+   */
+  const [restartingInstance, setRestartingInstance] = useState(false);
+  const [restartInstanceError, setRestartInstanceError] = useState<string | null>(null);
+  const [restartInstanceQueued, setRestartInstanceQueued] = useState(false);
+
+  const restartInstance = useCallback(async () => {
+    setRestartingInstance(true);
+    setRestartInstanceError(null);
+    setRestartInstanceQueued(false);
+    try {
+      await api.projects.restart(projectId, defaultBranch);
+      setRestartInstanceQueued(true);
+    } catch (caught) {
+      setRestartInstanceError(
+        caught instanceof ApiError ? caught.message : 'The restart could not be queued.',
+      );
+    } finally {
+      setRestartingInstance(false);
+    }
+  }, [projectId, defaultBranch]);
+
+  /**
    * Ship to production (ADR-057): promote staging onto main, then bring the
    * instance onto main and serve it.
    *
@@ -906,7 +937,14 @@ function InstanceOperations({
 
   // A restart runs on the worker, so "in flight" is the project row's own
   // status plus the moment between the merge landing and the job being queued.
-  const restarting = restart.status === 'pending' || shipStage === 'queued';
+  // "Restart instance" below queues the very same job, so it counts here too —
+  // pressing Ship while a plain restart is still running would queue a second
+  // upgrade onto a database the first one is still migrating.
+  const restarting =
+    restart.status === 'pending' ||
+    shipStage === 'queued' ||
+    restartingInstance ||
+    restartInstanceQueued;
 
   const provisioned = provisioning.status === 'provisioned';
 
@@ -943,6 +981,39 @@ function InstanceOperations({
               </Outcome>
             ) : null}
             {deployError ? <Outcome tone="failure">{deployError}</Outcome> : null}
+          </OperationRow>
+        ) : null}
+
+        {canReveal && provisioned ? (
+          <OperationRow
+            title="Restart instance"
+            description={
+              <>
+                Pulls <code className="font-mono">{defaultBranch}</code> (the project's default
+                branch, changeable in Settings), upgrades every installed module, then bounces
+                the service. The instance is briefly stopped while the upgrade runs.
+              </>
+            }
+            action={
+              <button
+                type="button"
+                onClick={() => void restartInstance()}
+                disabled={restarting}
+                className="btn-secondary"
+              >
+                {restarting ? <Spinner className="h-3.5 w-3.5" /> : null}
+                {restartingInstance
+                  ? 'Queuing…'
+                  : restarting
+                    ? 'Restarting…'
+                    : 'Restart instance'}
+              </button>
+            }
+          >
+            {restartInstanceQueued ? (
+              <Outcome tone="success">Restart queued onto {defaultBranch}.</Outcome>
+            ) : null}
+            {restartInstanceError ? <Outcome tone="failure">{restartInstanceError}</Outcome> : null}
           </OperationRow>
         ) : null}
 

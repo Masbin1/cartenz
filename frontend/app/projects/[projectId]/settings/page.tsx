@@ -87,6 +87,7 @@ export default function ProjectSettingsPage() {
       setPermissions(detail.agentPermissions);
       setLocalOnly(detail.localProviderOnly);
       setEnvironments(environmentList);
+      setBranchDraft((previous) => (previous === '' ? detail.defaultBranch : previous));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The project could not be loaded.');
     }
@@ -222,6 +223,38 @@ export default function ProjectSettingsPage() {
 
   const [branches, setBranches] = useState<string[] | undefined>(undefined);
   const [readingBranches, setReadingBranches] = useState(false);
+
+  /**
+   * The instance's default branch (ADR-057's `restart`): what `Deploy latest`
+   * and `Restart instance` pull and serve when no other branch is named.
+   * Changing it here is just the project row; it takes effect on the running
+   * instance only once "Restart instance" (or Deploy) is pressed afterwards —
+   * the same two-step the project page's restart button already keeps apart.
+   */
+  const [branchDraft, setBranchDraft] = useState('');
+  const [savingBranch, setSavingBranch] = useState(false);
+
+  const saveDefaultBranch = async () => {
+    const branch = branchDraft.trim();
+    if (!branch || branch === project?.defaultBranch) return;
+
+    setSavingBranch(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await api.projects.update(projectId, { defaultBranch: branch });
+      setProject(updated);
+      setNotice(
+        `Default branch set to "${branch}". Restart the instance to bring it onto this branch.`,
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError ? caught.message : 'The default branch could not be changed.',
+      );
+    } finally {
+      setSavingBranch(false);
+    }
+  };
 
   /**
    * Asks the repository which branches it has, so the branch below is picked
@@ -660,6 +693,96 @@ export default function ProjectSettingsPage() {
                       type="button"
                       onClick={() => void readBranches()}
                       disabled={saving || readingBranches}
+                      className="btn-ghost"
+                    >
+                      {readingBranches ? (
+                        <Spinner className="h-3.5 w-3.5" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                      )}
+                      {readingBranches ? 'Reading' : 'Read branches'}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+            </div>
+          </SettingsGroup>
+
+          <SettingsGroup
+            title="Instance branch"
+            description="The branch the provisioned instance pulls and serves: Deploy latest, Restart instance and Ship to production all fall back to this when no other branch is named."
+            aside={canEdit ? undefined : 'Admin role required to change.'}
+          >
+            <div className="panel overflow-hidden">
+              <div className="px-5 py-5 sm:px-6">
+                <DetailList>
+                  <DetailItem label="Current default branch" mono>
+                    {project.defaultBranch}
+                  </DetailItem>
+                </DetailList>
+              </div>
+
+              {canEdit ? (
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void saveDefaultBranch();
+                  }}
+                  className="border-t border-surface-border bg-surface/40 px-5 py-5 sm:px-6"
+                >
+                  <label htmlFor="defaultBranch" className="field-label">
+                    Default branch
+                  </label>
+                  {branches ? (
+                    <select
+                      id="defaultBranch"
+                      value={branchDraft}
+                      onChange={(event) => setBranchDraft(event.target.value)}
+                      disabled={savingBranch}
+                      className="field-input font-mono text-callout"
+                    >
+                      <option value={project.defaultBranch}>{project.defaultBranch}</option>
+                      {branches
+                        .filter((branch) => branch !== project.defaultBranch)
+                        .map((branch) => (
+                          <option key={branch} value={branch}>
+                            {branch}
+                          </option>
+                        ))}
+                    </select>
+                  ) : (
+                    <input
+                      id="defaultBranch"
+                      value={branchDraft}
+                      onChange={(event) => setBranchDraft(event.target.value)}
+                      placeholder={project.defaultBranch}
+                      disabled={savingBranch}
+                      autoComplete="off"
+                      className="field-input font-mono text-callout"
+                    />
+                  )}
+                  <p className="field-hint">
+                    Changing this only updates what the project records. Nothing on the server
+                    moves until you press "Restart instance" (or Deploy latest) on the project
+                    page.
+                  </p>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button
+                      type="submit"
+                      disabled={
+                        savingBranch ||
+                        branchDraft.trim() === '' ||
+                        branchDraft.trim() === project.defaultBranch
+                      }
+                      className="btn-primary"
+                    >
+                      {savingBranch ? <Spinner className="h-3.5 w-3.5" /> : null}
+                      Save default branch
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void readBranches()}
+                      disabled={savingBranch || readingBranches}
                       className="btn-ghost"
                     >
                       {readingBranches ? (
