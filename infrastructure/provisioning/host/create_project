@@ -26,15 +26,16 @@ set -Eeuo pipefail
 
 BASE_DOMAIN="masbintang.space"
 
-BASE_DIR="/opt/odoo"
-
-ODOO_DIR="${BASE_DIR}/odoo-server"
-VENV_DIR="${BASE_DIR}/venv"
-PROJECTS_DIR="${BASE_DIR}/projects"
-SCRIPTS_DIR="${BASE_DIR}/scripts"
-
-ODOO_BIN="${ODOO_DIR}/odoo-bin"
-PYTHON_BIN="${VENV_DIR}/bin/python"
+# Odoo 19 and Odoo 20 live in entirely separate trees on this host (different
+# source checkout, different venv, different PostgreSQL cluster — Odoo 20
+# hard-requires PostgreSQL 16+, see /opt/odoo20 provisioning notes). The
+# version argument below selects which one a project is built against; a
+# project with no version, or a 19.x version, keeps the pre-20.0 default of
+# /opt/odoo on PostgreSQL port 5432, unchanged.
+BASE_DIR_19="/opt/odoo"
+BASE_DIR_20="/opt/odoo20"
+POSTGRES_PORT_19="5432"
+POSTGRES_PORT_20="5433"
 
 ODOO_USER="odoo"
 POSTGRES_USER="odoo"
@@ -88,6 +89,25 @@ MODULES_CSV="${5:-}"
 GEVENT_PORT=$((HTTP_PORT + 1))
 
 DOMAIN="${PROJECT_NAME}.${BASE_DOMAIN}"
+
+# Pick the runtime tree + PostgreSQL port for this version (see comment on
+# BASE_DIR_19/BASE_DIR_20 above). Anything that is not exactly "20.0" (no
+# version, or any 19.x) keeps using the Odoo 19 tree on PostgreSQL 14.
+if [[ "$VERSION" == "20.0" ]]; then
+    BASE_DIR="$BASE_DIR_20"
+    POSTGRES_PORT="$POSTGRES_PORT_20"
+else
+    BASE_DIR="$BASE_DIR_19"
+    POSTGRES_PORT="$POSTGRES_PORT_19"
+fi
+
+ODOO_DIR="${BASE_DIR}/odoo-server"
+VENV_DIR="${BASE_DIR}/venv"
+PROJECTS_DIR="${BASE_DIR}/projects"
+SCRIPTS_DIR="${BASE_DIR}/scripts"
+
+ODOO_BIN="${ODOO_DIR}/odoo-bin"
+PYTHON_BIN="${VENV_DIR}/bin/python"
 
 PROJECT_DIR="${PROJECTS_DIR}/${PROJECT_NAME}"
 
@@ -270,7 +290,7 @@ if ! systemctl is-active --quiet postgresql; then
     exit 1
 fi
 
-if ! runuser -u postgres -- psql -tAc \
+if ! runuser -u postgres -- psql -p "$POSTGRES_PORT" -tAc \
     "SELECT 1 FROM pg_roles WHERE rolname='${POSTGRES_USER}'" \
     | grep -q 1; then
 
@@ -331,7 +351,7 @@ success "Ports ${HTTP_PORT} and ${GEVENT_PORT} are available."
 # DATABASE CHECK
 # ============================================================
 
-if runuser -u postgres -- psql -tAc \
+if runuser -u postgres -- psql -p "$POSTGRES_PORT" -tAc \
     "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" \
     | grep -q 1; then
 
@@ -378,7 +398,7 @@ cleanup() {
     fi
 
     if [[ "$CREATED_DB" == true ]]; then
-        runuser -u postgres -- dropdb "$DB_NAME" 2>/dev/null || true
+        runuser -u postgres -- dropdb -p "$POSTGRES_PORT" "$DB_NAME" 2>/dev/null || true
     fi
 
     if [[ "$CREATED_PROJECT" == true ]]; then
@@ -430,7 +450,12 @@ success "Project directories created."
 if [[ -n "$VERSION" ]]; then
     info "Creating database from the ${VERSION} template..."
 
-    "${SCRIPTS_DIR}/create-project-db.sh" \
+    PROJECTS_DIR="$PROJECTS_DIR" \
+    ODOO_BASE_PATH="$ODOO_DIR" \
+    ODOO_ENTERPRISE_PATH="${BASE_DIR}/enterprise" \
+    ODOO_PYTHON="$PYTHON_BIN" \
+    POSTGRES_PORT="$POSTGRES_PORT" \
+        "${SCRIPTS_DIR}/create-project-db.sh" \
         "${PROJECT_NAME}" community "${VERSION}" "https://${DOMAIN}" "${REGION}" "${MODULES_CSV}"
 
     CREATED_DB=true
@@ -440,6 +465,7 @@ else
     info "Creating PostgreSQL database..."
 
     runuser -u postgres -- createdb \
+        -p "$POSTGRES_PORT" \
         --owner="$POSTGRES_USER" \
         "$DB_NAME"
 
@@ -487,12 +513,12 @@ proxy_mode = True
 ; ==========================================================
 
 ; db_host =
-; db_port =
+db_port = ${POSTGRES_PORT}
 db_user = ${POSTGRES_USER}
 ; db_password =
 
 db_name = ${DB_NAME}
-dbfilter = ^${DB_NAME}\$
+dbfilter = ^${DB_NAME%-i-*}.*\$
 
 ; list_db stays True: dbfilter above already pins the manager to this
 ; project's own database, so opening it does not expose other instances.
@@ -575,8 +601,8 @@ info "Creating systemd service..."
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Odoo 19 - ${PROJECT_NAME}
-Documentation=https://www.odoo.com/documentation/19.0/
+Description=Odoo ${VERSION:-19} - ${PROJECT_NAME}
+Documentation=https://www.odoo.com/documentation/${VERSION:-19.0}/
 After=network.target postgresql.service
 Requires=postgresql.service
 

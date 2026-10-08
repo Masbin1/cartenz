@@ -36,11 +36,15 @@ import {
 import { ModulePicker } from '@/components/projects/module-picker';
 
 
-const ODOO_VERSIONS = ['19.0'];
-// Shown in the dropdown but not selectable: the runtime/source for 20.0 is not
-// provisioned on this host yet. Listed anyway so it is clear the version
-// exists and is already on the roadmap, instead of looking unsupported.
-const ODOO_VERSIONS_COMING_SOON = ['20.0'];
+const ODOO_VERSIONS = ['19.0', '20.0'];
+// Nothing shown as "coming soon" right now: 20.0 is provisioned on this host
+// (community) via its own source tree, venv and PostgreSQL cluster
+// (/opt/odoo20) — see create_project's version dispatch. Enterprise 20.0 is
+// not yet available (no 20.0 branch from the enterprise fork), so a request
+// for odooEdition=enterprise + odooVersion=20.0 still fails at provisioning
+// time with a clear "enterprise addons not found" error rather than being
+// blocked in this dropdown.
+const ODOO_VERSIONS_COMING_SOON: string[] = [];
 const ODOO_EDITIONS: { value: string; label: string }[] = [
   { value: 'enterprise', label: 'Enterprise' },
   { value: 'community', label: 'Community' },

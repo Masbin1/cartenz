@@ -76,6 +76,9 @@ ODOO_USER="${ODOO_USER:-odoo}"
 ODOO_BASE_PATH="${ODOO_BASE_PATH:-/opt/odoo/odoo-server}"
 ODOO_ENTERPRISE_PATH="${ODOO_ENTERPRISE_PATH:-/opt/odoo/enterprise}"
 ODOO_PYTHON="${ODOO_PYTHON:-/opt/odoo/venv/bin/python}"
+# PostgreSQL port: Odoo 20 and up use a separate cluster (16+) alongside the
+# 19.x cluster on 5432; the caller sets this when provisioning a 20.0 project.
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 # ----------------------------------------------------------------------
 
 usage() {
@@ -155,7 +158,7 @@ fi
 TEMPLATE_BASE="cartenz_tpl_${VER_TAG}_${TEMPLATE_SUFFIX}"
 
 template_exists() {
-    sudo -u postgres psql -tAc \
+    sudo -u postgres psql -p "$POSTGRES_PORT" -tAc \
         "SELECT 1 FROM pg_database WHERE datname = '$1' AND datistemplate" | grep -q 1
 }
 
@@ -193,7 +196,7 @@ if ! template_exists "$TEMPLATE"; then
 fi
 
 # Duplicate. This is the whole trick: files are copied, not replayed.
-sudo -u postgres createdb -O "$ODOO_USER" -T "$TEMPLATE" "$PROJECT_NAME"
+sudo -u postgres createdb -p "$POSTGRES_PORT" -O "$ODOO_USER" -T "$TEMPLATE" "$PROJECT_NAME"
 
 # ADR-056: for a selective install the database now exists before the modules
 # are, and that install runs as a separate `odoo-bin -i` that can still fail
@@ -214,7 +217,7 @@ on_exit() {
 
     if (( exit_code != 0 )) && [[ "$CREATED_DB" == true ]]; then
         echo "ERROR: provisioning failed; dropping the partially built database '${PROJECT_NAME}'." >&2
-        sudo -u postgres dropdb --if-exists "$PROJECT_NAME" 2>/dev/null || true
+        sudo -u postgres dropdb -p "$POSTGRES_PORT" --if-exists "$PROJECT_NAME" 2>/dev/null || true
     fi
 
     exit "$exit_code"
@@ -223,13 +226,13 @@ trap on_exit EXIT
 
 # The clone — unlike the sealed template it was copied from — must accept
 # connections: templates are built with datallowconn = false.
-sudo -u postgres psql -v ON_ERROR_STOP=1 \
+sudo -u postgres psql -p "$POSTGRES_PORT" -v ON_ERROR_STOP=1 \
     -c "UPDATE pg_database SET datallowconn = true WHERE datname = '${PROJECT_NAME}';"
 
 # Neutralise the clone's identity. gen_random_uuid() is built into PostgreSQL
 # 13+; the UPDATE is guarded by a WHERE so a future Odoo that stores the UUID
 # elsewhere cannot make this fail the whole provisioning.
-sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$PROJECT_NAME" \
+sudo -u postgres psql -p "$POSTGRES_PORT" -v ON_ERROR_STOP=1 -d "$PROJECT_NAME" \
     -c "UPDATE ir_config_parameter SET value = gen_random_uuid() WHERE key = 'database.uuid';"
 
 if [[ -n "$URL" ]]; then
@@ -237,7 +240,7 @@ if [[ -n "$URL" ]]; then
         echo "ERROR: invalid URL '${URL}'." >&2
         exit 1
     fi
-    sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$PROJECT_NAME" \
+    sudo -u postgres psql -p "$POSTGRES_PORT" -v ON_ERROR_STOP=1 -d "$PROJECT_NAME" \
         -c "UPDATE ir_config_parameter SET value = '${URL}' WHERE key = 'web.base.url';"
 fi
 
@@ -276,6 +279,7 @@ if [[ -n "$MODULES_CSV" ]]; then
         echo "[options]"
         echo "addons_path = ${ADDONS}"
         echo "db_user = ${ODOO_USER}"
+        echo "db_port = ${POSTGRES_PORT}"
         echo "data_dir = ${PROJECTS_DIR}/${PROJECT_NAME}/data"
         echo "without_demo = all"
     } > "$INSTALL_CONF"

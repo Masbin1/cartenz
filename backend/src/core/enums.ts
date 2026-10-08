@@ -187,16 +187,14 @@ export type AgentActionStatus = (typeof AGENT_ACTION_STATUSES)[number];
 /**
  * Odoo versions the platform will accept on a project.
  *
- * Narrowed to the version this host actually runs: 19.0. Older series
- * (15.0-18.0) were dropped from new projects — the two 19.0 projects created
- * before this change are unaffected, since this only gates new input. 20.0 is
- * NOT listed here even though the frontend shows it (disabled): its source
- * and runtime are not provisioned on this host yet (see ODOO_RUNTIMES /
- * OdooVersionsService), so accepting it here would let a request reach
- * create_project/create_project_enterprise, which still hardcode the 19.0
- * ODOO_DIR and would run 20.0-templated data against 19.0 code.
+ * Narrowed to the versions this host actually runs: 19.0 and, since the
+ * create_project/create_project_enterprise scripts became version-aware
+ * (selecting /opt/odoo vs /opt/odoo20 — a separate source checkout, venv and
+ * PostgreSQL cluster per major version), 20.0 too. Older series (15.0-18.0)
+ * were dropped from new projects — the projects created before this change
+ * are unaffected, since this only gates new input.
  */
-export const ODOO_VERSIONS = ['19.0'] as const;
+export const ODOO_VERSIONS = ['19.0', '20.0'] as const;
 export type OdooVersion = (typeof ODOO_VERSIONS)[number];
 
 /**
