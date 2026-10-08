@@ -3,7 +3,7 @@ import { buildProjectSpecification } from './project-specification';
 describe('buildProjectSpecification', () => {
   const input = {
     projectName: 'Equipment Management',
-    odooVersion: '18.0' as const,
+    odooVersion: '19.0' as const,
     description: 'Manage employee equipment',
     requirements: [
       { title: 'Register equipment against an employee' },
@@ -17,7 +17,7 @@ describe('buildProjectSpecification', () => {
     expect(specification).toEqual({
       project_name: 'Equipment Management',
       framework: 'Odoo',
-      odoo_version: '18',
+      odoo_version: '19',
       description: 'Manage employee equipment',
       modules: [],
       requirements: [

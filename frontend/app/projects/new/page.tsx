@@ -36,7 +36,11 @@ import {
 import { ModulePicker } from '@/components/projects/module-picker';
 
 
-const ODOO_VERSIONS = ['15.0', '16.0', '17.0', '18.0', '19.0'];
+const ODOO_VERSIONS = ['19.0'];
+// Shown in the dropdown but not selectable: the runtime/source for 20.0 is not
+// provisioned on this host yet. Listed anyway so it is clear the version
+// exists and is already on the roadmap, instead of looking unsupported.
+const ODOO_VERSIONS_COMING_SOON = ['20.0'];
 const ODOO_EDITIONS: { value: string; label: string }[] = [
   { value: 'enterprise', label: 'Enterprise' },
   { value: 'community', label: 'Community' },
@@ -335,7 +339,7 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
     name: '',
     description: '',
     projectType: 'repository',
-    odooVersion: '18.0',
+    odooVersion: '19.0',
     odooEdition: 'enterprise',
     defaultBranch: 'main',
     repositoryUrl: '',
@@ -708,6 +712,11 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
               {ODOO_VERSIONS.map((version) => (
                 <option key={version} value={version}>
                   {version}
+                </option>
+              ))}
+              {ODOO_VERSIONS_COMING_SOON.map((version) => (
+                <option key={version} value={version} disabled>
+                  {version} (In development — not yet available)
                 </option>
               ))}
             </select>
@@ -1141,7 +1150,7 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
   const router = useRouter();
   const [regionChoice, setRegionChoice] = useState<UserRegion>(region);
   const [name, setName] = useState('');
-  const [odooVersion, setOdooVersion] = useState('18.0');
+  const [odooVersion, setOdooVersion] = useState('19.0');
   const [odooEdition, setOdooEdition] = useState('enterprise');
   const [description, setDescription] = useState('');
   const [requirements, setRequirements] = useState<{ title: string; detail: string }[]>([
@@ -1238,6 +1247,11 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
               {ODOO_VERSIONS.map((version) => (
                 <option key={version} value={version}>
                   {version}
+                </option>
+              ))}
+              {ODOO_VERSIONS_COMING_SOON.map((version) => (
+                <option key={version} value={version} disabled>
+                  {version} (In development — not yet available)
                 </option>
               ))}
             </select>

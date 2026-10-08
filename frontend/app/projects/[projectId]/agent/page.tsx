@@ -756,7 +756,7 @@ export default function AgentWorkspacePage() {
                       }
                     }}
                     onPaste={(event) => void handlePaste(event)}
-                    placeholder="Add a customer reference field to Sales Order and Invoice."
+                    placeholder="What can I help you with? Prompt your project to build a feature or fix something."
                     className="block min-h-[4.5rem] w-full resize-none rounded-t-card bg-transparent px-4 pb-2 pt-4 text-body text-content placeholder:text-content-subtle focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:px-5"
                   />
 
