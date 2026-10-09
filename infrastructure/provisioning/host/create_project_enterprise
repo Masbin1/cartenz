@@ -105,7 +105,15 @@ ODOO_DIR="${BASE_DIR}/odoo-server"
 VENV_DIR="${BASE_DIR}/venv"
 PROJECTS_DIR="${BASE_DIR}/projects"
 SCRIPTS_DIR="${BASE_DIR}/scripts"
-ENTERPRISE_DIR="${BASE_DIR}/enterprise"
+# 19.0's enterprise checkout sits flat at ${BASE_DIR}/enterprise (it is the git
+# root). 20.0's was cloned as the LinkedERP/Cartenz repo, which nests the
+# actual addons one level down at Cartenz/enterprise-20 inside that checkout —
+# so the two versions resolve differently here.
+if [[ "$VERSION" == "20.0" ]]; then
+    ENTERPRISE_DIR="${BASE_DIR}/enterprise/Cartenz/enterprise-20"
+else
+    ENTERPRISE_DIR="${BASE_DIR}/enterprise"
+fi
 
 ODOO_BIN="${ODOO_DIR}/odoo-bin"
 PYTHON_BIN="${VENV_DIR}/bin/python"
