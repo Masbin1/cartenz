@@ -50,10 +50,12 @@ usage() {
     echo "Usage:"
     echo "  build-odoo-templates.sh <version> <base_path> <python> [enterprise_path] [only]"
     echo
-    echo "  only  all (default) | full | base"
+    echo "  only  all (default) | full | base | com | ent"
     echo "        all   build every template for this version"
     echo "        full  build only cartenz_tpl_<ver>_<com|ent>"
     echo "        base  build only cartenz_tpl_<ver>_<com|ent>_base (minutes, not hours)"
+    echo "        com   build only cartenz_tpl_<ver>_com (Community full, skips Enterprise)"
+    echo "        ent   build only cartenz_tpl_<ver>_ent (Enterprise full, skips Community)"
     echo
     echo "Example:"
     echo "  build-odoo-templates.sh 19.0 /opt/odoo/versions/19.0/odoo \\"
@@ -77,8 +79,8 @@ PYTHON="$3"
 ENTERPRISE_PATH="${4:-}"
 ONLY="${5:-all}"
 
-if [[ ! "$ONLY" =~ ^(all|full|base)$ ]]; then
-    echo "ERROR: Invalid 'only' value '${ONLY}'. Expected all, full, or base." >&2
+if [[ ! "$ONLY" =~ ^(all|full|base|com|ent)$ ]]; then
+    echo "ERROR: Invalid 'only' value '${ONLY}'. Expected all, full, base, com, or ent." >&2
     exit 1
 fi
 
@@ -100,8 +102,15 @@ if ! command -v psql >/dev/null 2>&1 || ! command -v createdb >/dev/null 2>&1; t
     exit 1
 fi
 
-if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'odoo'" | grep -q 1; then
-    echo "ERROR: the 'odoo' Postgres role does not exist." >&2
+# Odoo 20+ runs against a separate PostgreSQL cluster (16+) alongside the
+# 19.x cluster on 5432, because the server-side pins diverge too far to share
+# one cluster. Set POSTGRES_PORT=5433 (or whichever port that cluster listens
+# on) when building templates for such a version; defaults to 5432 so every
+# existing call site (19.0 and earlier) is unaffected.
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+
+if ! sudo -u postgres psql -p "$POSTGRES_PORT" -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'odoo'" | grep -q 1; then
+    echo "ERROR: the 'odoo' Postgres role does not exist on port ${POSTGRES_PORT}." >&2
     exit 1
 fi
 
@@ -147,7 +156,17 @@ write_conf() {
     {
         echo "[options]"
         echo "addons_path = ${addons}"
-        # No db_host/db_port/db_password: local socket + peer auth as role odoo.
+        # No db_host/db_password: local socket + peer auth as role odoo. db_port
+        # IS required even over the unix socket — it selects which cluster's
+        # socket file to connect to (.s.PGSQL.<port>) when more than one
+        # cluster runs on this host, which is exactly the 20.0-on-5433 case.
+        # Omitting it here silently fell back to the default socket (5432,
+        # PG14) while claiming to install against 20.0's PG16 — a schema built
+        # against the wrong server version failed on functions PG14 does not
+        # have (e.g. any_value(), NULLS NOT DISTINCT).
+        if [[ "$POSTGRES_PORT" != "5432" ]]; then
+            echo "db_port = ${POSTGRES_PORT}"
+        fi
         echo "db_user = odoo"
         echo "data_dir = ${WORKDIR}/data"
         echo "without_demo = all"
@@ -199,8 +218,21 @@ build_template() {
 
     echo "=== Building ${template} (this is the slow part: installing all modules) ==="
 
-    sudo -u postgres dropdb --if-exists "$scratch"
-    sudo -u postgres createdb -O odoo "$scratch"
+    sudo -u postgres dropdb -p "$POSTGRES_PORT" --if-exists "$scratch"
+    sudo -u postgres createdb -p "$POSTGRES_PORT" -O odoo "$scratch"
+
+    # Enterprise 20.0's `ai` module hard-depends on pgvector via a pre_init
+    # hook that runs CREATE EXTENSION IF NOT EXISTS vector as role `odoo` —
+    # which is deliberately non-superuser, and `vector` is not a trusted
+    # extension, so that CREATE EXTENSION fails with "permission denied ...
+    # Must be superuser" and odoo-bin aborts the whole install before any
+    # other module loads. Pre-create it here as the postgres superuser so
+    # the hook finds it already present (via pg_extension) and skips.
+    # Requires the cluster's postgresql-<major>-pgvector package installed;
+    # if it is not, this fails loudly here instead of 54 modules into the
+    # install.
+    sudo -u postgres psql -p "$POSTGRES_PORT" -v ON_ERROR_STOP=1 -d "$scratch" \
+        -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
     set +e
     sudo -u odoo -H "$PYTHON" "${BASE_PATH}/odoo-bin" \
@@ -220,7 +252,7 @@ build_template() {
         LOG_KEEP="/tmp/cartenz-tplbuild-${VER_TAG}-${edition}.log"
         cp -f "${WORKDIR}/${edition}.log" "$LOG_KEEP" 2>/dev/null || true
         echo "See ${LOG_KEEP} for the Odoo log." >&2
-        sudo -u postgres dropdb --if-exists "$scratch"
+        sudo -u postgres dropdb -p "$POSTGRES_PORT" --if-exists "$scratch"
         exit 1
     fi
 
@@ -249,15 +281,20 @@ build_template() {
 
     # A refresh run replaces the previous template of this name; without this
     # the rename below fails on an existing name and strands the scratch
-    # database.
-    sudo -u postgres dropdb --if-exists "$template"
+    # database. A sealed template has is_template=true, which PostgreSQL
+    # refuses to drop ("cannot drop a template database") -- unseal it first,
+    # if it exists, before dropping it.
+    sudo -u postgres psql -p "$POSTGRES_PORT" -v ON_ERROR_STOP=1 -c \
+        "UPDATE pg_database SET datistemplate = false WHERE datname = '${template}';" \
+        >/dev/null 2>&1 || true
+    sudo -u postgres dropdb -p "$POSTGRES_PORT" --if-exists "$template"
 
     # Seal it: rename to its final name, then mark it a template that accepts
     # no connections. is_template is what lets CREATE DATABASE ... TEMPLATE use
     # it; datallowconn=false both satisfies PostgreSQL's own rule that a
     # non-template source must not accept connections, and protects the
     # template from being drifted.
-    sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"${scratch}\" RENAME TO \"${template}\";" \
+    sudo -u postgres psql -p "$POSTGRES_PORT" -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"${scratch}\" RENAME TO \"${template}\";" \
         -c "ALTER DATABASE \"${template}\" WITH is_template true;" \
         -c "UPDATE pg_database SET datallowconn = false WHERE datname = '${template}';"
 
@@ -278,6 +315,12 @@ case "$ONLY" in
     base)
         build_template "community" "cartenz_tpl_${VER_TAG}_com_base" true
         build_template "enterprise" "cartenz_tpl_${VER_TAG}_ent_base" true
+        ;;
+    com)
+        build_template "community" "cartenz_tpl_${VER_TAG}_com"
+        ;;
+    ent)
+        build_template "enterprise" "cartenz_tpl_${VER_TAG}_ent"
         ;;
 esac
 
