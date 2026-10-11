@@ -366,6 +366,18 @@ const environmentSchema = z.object({
   PROJECT_PROVISION_PROJECTS_DIR: z.string().default('/opt/odoo/projects'),
 
   /**
+   * The PROJECTS_DIR for Odoo 20.0+ projects specifically.
+   *
+   * create_project/create_project_enterprise pick BASE_DIR by version
+   * (/opt/odoo20 for 20.0+, /opt/odoo otherwise — a separate source tree,
+   * venv and PostgreSQL cluster per ADR: 20.0-separate-runtime). This value
+   * must match that script's own 20.0 BASE_DIR/projects exactly, or
+   * provisioning succeeds while the platform looks for addons/ in the wrong
+   * directory and reports a false failure.
+   */
+  PROJECT_PROVISION_PROJECTS_DIR_20: z.string().default('/opt/odoo20/projects'),
+
+  /**
    * The ephemeral Odoo preview (ADR-052).
    *
    * A preview instance is built for a task's retained draft, so a reviewer sees
@@ -705,6 +717,7 @@ export interface AppConfig {
     readonly portRangeEnd: number;
     readonly baseDomain: string | null;
     readonly projectsDir: string;
+    readonly projectsDir20: string;
   };
   /**
    * The ephemeral Odoo preview (ADR-052). `enabled` is true only when both
@@ -1113,6 +1126,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       portRangeEnd: env.PROJECT_PORT_RANGE_END,
       baseDomain: emptyToUndefined(env.PROJECT_BASE_DOMAIN) ?? null,
       projectsDir: env.PROJECT_PROVISION_PROJECTS_DIR,
+      projectsDir20: env.PROJECT_PROVISION_PROJECTS_DIR_20,
     },
     preview: {
       // Shares the provisioning switch, because the preview runs through the

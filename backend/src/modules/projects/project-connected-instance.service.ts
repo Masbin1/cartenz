@@ -20,6 +20,7 @@ import { GIT_CONNECTION_TYPES, type OdooEdition, type UserRegion } from '../../c
 import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 import { AuthorizationService } from '../../core/authz/authorization.service';
 import { effectiveRepositoryUrl } from './repository-url';
+import { projectsDirForVersion } from './project-deployment.service';
 import {
   ProjectProvisioningQueue,
   type ConnectedInstanceJobData,
@@ -315,6 +316,7 @@ export class ProjectConnectedInstanceService {
         data.projectId,
         data.instanceName,
         created.stdout,
+        data.odooVersion,
       );
 
       await this.database.db
@@ -486,8 +488,9 @@ export class ProjectConnectedInstanceService {
     projectId: string,
     instanceName: string,
     createOutput: string,
+    odooVersion: string | null,
   ): Promise<string | null> {
-    const recover = `${this.config.provisioning!.projectsDir}/${instanceName}/config/odoo.conf`;
+    const recover = `${projectsDirForVersion(this.config.provisioning!, odooVersion)}/${instanceName}/config/odoo.conf`;
     const masterPassword = parseMasterPassword(createOutput);
     if (!masterPassword) {
       this.logger.warn(

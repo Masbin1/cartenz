@@ -128,10 +128,10 @@ export class ProjectBackupService {
 
     // Anchored to the configured projects root, exactly as the pull resolves
     // it; never derived from the path's own shape.
-    const technicalName = technicalNameFromOnPremisePath(
-      project.environmentConfig,
+    const technicalName = technicalNameFromOnPremisePath(project.environmentConfig, [
       this.config.provisioning?.projectsDir ?? '',
-    );
+      this.config.provisioning?.projectsDir20 ?? '',
+    ]);
 
     if (!technicalName || project.provisioningStatus !== 'provisioned') {
       return {

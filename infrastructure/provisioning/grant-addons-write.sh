@@ -30,8 +30,6 @@ set -Eeuo pipefail
 #
 # ============================================================
 
-BASE_DIR="/opt/odoo"
-PROJECTS_DIR="${BASE_DIR}/projects"
 PLATFORM_GROUP="cartenz"
 
 usage() {
@@ -58,13 +56,27 @@ if [[ ! "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]{1,30}$ ]]; then
     exit 1
 fi
 
-PROJECT_DIR="${PROJECTS_DIR}/${PROJECT_NAME}"
+# This script does not receive the project's Odoo version (create_project's
+# callers never pass it here), and each version's projects live under a
+# separate BASE_DIR (ADR: 20.0-separate-runtime) — /opt/odoo/projects for
+# 19.0 and earlier, /opt/odoo20/projects for 20.0. Probe every known
+# BASE_DIR for this project name instead of assuming the 19.0 one, so a
+# 20.0 project does not get misreported as "does not exist" just because
+# it was built under the newer runtime's directory.
+PROJECT_DIR=""
+for candidate_base in /opt/odoo /opt/odoo20; do
+    if [[ -d "${candidate_base}/projects/${PROJECT_NAME}" ]]; then
+        PROJECT_DIR="${candidate_base}/projects/${PROJECT_NAME}"
+        break
+    fi
+done
+
 ADDONS_DIR="${PROJECT_DIR}/addons"
 
 # The project directory must exist and be exactly where create_project put it -
 # not a symlink, not somewhere this script was tricked into resolving to.
-if [[ ! -d "$PROJECT_DIR" ]]; then
-    echo "ERROR: Project directory does not exist: ${PROJECT_DIR}" >&2
+if [[ -z "$PROJECT_DIR" ]]; then
+    echo "ERROR: Project directory does not exist under any known runtime: ${PROJECT_NAME}" >&2
     exit 1
 fi
 

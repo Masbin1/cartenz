@@ -69,7 +69,7 @@ import type {
   ProjectRestartJobData,
   SelectiveProvisionJobData,
 } from './project-provisioning.queue';
-import { ProjectDeploymentService, technicalNameFromOnPremisePath } from './project-deployment.service';
+import { ProjectDeploymentService, technicalNameFromOnPremisePath, projectsDirForVersion } from './project-deployment.service';
 import { ProjectMergeService } from './project-merge.service';
 import { ProjectCheckoutService } from './project-checkout.service';
 import {
@@ -282,8 +282,10 @@ export class ProjectsService {
     // then restart" (Settings' "Instance branch" group), but with nothing to
     // resolve to there was never a button to press.
     const technicalName =
-      technicalNameFromOnPremisePath(project.environmentConfig, this.config.provisioning.projectsDir) ??
-      (project.connectedInstanceStatus === 'ready' ? project.connectedInstanceName : null);
+      technicalNameFromOnPremisePath(project.environmentConfig, [
+        this.config.provisioning.projectsDir,
+        this.config.provisioning.projectsDir20,
+      ]) ?? (project.connectedInstanceStatus === 'ready' ? project.connectedInstanceName : null);
 
     if (!technicalName) {
       throw new BadRequestException(
@@ -2385,7 +2387,10 @@ export class ProjectsService {
       modules: input.modules,
     });
 
-    const repositoryPath = join(this.config.provisioning.projectsDir, directoryName);
+    const repositoryPath = join(
+      projectsDirForVersion(this.config.provisioning, input.odooVersion),
+      directoryName,
+    );
     const addonsPath = join(repositoryPath, 'addons');
 
     /**
@@ -2551,12 +2556,15 @@ export class ProjectsService {
         this.logger.error(
           `Provisioned "${data.technicalName}" but could not seal its master password: ` +
             `${(error as Error).message}. Recover it from ` +
-            `${this.config.provisioning.projectsDir}/${data.technicalName}/config/odoo.conf`,
+            `${projectsDirForVersion(this.config.provisioning, data.odooVersion)}/${data.technicalName}/config/odoo.conf`,
         );
       }
     }
 
-    const repositoryPath = join(this.config.provisioning.projectsDir, data.technicalName);
+    const repositoryPath = join(
+      projectsDirForVersion(this.config.provisioning, data.odooVersion),
+      data.technicalName,
+    );
     const addonsPath = join(repositoryPath, 'addons');
 
     const addonsInfo = await stat(addonsPath).catch(() => null);

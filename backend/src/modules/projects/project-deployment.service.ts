@@ -148,10 +148,10 @@ export class ProjectDeploymentService {
     // Resolved from the project's recorded on-premise path and anchored to the
     // configured projects root — not by taking a parent's basename, which put the
     // scaffolded (root) form of that path on the wrong directory. See the function.
-    const technicalName = technicalNameFromOnPremisePath(
-      project.environmentConfig,
+    const technicalName = technicalNameFromOnPremisePath(project.environmentConfig, [
       this.config.provisioning?.projectsDir ?? '',
-    );
+      this.config.provisioning?.projectsDir20 ?? '',
+    ]);
 
     if (!technicalName) {
       return this.refuse(
@@ -473,25 +473,55 @@ export class ProjectDeploymentService {
  */
 export function technicalNameFromOnPremisePath(
   environmentConfig: Record<string, unknown> | null,
-  projectsDir: string,
+  projectsDir: string | readonly string[],
 ): string | null {
   const onPremisePath = environmentConfig?.onPremisePath;
   if (typeof onPremisePath !== 'string' || onPremisePath.length === 0) return null;
-
-  const root = projectsDir.replace(/\/+$/, '');
-  if (!root.startsWith('/')) return null;
 
   let path = onPremisePath.replace(/\/+$/, '');
   if (path.endsWith('/addons')) path = path.slice(0, -'/addons'.length);
   path = path.replace(/\/+$/, '');
 
-  const prefix = `${root}/`;
-  if (!path.startsWith(prefix)) return null;
+  // Odoo 20.0+ projects live under a separate PROJECTS_DIR from everything
+  // before it (ADR: 20.0-separate-runtime — create_project picks BASE_DIR by
+  // version). The stored onPremisePath already encodes which root a project
+  // is actually under, so trying every known root here resolves it correctly
+  // without needing the project's odooVersion at all — unlike the create
+  // path below, which has no existing path yet and must pick a root up
+  // front; see projectsDirForVersion for that case.
+  const roots = Array.isArray(projectsDir) ? projectsDir : [projectsDir];
+  for (const dir of roots) {
+    const root = dir.replace(/\/+$/, '');
+    if (!root.startsWith('/')) continue;
 
-  const name = path.slice(prefix.length);
-  if (name.includes('/')) return null;
+    const prefix = `${root}/`;
+    if (!path.startsWith(prefix)) continue;
 
-  return /^[a-z0-9][a-z0-9_-]{1,30}$/.test(name) ? name : null;
+    const name = path.slice(prefix.length);
+    if (name.includes('/')) continue;
+
+    if (/^[a-z0-9][a-z0-9_-]{1,30}$/.test(name)) return name;
+  }
+
+  return null;
+}
+
+/**
+ * The PROJECTS_DIR a *new* project's directory will be created under, given
+ * its Odoo version — the create-path counterpart to
+ * technicalNameFromOnPremisePath above, which resolves an *existing*
+ * project's root by trying every known one. There is no existing path to
+ * inspect yet here, so the version decides instead: create_project itself
+ * branches BASE_DIR to /opt/odoo20 for "20.0" and /opt/odoo otherwise
+ * (ADR: 20.0-separate-runtime), and this must keep matching that branch
+ * exactly, or provisioning succeeds while the platform looks for addons/ in
+ * the wrong directory and reports a false failure.
+ */
+export function projectsDirForVersion(
+  provisioning: { readonly projectsDir: string; readonly projectsDir20: string },
+  odooVersion: string | null | undefined,
+): string {
+  return odooVersion === '20.0' ? provisioning.projectsDir20 : provisioning.projectsDir;
 }
 
 /**

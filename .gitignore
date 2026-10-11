@@ -90,3 +90,6 @@ frontend/.next.broken-root-*/
 frontend/.next.pre-redesign-*/
 frontend/.next.old/
 frontend/.next.new/
+# Timestamped variant of the above, left by a build script run (same reason:
+# a moved-aside Next.js output tree, not part of the platform).
+frontend/.next.old-*/

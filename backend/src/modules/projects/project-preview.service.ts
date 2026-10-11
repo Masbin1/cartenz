@@ -161,10 +161,10 @@ export class ProjectPreviewService implements OnModuleInit {
     }
 
     const technicalName =
-      technicalNameFromOnPremisePath(
-        project.environmentConfig,
+      technicalNameFromOnPremisePath(project.environmentConfig, [
         this.config.provisioning?.projectsDir ?? '',
-      ) ?? deriveDirectoryName(project.name);
+        this.config.provisioning?.projectsDir20 ?? '',
+      ]) ?? deriveDirectoryName(project.name);
 
     if (!technicalName) {
       throw new BadRequestException(
@@ -449,10 +449,10 @@ export class ProjectPreviewService implements OnModuleInit {
     if (!project) return null;
 
     return (
-      technicalNameFromOnPremisePath(
-        project.environmentConfig,
+      technicalNameFromOnPremisePath(project.environmentConfig, [
         this.config.provisioning?.projectsDir ?? '',
-      ) ?? deriveDirectoryName(project.name)
+        this.config.provisioning?.projectsDir20 ?? '',
+      ]) ?? deriveDirectoryName(project.name)
     );
   }
 
