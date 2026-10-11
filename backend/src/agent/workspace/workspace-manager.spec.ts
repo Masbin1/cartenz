@@ -120,10 +120,16 @@ describe('on-premise workspace allocation', () => {
     ...overrides,
   });
 
-  const manager = (overrides: { dirty?: boolean; odooSourcePaths?: string[] } = {}) => {
+  const manager = (
+    overrides: { dirty?: boolean; odooSourcePaths?: string[]; extraRoots?: string[] } = {},
+  ) => {
     const config = {
       workspace: { root: workspaceRoot, maxBytes: 1, maxFiles: 1, retainOnFailure: false },
-      onPremise: { root: onPremiseRoot, readOnlyPaths: [] },
+      onPremise: {
+        root: onPremiseRoot,
+        roots: [onPremiseRoot, ...(overrides.extraRoots ?? [])],
+        readOnlyPaths: [],
+      },
       odooSource: { paths: overrides.odooSourcePaths ?? [] },
     } as unknown as AppConfig;
 
@@ -187,6 +193,19 @@ describe('on-premise workspace allocation', () => {
     await expect(
       manager().allocate(input({ taskReference: 'task_3', onPremiseProjectPath: outside })),
     ).rejects.toThrow(/outside the configured on-premise root/i);
+  });
+
+  it('accepts a project directory under a second configured on-premise root', async () => {
+    const secondRoot = join(sandbox, 'second-root');
+    const secondProject = join(secondRoot, 'other-project', 'addons');
+    await mkdir(join(secondProject, '.git'), { recursive: true });
+
+    const multiRootManager = manager({ extraRoots: [secondRoot] });
+    const workspace = await multiRootManager.allocate(
+      input({ taskReference: 'task_multi_root', onPremiseProjectPath: secondProject }),
+    );
+
+    expect(workspace.repositoryPath).toBe(secondProject);
   });
 
   it('refuses a directory that is not a git repository', async () => {

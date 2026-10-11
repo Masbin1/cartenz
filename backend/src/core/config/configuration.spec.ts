@@ -28,10 +28,36 @@ describe('loadConfig', () => {
 
   it('disables on-premise execution by default, and enables it with a root path', () => {
     expect(loadConfig(valid).onPremise.root).toBeNull();
+    expect(loadConfig(valid).onPremise.roots).toEqual([]);
     expect(loadConfig(valid).onPremise.readOnlyPaths).toEqual([]);
 
     const config = loadConfig({ ...valid, ON_PREMISE_ROOT: '/home/masbintang/linkederp' });
     expect(config.onPremise.root).toBe('/home/masbintang/linkederp');
+    expect(config.onPremise.roots).toEqual(['/home/masbintang/linkederp']);
+  });
+
+  it('accepts additional on-premise roots alongside ON_PREMISE_ROOT', () => {
+    const config = loadConfig({
+      ...valid,
+      ON_PREMISE_ROOT: '/opt/odoo/projects',
+      ON_PREMISE_EXTRA_ROOTS: '/opt/odoo20/projects, /opt/odoo21/projects',
+    });
+    expect(config.onPremise.root).toBe('/opt/odoo/projects');
+    expect(config.onPremise.roots).toEqual([
+      '/opt/odoo/projects',
+      '/opt/odoo20/projects',
+      '/opt/odoo21/projects',
+    ]);
+  });
+
+  it('rejects a relative ON_PREMISE_EXTRA_ROOTS entry', () => {
+    expect(() =>
+      loadConfig({
+        ...valid,
+        ON_PREMISE_ROOT: '/opt/odoo/projects',
+        ON_PREMISE_EXTRA_ROOTS: 'opt/odoo20/projects',
+      }),
+    ).toThrow(/ON_PREMISE_EXTRA_ROOTS entry .* must be an absolute path/i);
   });
 
   it('parses read-only on-premise paths', () => {

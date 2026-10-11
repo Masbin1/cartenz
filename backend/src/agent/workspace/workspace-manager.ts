@@ -685,8 +685,8 @@ export class WorkspaceManager {
   }
 
   private async allocateOnPremise(input: AllocateWorkspaceInput): Promise<Workspace> {
-    const root = this.config.onPremise.root;
-    if (!root) {
+    const roots = this.config.onPremise.roots;
+    if (roots.length === 0) {
       throw new Error(
         'On-premise execution is not configured on this server (ON_PREMISE_ROOT is not set).',
       );
@@ -695,16 +695,19 @@ export class WorkspaceManager {
       throw new Error('This on-premise project has no local directory selected.');
     }
 
-    const realRoot = await realpath(resolve(root)).catch(() => null);
-    if (!realRoot) {
-      throw new Error(`The configured ON_PREMISE_ROOT "${root}" does not exist.`);
+    const realRoots = (
+      await Promise.all(roots.map((root) => realpath(resolve(root)).catch(() => null)))
+    ).filter((root): root is string => root !== null);
+    if (realRoots.length === 0) {
+      throw new Error(`None of the configured on-premise roots exist: ${roots.join(', ')}.`);
     }
 
     const projectPath = await realpath(resolve(input.onPremiseProjectPath)).catch(() => null);
     if (!projectPath) {
       throw new Error(`The selected project directory "${input.onPremiseProjectPath}" does not exist.`);
     }
-    if (!isInside(realRoot, projectPath)) {
+    const realRoot = realRoots.find((root) => isInside(root, projectPath));
+    if (!realRoot) {
       throw new Error(
         `The selected project directory "${input.onPremiseProjectPath}" is outside the configured on-premise root.`,
       );

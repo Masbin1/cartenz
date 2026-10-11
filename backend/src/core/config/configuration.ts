@@ -190,6 +190,14 @@ const environmentSchema = z.object({
    * whose prefix is its directory name.
    */
   ON_PREMISE_ROOT: z.string().default(''),
+  /**
+   * Additional on-premise roots beyond ON_PREMISE_ROOT, comma-separated
+   * absolute paths. A project directory under any of these is accepted the
+   * same as one under ON_PREMISE_ROOT itself — for a second Odoo major
+   * version's runtime (e.g. /opt/odoo20) living next to the original
+   * ON_PREMISE_ROOT (/opt/odoo/projects) rather than inside it.
+   */
+  ON_PREMISE_EXTRA_ROOTS: z.string().default(''),
   ON_PREMISE_READ_ONLY_PATHS: z.string().default(''),
 
   /**
@@ -660,6 +668,19 @@ export interface AppConfig {
   readonly onPremise: {
     /** Base directory for on-premise projects, or null when disabled. */
     readonly root: string | null;
+    /**
+     * Every accepted on-premise root: `root` plus ON_PREMISE_EXTRA_ROOTS.
+     *
+     * A single ON_PREMISE_ROOT stopped being enough once a second Odoo major
+     * version runtime landed at its own base path (e.g. /opt/odoo20 next to
+     * /opt/odoo) — a project under that second root is otherwise rejected as
+     * "outside the configured on-premise root" even though it is a project
+     * this platform provisioned. Validation checks membership in this list,
+     * not equality with `root` alone; `root` itself stays the single value
+     * used wherever only one path makes sense (admin folder listing, the
+     * default projects root).
+     */
+    readonly roots: readonly string[];
     /** Shared Odoo directories the agent may read but never write. */
     readonly readOnlyPaths: readonly string[];
   };
@@ -887,6 +908,14 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   if (env.ON_PREMISE_ROOT && !isAbsolute(env.ON_PREMISE_ROOT)) {
     throw new ConfigurationError(['ON_PREMISE_ROOT must be an absolute path.']);
   }
+  const onPremiseExtraRoots = splitPaths(env.ON_PREMISE_EXTRA_ROOTS);
+  for (const path of onPremiseExtraRoots) {
+    if (!isAbsolute(path)) {
+      throw new ConfigurationError([
+        `ON_PREMISE_EXTRA_ROOTS entry "${path}" must be an absolute path.`,
+      ]);
+    }
+  }
   // Validated at boot rather than at the first sync: a relative or misspelled
   // checkout root would otherwise be discovered as an empty directory listing on
   // a project page that claims the code is current.
@@ -1105,6 +1134,9 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     onPremise: {
       root: emptyToUndefined(env.ON_PREMISE_ROOT) ?? null,
+      roots: [emptyToUndefined(env.ON_PREMISE_ROOT), ...onPremiseExtraRoots].filter(
+        (path): path is string => typeof path === 'string' && path.length > 0,
+      ),
       readOnlyPaths,
     },
     checkouts: {
