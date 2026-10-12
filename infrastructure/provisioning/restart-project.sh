@@ -43,11 +43,7 @@ set -Eeuo pipefail
 #
 # ============================================================
 
-BASE_DIR="/opt/odoo"
-PROJECTS_DIR="${BASE_DIR}/projects"
 ODOO_USER="odoo"
-VENV_PYTHON="${BASE_DIR}/venv/bin/python"
-ODOO_BIN="${BASE_DIR}/odoo-server/odoo-bin"
 PULL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PULL_SCRIPT="${PULL_SCRIPT_DIR}/pull-project.sh"
 # The service-readiness poll below mirrors create_project's own post-start
@@ -104,21 +100,37 @@ if [[ ! "$REPOSITORY_URL" =~ ^https://[A-Za-z0-9._~%:@/+-]+$ ]] \
     exit 1
 fi
 
-PROJECT_DIR="${PROJECTS_DIR}/${PROJECT_NAME}"
-ADDONS_DIR="${PROJECT_DIR}/addons"
-CONFIG_FILE="${PROJECT_DIR}/config/odoo.conf"
-SERVICE_NAME="odoo-${PROJECT_NAME}"
-LOG_FILE="/tmp/cartenz-restart-${PROJECT_NAME}.log"
-
 if [[ ! -f "$PULL_SCRIPT" ]]; then
     echo "ERROR: pull-project.sh not found beside this script at ${PULL_SCRIPT}." >&2
     exit 1
 fi
 
-if [[ ! -d "$PROJECT_DIR" ]]; then
-    echo "ERROR: Project directory does not exist: ${PROJECT_DIR}" >&2
+# Each Odoo major version's projects live under its own BASE_DIR, each with
+# its own venv and odoo-bin (ADR: 20.0-separate-runtime) — /opt/odoo for
+# 19.0 and earlier, /opt/odoo20 for 20.0. The project name alone does not
+# say which; probe every known BASE_DIR, same as grant-addons-write.sh and
+# pull-project.sh, instead of assuming the 19.0 one.
+PROJECT_DIR=""
+BASE_DIR=""
+for candidate_base in /opt/odoo /opt/odoo20; do
+    if [[ -d "${candidate_base}/projects/${PROJECT_NAME}" ]]; then
+        PROJECT_DIR="${candidate_base}/projects/${PROJECT_NAME}"
+        BASE_DIR="$candidate_base"
+        break
+    fi
+done
+
+if [[ -z "$PROJECT_DIR" ]]; then
+    echo "ERROR: Project directory does not exist under any known runtime: ${PROJECT_NAME}" >&2
     exit 1
 fi
+
+ADDONS_DIR="${PROJECT_DIR}/addons"
+CONFIG_FILE="${PROJECT_DIR}/config/odoo.conf"
+SERVICE_NAME="odoo-${PROJECT_NAME}"
+LOG_FILE="/tmp/cartenz-restart-${PROJECT_NAME}.log"
+VENV_PYTHON="${BASE_DIR}/venv/bin/python"
+ODOO_BIN="${BASE_DIR}/odoo-server/odoo-bin"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "ERROR: Odoo config not found: ${CONFIG_FILE}" >&2

@@ -33,8 +33,6 @@ set -Eeuo pipefail
 #
 # ============================================================
 
-BASE_DIR="/opt/odoo"
-PROJECTS_DIR="${BASE_DIR}/projects"
 ODOO_USER="odoo"
 PLATFORM_GROUP="cartenz"
 
@@ -87,16 +85,30 @@ if [[ ! "$REPOSITORY_URL" =~ ^https://[A-Za-z0-9._~%:@/+-]+$ ]] \
     exit 1
 fi
 
-PROJECT_DIR="${PROJECTS_DIR}/${PROJECT_NAME}"
-ADDONS_DIR="${PROJECT_DIR}/addons"
+PROJECT_DIR=""
+ADDONS_DIR=""
 
 # --- Ground truth: the directories, and who may touch them -------------------
 #
 # Not a symlink: a project directory that resolves elsewhere is either a mistake
 # or an attempt to make this script write outside the projects root.
+#
+# Each Odoo major version's projects live under its own BASE_DIR (ADR:
+# 20.0-separate-runtime) — /opt/odoo/projects for 19.0 and earlier,
+# /opt/odoo20/projects for 20.0 — so the project name alone does not say
+# which root to look under. Probe every known BASE_DIR, same as
+# grant-addons-write.sh, instead of assuming the 19.0 one.
+for candidate_base in /opt/odoo /opt/odoo20; do
+    if [[ -d "${candidate_base}/projects/${PROJECT_NAME}" ]]; then
+        PROJECT_DIR="${candidate_base}/projects/${PROJECT_NAME}"
+        break
+    fi
+done
 
-if [[ ! -d "$PROJECT_DIR" ]]; then
-    echo "ERROR: Project directory does not exist: ${PROJECT_DIR}" >&2
+ADDONS_DIR="${PROJECT_DIR}/addons"
+
+if [[ -z "$PROJECT_DIR" ]]; then
+    echo "ERROR: Project directory does not exist under any known runtime: ${PROJECT_NAME}" >&2
     exit 1
 fi
 
