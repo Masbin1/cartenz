@@ -539,7 +539,7 @@ export const api = {
        * it); `odoo_online` records the project and its signup plan for a
        * database the operator creates at odoo.com/trial, then connects.
        */
-      hosting?: 'on_host' | 'odoo_online';
+      hosting?: 'on_host' | 'odoo_online' | 'odoo_sh';
       odooOnline?: {
         companyName: string;
         adminEmail: string;
@@ -552,6 +552,8 @@ export const api = {
         companySize?: string;
         plan?: string;
       };
+      /** The Odoo.sh deploy plan (ADR-071); required when `hosting` is `odoo_sh`. */
+      odooSh?: { owner: string; repositoryName: string; region: string };
     }) => request<ProjectDetail>('/projects/ai', { method: 'POST', body }),
 
     /** The branches a repository advertises, before the project exists. */
@@ -791,6 +793,13 @@ export const api = {
       method: 'POST',
       body,
     }),
+
+    /** Links an assisted Odoo.sh project to the repository Odoo.sh created (ADR-071). */
+    connectOdooSh: (projectId: string, body: { credentialId?: string }) =>
+      request<{ repository: string; url: string; defaultBranch: string; createdBranch: boolean }>(
+        `/projects/${projectId}/odoo-sh/connect`,
+        { method: 'POST', body },
+      ),
 
     deleteConnection: (projectId: string, connectionId: string) =>
       request<void>(`/projects/${projectId}/connections/${connectionId}`, { method: 'DELETE' }),
