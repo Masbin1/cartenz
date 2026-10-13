@@ -746,12 +746,32 @@ export class WorkspaceManager {
     // from a clean tree so the commit only carries the agent's changes; a resumed
     // task already has the agent's own changes in the working tree, so the check
     // is skipped and the saved base commit is reused.
+    //
+    // A dirty tree found here is not necessarily a person's uncommitted edit: the
+    // same release-time auto-commit this class does for a task that fails mid-run
+    // (see `commitDirtyOnPremiseWorkingTree`) can itself be skipped or interrupted
+    // — a worker killed between the last file write and that commit, a disk error,
+    // a bug in a future change to this file — leaving the tree exactly as dirty as
+    // if it had never run. Refusing every subsequent task on the project until a
+    // person notices and runs `git commit`/`git stash` by hand turns one missed
+    // recovery into an indefinite outage. Since the one and only recovery this
+    // class ever performs is "commit it, reversible with `git revert`", trying
+    // that same recovery here first is strictly safer than making a person do it:
+    // it cannot destroy anything a direct `git commit` would not also preserve.
     if (input.baseCommit === null) {
-      const status = await this.git.status(repositoryPath);
+      let status = await this.git.status(repositoryPath);
+      if (!status.clean) {
+        await this.autoCommitDirtyWorkingTree(
+          repositoryPath,
+          `working tree was already dirty when ${input.taskReference} tried to start`,
+        );
+        status = await this.git.status(repositoryPath);
+      }
       if (!status.clean) {
         throw new Error(
-          `The working tree of "${input.onPremiseProjectPath}" has uncommitted changes. ` +
-            'Commit or stash them before submitting a task.',
+          `The working tree of "${input.onPremiseProjectPath}" has uncommitted changes that could ` +
+            'not be auto-committed (see server logs for the reason). Commit or stash them by hand ' +
+            'before submitting a task.',
         );
       }
     }
@@ -880,7 +900,11 @@ export class WorkspaceManager {
      * instead of discarding it silently.
      */
     if (outcome === 'failed' && !workspace.simulated && this.isOnPremiseRepository(workspace.repositoryPath)) {
-      await this.commitDirtyOnPremiseWorkingTree(workspace);
+      await this.autoCommitDirtyWorkingTree(
+        workspace.repositoryPath,
+        `${workspace.taskReference} failed before committing`,
+        workspace.workspaceId,
+      );
     }
 
     // Before the files go: which clone owns this working tree is read from the
@@ -918,23 +942,41 @@ export class WorkspaceManager {
   }
 
   /**
-   * Auto-commits a failed on-premise task's uncommitted changes, so a run that
-   * wrote files and then failed before reaching the commit step does not leave
-   * the customer's working tree dirty - which would otherwise refuse every
-   * later task on this project at allocation (see `allocateOnPremise`'s
-   * clean-tree check) until a person notices and commits or stashes by hand.
+   * Auto-commits a dirty on-premise working tree, so neither a task that wrote
+   * files and failed before reaching its own commit step, nor a later task that
+   * finds the tree still dirty for whatever reason, leaves the customer's
+   * directory in a state every subsequent task is refused at allocation (see
+   * `allocateOnPremise`'s clean-tree check) until a person notices and commits
+   * or stashes by hand.
    *
-   * Never throws: a failure here must not stop the rest of release, and the
-   * original failure reason is what matters to the person reading the task.
+   * Shared by two call sites with different framings of the same guarantee:
+   * `release()` runs this for a task that is ending and found its own tree
+   * dirty; `allocateOnPremise()` runs it for a task that is starting and found
+   * someone else's tree dirty — most often a previous run's release-time commit
+   * being skipped or interrupted (a worker killed between the last file write
+   * and that commit, a disk error, and so on). Trying the exact same recovery
+   * on the way in is strictly safer than refusing outright: it cannot destroy
+   * anything a direct `git commit` would not also preserve, and it is fully
+   * reversible with `git revert`.
+   *
+   * Never throws: a failure here must not stop the rest of release or
+   * allocation, and the caller decides what to do with a tree that is still
+   * dirty afterwards (release logs and moves on; allocation re-checks and
+   * refuses with a clearer reason).
    */
-  private async commitDirtyOnPremiseWorkingTree(workspace: Workspace): Promise<void> {
+  private async autoCommitDirtyWorkingTree(
+    repositoryPath: string,
+    context: string,
+    workspaceId?: string,
+  ): Promise<void> {
+    const label = workspaceId ? `Workspace ${workspaceId}: ` : '';
     try {
-      const status = await this.git.status(workspace.repositoryPath);
+      const status = await this.git.status(repositoryPath);
       if (status.clean) return;
 
       const { commit, filesChanged } = await this.git.commit(
-        workspace.repositoryPath,
-        `[LinkedERP AI] WIP recovery: ${workspace.taskReference} failed before committing\n\n` +
+        repositoryPath,
+        `[LinkedERP AI] WIP recovery: ${context}\n\n` +
           'This task did not reach its own commit step, and the platform never ' +
           'discards an on-premise working tree, so its partial changes are committed ' +
           'here instead of being left uncommitted. Review and `git revert` this commit ' +
@@ -942,15 +984,14 @@ export class WorkspaceManager {
       );
 
       this.logger.warn(
-        `Workspace ${workspace.workspaceId} (${workspace.taskReference}): committed ` +
-          `${filesChanged} uncommitted file(s) as ${commit.slice(0, 8)} before release, so the ` +
-          'next task on this project is not refused by a dirty working tree.',
+        `${label}committed ${filesChanged} uncommitted file(s) as ${commit.slice(0, 8)} ` +
+          `(${context}), so the next task on this project is not refused by a dirty working tree.`,
       );
     } catch (error) {
       this.logger.error(
-        `Workspace ${workspace.workspaceId} (${workspace.taskReference}): could not auto-commit ` +
-          `the dirty on-premise working tree: ${(error as Error).message}. The next task on this ` +
-          'project may be refused until this is committed or stashed by hand.',
+        `${label}could not auto-commit the dirty on-premise working tree (${context}): ` +
+          `${(error as Error).message}. The next task on this project may be refused until ` +
+          'this is committed or stashed by hand.',
       );
     }
   }

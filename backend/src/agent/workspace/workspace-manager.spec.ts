@@ -147,18 +147,45 @@ describe('on-premise workspace allocation', () => {
     } as unknown as AppConfig;
 
     let statusCalls = 0;
+    // Tracks whether the allocation-time auto-commit (see `allocateOnPremise`)
+    // actually cleaned the tree, so a status re-check after a successful commit
+    // reports clean rather than repeating the pre-commit answer regardless of
+    // what the commit mock did — a prior version of this harness always
+    // reported the same canned answer, which let the allocation-time recovery
+    // path go untested: every "dirty" case still "worked" only because the gate
+    // itself never re-read status after the commit.
+    let committedAtAllocation = false;
     const git = {
       revParse: async () => 'abc123def456',
       status: async () => {
         statusCalls += 1;
-        // The allocation-time check is the first call; `dirtyAtRelease` applies from the second on.
+        if (committedAtAllocation) return { clean: true, entries: [] };
+        // The first status() call happens at allocation time (before any
+        // recovery commit); `dirtyAtRelease` governs every call from the
+        // second onward, falling back to the same `dirty` flag when unset.
         const dirty = statusCalls === 1 ? overrides.dirty : overrides.dirtyAtRelease ?? overrides.dirty;
         return { clean: !dirty, entries: [] };
       },
       checkoutBranch: async () => undefined,
-      commit:
-        overrides.commit ??
-        (async () => ({ commit: 'f'.repeat(40), filesChanged: 1 })),
+      commit: async (repositoryPath: string, message: string) => {
+        const result = overrides.commit
+          ? await overrides.commit(repositoryPath, message)
+          : { commit: 'f'.repeat(40), filesChanged: 1 };
+        // Mirrors real git: a commit that reports filesChanged > 0 actually staged
+        // and committed everything `git add --all` found, so the tree it reports
+        // on every subsequent `status()` call is genuinely clean. Matched on the
+        // allocation-time recovery's own wording (distinct from the release-time
+        // one's "failed before committing") rather than a call index, because
+        // `autoCommitDirtyWorkingTree` itself calls `status()` once before
+        // `commit()`, which shifts the index depending on which call site is
+        // exercised. A test that wants to simulate a commit succeeding but not
+        // actually cleaning the tree (e.g. a hook) passes filesChanged: 0, which
+        // correctly leaves this false.
+        if (message.includes('working tree was already dirty') && result.filesChanged > 0) {
+          committedAtAllocation = true;
+        }
+        return result;
+      },
       gitCommonDir: async (repositoryPath: string) => join(repositoryPath, '.git'),
     } as unknown as GitService;
 
@@ -317,10 +344,35 @@ describe('on-premise workspace allocation', () => {
     expect(workspace.simulated).toBe(false);
   });
 
-  it('refuses a dirty working tree so the customer’s changes are never committed', async () => {
+  it('auto-commits a dirty working tree found at allocation, instead of refusing the task', async () => {
+    let committedMessage: string | null = null;
+    const workspace = await manager({
+      dirty: true,
+      commit: async (_repositoryPath, message) => {
+        committedMessage = message;
+        return { commit: 'f'.repeat(40), filesChanged: 2 };
+      },
+    }).allocate(input({ taskReference: 'task_5' }));
+
+    expect(committedMessage).not.toBeNull();
+    expect(committedMessage).toContain('working tree was already dirty');
+    expect(committedMessage).toContain('task_5');
+    expect(workspace.repositoryPath).toBe(projectPath);
+  });
+
+  it('refuses a dirty working tree that the auto-commit could not clean', async () => {
+    const workspaceManager = manager({
+      dirty: true,
+      // Mimics a `git commit` that reports success but leaves the tree dirty
+      // (e.g. a hook or a race outside this class's control): the re-check
+      // after the attempted recovery must still see it and refuse clearly,
+      // rather than silently proceeding on a tree that is not actually clean.
+      commit: async () => ({ commit: 'f'.repeat(40), filesChanged: 0 }),
+    });
+
     await expect(
-      manager({ dirty: true }).allocate(input({ taskReference: 'task_5' })),
-    ).rejects.toThrow(/uncommitted changes/i);
+      workspaceManager.allocate(input({ taskReference: 'task_5b' })),
+    ).rejects.toThrow(/could not be auto-committed/i);
   });
 
   it('resumes using the saved base commit without re-checking the tree', async () => {
