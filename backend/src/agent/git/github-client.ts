@@ -179,6 +179,63 @@ export class GitHubClient {
     return repository;
   }
 
+  /**
+   * A repository someone else created, read with a token the caller supplies
+   * (ADR-071: Odoo.sh creates the repository; Cartenz only adopts it).
+   *
+   * Null on 404. GitHub returns 404 both for a repository that does not exist
+   * and for one the token cannot see, and the caller's message covers both.
+   */
+  async getRepository(owner: string, name: string, token: string): Promise<GitHubRepository | null> {
+    const payload = await this.request<GitHubRepositoryPayload>(
+      token,
+      'GET',
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+      { notFoundIsNull: true },
+    );
+    return payload ? this.toRepository(payload, false) : null;
+  }
+
+  /**
+   * Makes `branch` exist on the remote, created at the head of `fromBranch`.
+   *
+   * A task's per-task clone checks out its environment's branch, and a
+   * repository Odoo.sh has just created has only its production branch. Pushing
+   * `development` here also gives Odoo.sh a development build to show.
+   */
+  async ensureBranch(
+    owner: string,
+    name: string,
+    branch: string,
+    fromBranch: string,
+    token: string,
+  ): Promise<boolean> {
+    const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/git`;
+    const existing = await this.request<{ object?: { sha?: string } }>(
+      token,
+      'GET',
+      `${base}/ref/heads/${encodeURIComponent(branch)}`,
+      { notFoundIsNull: true },
+    );
+    if (existing) return false;
+
+    // Throws with GitHub's own words ("Git Repository is empty.") when there is
+    // nothing to branch from, which is the message the operator can act on.
+    const head = await this.request<{ object?: { sha?: string } }>(
+      token,
+      'GET',
+      `${base}/ref/heads/${encodeURIComponent(fromBranch)}`,
+    );
+    if (!head.object?.sha) {
+      throw new GitHubApiError(0, `the branch "${fromBranch}" has no commit`, 'Creating a branch');
+    }
+
+    await this.request(token, 'POST', `${base}/refs`, {
+      body: { ref: `refs/heads/${branch}`, sha: head.object.sha },
+    });
+    return true;
+  }
+
   /** `Organization` or `User`, so the caller knows which create endpoint applies. */
   private async accountType(token: string, owner: string): Promise<'Organization' | 'User'> {
     const account = await this.request<{ type?: string }>(

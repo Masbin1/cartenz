@@ -159,4 +159,54 @@ describe('GitHubClient', () => {
     expect(new GitHubClient(config({ owner: null })).available).toBe(false);
     expect(new GitHubClient(config({ repositoryEnabled: false })).available).toBe(false);
   });
+
+  describe('with an explicit token (Odoo.sh connect, ADR-071)', () => {
+    const client = () => new GitHubClient(config({ token: null, owner: null }));
+
+    it('reads a repository with the token it is given', async () => {
+      fetchMock.mockResolvedValueOnce(json(repositoryPayload('BintangLinked/equip')));
+
+      const repository = await client().getRepository('BintangLinked', 'equip', 'ghp_registered');
+
+      expect(repository?.cloneUrl).toBe('https://github.com/BintangLinked/equip.git');
+      expect(calls()[0].url).toBe('https://api.github.com/repos/BintangLinked/equip');
+      expect(calls()[0].url).not.toContain('ghp_registered');
+    });
+
+    it('answers null when GitHub says 404', async () => {
+      fetchMock.mockResolvedValueOnce(json({ message: 'Not Found' }, 404));
+      expect(await client().getRepository('BintangLinked', 'missing', 'ghp_registered')).toBeNull();
+    });
+
+    it('leaves an existing branch alone', async () => {
+      fetchMock.mockResolvedValueOnce(json({ object: { sha: 'abc' } }));
+      expect(
+        await client().ensureBranch('BintangLinked', 'equip', 'development', 'main', 'ghp_registered'),
+      ).toBe(false);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates a missing branch from the head of the base branch', async () => {
+      fetchMock
+        .mockResolvedValueOnce(json({ message: 'Not Found' }, 404))
+        .mockResolvedValueOnce(json({ object: { sha: 'abc123' } }))
+        .mockResolvedValueOnce(json({ ref: 'refs/heads/development' }, 201));
+
+      expect(
+        await client().ensureBranch('BintangLinked', 'equip', 'development', 'main', 'ghp_registered'),
+      ).toBe(true);
+      expect(calls()[2].url).toBe('https://api.github.com/repos/BintangLinked/equip/git/refs');
+      expect(calls()[2].body).toEqual({ ref: 'refs/heads/development', sha: 'abc123' });
+    });
+
+    it('explains an empty repository instead of failing on a missing sha', async () => {
+      fetchMock
+        .mockResolvedValueOnce(json({ message: 'Not Found' }, 404))
+        .mockResolvedValueOnce(json({ message: 'Git Repository is empty.' }, 409));
+
+      await expect(
+        client().ensureBranch('BintangLinked', 'equip', 'development', 'main', 'ghp_registered'),
+      ).rejects.toThrow(/Git Repository is empty/);
+    });
+  });
 });
