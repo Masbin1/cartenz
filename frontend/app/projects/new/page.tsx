@@ -43,6 +43,7 @@ import {
   odooOnlineAppGroups,
   suggestSubdomain,
 } from '@/lib/odoo-online-apps';
+import { ODOO_SH_OWNER, ODOO_SH_REGIONS, ODOO_SH_REPOSITORY } from '@/lib/odoo-sh';
 
 
 const ODOO_VERSIONS = ['19.0', '20.0'];
@@ -1186,7 +1187,8 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
    * Cartenz provisions an instance here. `odoo_online` records the project and a
    * signup plan for a database the operator creates at odoo.com, then connects.
    */
-  const [hosting, setHosting] = useState<'on_host' | 'odoo_online'>('on_host');
+  const [hosting, setHosting] = useState<'on_host' | 'odoo_online' | 'odoo_sh'>('on_host');
+  const [odooSh, setOdooSh] = useState({ owner: '', repositoryName: '', region: 'as' });
   const [odooOnline, setOdooOnline] = useState({
     companyName: '',
     adminEmail: '',
@@ -1227,9 +1229,11 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
 
   const odooOnlineReady =
     hosting === 'on_host' ||
-    (odooOnline.companyName.trim().length > 0 &&
-      /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(odooOnline.adminEmail.trim()) &&
-      ODOO_ONLINE_SUBDOMAIN.test(odooOnline.subdomain.trim()));
+    (hosting === 'odoo_sh'
+      ? ODOO_SH_OWNER.test(odooSh.owner.trim()) && ODOO_SH_REPOSITORY.test(odooSh.repositoryName.trim())
+      : odooOnline.companyName.trim().length > 0 &&
+        /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(odooOnline.adminEmail.trim()) &&
+        ODOO_ONLINE_SUBDOMAIN.test(odooOnline.subdomain.trim()));
 
   const setRequirement = (index: number, field: 'title' | 'detail', value: string) =>
     setRequirements((previous) =>
@@ -1258,7 +1262,9 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
 
     if (!odooOnlineReady) {
       setError(
-        'Fill the Odoo Online signup: company name, a valid admin email and a subdomain of 4-50 lowercase letters, digits or hyphens.',
+        hosting === 'odoo_sh'
+          ? 'Fill the Odoo.sh deploy: a GitHub owner and a repository name (letters, digits, ".", "_" or "-").'
+          : 'Fill the Odoo Online signup: company name, a valid admin email and a subdomain of 4-50 lowercase letters, digits or hyphens.',
       );
       return;
     }
@@ -1269,8 +1275,8 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
         region: regionChoice,
         name,
         odooVersion,
-        // Odoo Online is Enterprise only, so the choice is not offered there.
-        odooEdition: hosting === 'odoo_online' ? 'enterprise' : odooEdition,
+        // Odoo Online and Odoo.sh are Enterprise only, so the choice is not offered there.
+        odooEdition: hosting === 'on_host' ? odooEdition : 'enterprise',
         description,
         requirements: populated.map((entry) => ({
           title: entry.title,
@@ -1278,7 +1284,16 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
         })),
         ...(hosting === 'on_host'
           ? { modules: installMode === 'choose' ? selectedModules : undefined }
-          : {
+          : hosting === 'odoo_sh'
+            ? {
+                hosting: 'odoo_sh' as const,
+                odooSh: {
+                  owner: odooSh.owner.trim(),
+                  repositoryName: odooSh.repositoryName.trim(),
+                  region: odooSh.region,
+                },
+              }
+            : {
               hosting: 'odoo_online' as const,
               odooOnline: {
                 companyName: odooOnline.companyName.trim(),
@@ -1374,11 +1389,11 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
         size="small"
         divided
         title="Where it runs"
-        description="On this server, Cartenz provisions and runs the instance. On Odoo Online, the database is created at odoo.com and Cartenz connects it once it exists."
+        description="On this server, Cartenz provisions and runs the instance. On Odoo Online or Odoo.sh, the instance is created there and Cartenz connects it once it exists."
       >
         <fieldset>
           <legend className="sr-only">Where the project runs</legend>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <ChoiceTile
               name="hosting"
               value="on_host"
@@ -1400,16 +1415,62 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
             <ChoiceTile
               name="hosting"
               value="odoo_sh"
-              checked={false}
-              onChange={() => undefined}
-              disabled
+              checked={hosting === 'odoo_sh'}
+              onChange={() => setHosting('odoo_sh')}
               icon={Cloud}
               title="Odoo.sh"
-              description="Coming soon."
+              description="Deployed at odoo.sh from the details you fill here. Cartenz connects the GitHub repository Odoo.sh creates."
             />
           </div>
         </fieldset>
       </Section>
+
+      {hosting === 'odoo_sh' ? (
+        <Section
+          size="small"
+          divided
+          title="Odoo.sh deploy"
+          description="The same values the odoo.sh form asks for. The subscription code is entered at odoo.sh only; Cartenz never sees it."
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="sh-owner" className="field-label">GitHub owner</label>
+              <input
+                id="sh-owner"
+                className="field-input"
+                value={odooSh.owner}
+                onChange={(event) => setOdooSh((p) => ({ ...p, owner: event.target.value }))}
+                placeholder="BintangLinked"
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label htmlFor="sh-repository" className="field-label">Repository name</label>
+              <input
+                id="sh-repository"
+                className="field-input"
+                value={odooSh.repositoryName}
+                onChange={(event) => setOdooSh((p) => ({ ...p, repositoryName: event.target.value }))}
+                placeholder="equipment-management"
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label htmlFor="sh-region" className="field-label">Hosting location</label>
+              <select
+                id="sh-region"
+                className="field-input"
+                value={odooSh.region}
+                onChange={(event) => setOdooSh((p) => ({ ...p, region: event.target.value }))}
+              >
+                {ODOO_SH_REGIONS.map((region) => (
+                  <option key={region.value} value={region.value}>{region.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </Section>
+      ) : null}
 
       <Section
         size="small"
@@ -1535,7 +1596,7 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
             </div>
           ) : null}
         </Section>
-      ) : (
+      ) : hosting === 'odoo_online' ? (
         <Section
           size="small"
           divided
@@ -1740,7 +1801,7 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
             </div>
           </div>
         </Section>
-      )}
+      ) : null}
 
       <Alert tone="info" title="No repository yet">
         A project created this way has no repository, so the agent can analyse and plan but cannot
