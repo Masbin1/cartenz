@@ -105,8 +105,8 @@ export default function AgentWorkspacePage() {
   const [attachOpen, setAttachOpen] = useState(false);
   // From lg the conversation list and the request details are side panels the
   // person opens on demand, so the conversation has the width by default.
-  const [conversationsOpen, setConversationsOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [conversationsOpen, setConversationsOpen] = useStoredFlag('cartenz.agent.conversationsOpen');
+  const [detailsOpen, setDetailsOpen] = useStoredFlag('cartenz.agent.detailsOpen');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { events, connected } = useTaskStream(selectedTaskId);
@@ -1055,6 +1055,29 @@ export default function AgentWorkspacePage() {
       </div>
     </AppShell>
   );
+}
+
+/**
+ * A boolean remembered in this browser, such as whether a side panel is open.
+ * Storage can be unavailable (private window, blocked site data), so every
+ * access is guarded and the flag falls back to closed.
+ */
+function useStoredFlag(key: string) {
+  const [value, setValue] = useState(() => {
+    try {
+      return window.localStorage.getItem(key) === '1';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(key, value ? '1' : '0');
+    } catch {
+      // Not remembered this time; the panel still works.
+    }
+  }, [key, value]);
+  return [value, setValue] as const;
 }
 
 /** One side of the Change / Chat mode control in the composer footer. */

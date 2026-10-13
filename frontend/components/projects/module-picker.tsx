@@ -6,53 +6,12 @@ import { api } from '@/lib/api';
 import { Alert } from '@/components/ui/alert';
 import { Disclosure } from '@/components/ui/disclosure';
 import { SkeletonRows } from '@/components/ui/skeleton';
-
-/**
- * ADR-056. The catalogue entry the picker works with, mirroring the backend's
- * `CatalogModule`. Declared here rather than imported: the portal has no import
- * path into the NestJS backend's source, and the shape is small enough that a
- * duplicated type is clearer than a shared package for five fields.
- */
-export interface CatalogModule {
-  technicalName: string;
-  name: string;
-  category: string | null;
-  isApplication: boolean;
-  depends: string[];
-}
-
-/**
- * Transitive `depends` closure over the fetched catalogue — the client-side
- * twin of the backend's `resolveDependencyClosure` (ADR-056 Task 2).
- *
- * The whole catalogue is already in hand, so resolving here costs no round-trip
- * and lets the panel show what will really be installed as the person ticks
- * boxes. The backend resolves the selection again, independently, against the
- * same manifests: this is what the user is shown, that is what is enforced.
- *
- * Unknown names are ignored rather than followed — a dependency outside the
- * catalogue is the backend's problem to refuse, not something to render.
- */
-export function resolveDependencyClosure(
-  selected: readonly string[],
-  catalogue: readonly CatalogModule[],
-): string[] {
-  const byName = new Map(catalogue.map((module) => [module.technicalName, module]));
-  const resolved = new Set<string>();
-  const queue = [...selected];
-
-  while (queue.length > 0) {
-    const name = queue.pop() as string;
-    if (resolved.has(name)) continue;
-    resolved.add(name);
-
-    for (const dependency of byName.get(name)?.depends ?? []) {
-      if (!resolved.has(dependency)) queue.push(dependency);
-    }
-  }
-
-  return [...resolved].sort();
-}
+import {
+  categoryGroups,
+  filterModules,
+  resolveDependencyClosure,
+  type CatalogModule,
+} from '@/lib/projects/module-catalog';
 
 /**
  * The module picker (ADR-056 §6). Fetches the catalogue for the chosen version
@@ -116,29 +75,12 @@ export function ModulePicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, edition]);
 
-  const categories = useMemo(() => {
-    if (!catalogue) return [];
-    const seen = new Set<string>();
-    for (const entry of catalogue) {
-      if (entry.category) seen.add(entry.category);
-    }
-    return [...seen].sort();
-  }, [catalogue]);
+  const categories = useMemo(() => (catalogue ? categoryGroups(catalogue) : []), [catalogue]);
 
-  const visible = useMemo(() => {
-    if (!catalogue) return [];
-    const needle = search.trim().toLowerCase();
-
-    return catalogue.filter((module) => {
-      if (appsOnly && !module.isApplication) return false;
-      if (category && module.category !== category) return false;
-      if (needle.length === 0) return true;
-      return (
-        module.technicalName.toLowerCase().includes(needle) ||
-        module.name.toLowerCase().includes(needle)
-      );
-    });
-  }, [catalogue, search, category, appsOnly]);
+  const visible = useMemo(
+    () => (catalogue ? filterModules(catalogue, { search, category, appsOnly }) : []),
+    [catalogue, search, category, appsOnly],
+  );
 
   const resolved = useMemo(
     () => (catalogue ? resolveDependencyClosure(value, catalogue) : []),
