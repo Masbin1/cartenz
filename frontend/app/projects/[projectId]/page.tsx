@@ -37,6 +37,8 @@ import type {
 } from '@/lib/types';
 import { RestoredInstancePanel } from '@/components/projects/restored-instance-panel';
 import { ConnectedInstancePanel } from '@/components/projects/connected-instance-panel';
+import { OdooShSetupPanel } from '@/components/projects/odoo-sh-setup-panel';
+import { odooShSignupOf } from '@/lib/odoo-sh';
 
 /**
  * The shape `project.restoredInstance` falls back to when it is absent from
@@ -212,6 +214,7 @@ export default function ProjectDetailPage() {
   const grantedPermissions = Object.entries(project.agentPermissions);
   const grantedCount = grantedPermissions.filter(([, granted]) => granted).length;
   const odooOnline = project.projectType === 'odoo_online' ? odooOnlineInstanceOf(project) : null;
+  const odooShSignup = odooShSignupOf(project);
   const instance = odooOnline ? ODOO_ONLINE_STATE[odooOnline.status] : INSTANCE_STATE[project.provisioning.status];
   const hasInstance =
     project.provisioning.status !== 'none' || project.connectedInstance?.status === 'ready';
@@ -269,6 +272,12 @@ export default function ProjectDetailPage() {
               <OdooOnlineSetupPanel
                 projectId={project.id}
                 signup={odooOnlineSignupOf(project)}
+                onConnected={() => void load()}
+              />
+            ) : odooShSignup && !project.repositoryUrl ? (
+              <OdooShSetupPanel
+                projectId={project.id}
+                signup={odooShSignup}
                 onConnected={() => void load()}
               />
             ) : hasInstance ? (
