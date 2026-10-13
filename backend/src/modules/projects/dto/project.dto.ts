@@ -22,6 +22,7 @@ import {
   ENVIRONMENT_KINDS,
   GIT_TRANSPORTS,
   ODOO_EDITIONS,
+  ODOO_SH_REGIONS,
   ODOO_VERSIONS,
   PROJECT_TYPES,
   USER_REGIONS,
@@ -31,6 +32,7 @@ import {
   type EnvironmentKind,
   type GitTransport,
   type OdooEdition,
+  type OdooShRegion,
   type OdooVersion,
   type ProjectType,
   type UserRegion,
@@ -278,6 +280,32 @@ export class OdooOnlineSignupDto {
 }
 
 /**
+ * What the Odoo.sh "Deploy your platform" form needs, minus the subscription
+ * code (ADR-071). The code is a secret Cartenz cannot use, because only the
+ * operator's own Odoo.sh session can submit that form, so it is not collected.
+ */
+export class OdooShSignupDto {
+  /** GitHub account or organisation, as GitHub spells user names. */
+  @IsString()
+  @Matches(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/, {
+    message: 'owner must be a GitHub user or organisation name',
+  })
+  @Transform(trim)
+  owner!: string;
+
+  /** Same rule as `GitHubClient`'s REPOSITORY_NAME. */
+  @IsString()
+  @Matches(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/, {
+    message: 'repositoryName must be a GitHub repository name',
+  })
+  @Transform(trim)
+  repositoryName!: string;
+
+  @IsIn(ODOO_SH_REGIONS, { message: `region must be one of: ${ODOO_SH_REGIONS.join(', ')}` })
+  region!: OdooShRegion;
+}
+
+/**
  * Create a new project with AI. Collects the four documented inputs - name,
  * Odoo version, description and initial requirements - and produces a structured
  * specification, so that project context is persisted rather than left to be
@@ -342,6 +370,15 @@ export class CreateAiProjectDto {
   @ValidateNested()
   @Type(() => OdooOnlineSignupDto)
   odooOnline?: OdooOnlineSignupDto;
+
+  /**
+   * The Odoo.sh deploy plan. Required when `hosting` is `odoo_sh` (checked in
+   * the service); ignored otherwise.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => OdooShSignupDto)
+  odooSh?: OdooShSignupDto;
 }
 
 export class UpdateProjectDto {
@@ -581,4 +618,12 @@ export class RestoreFromBackupDto {
     message: 'backupFile must be a bare .zip file name with no directory',
   })
   backupFile!: string;
+}
+
+/** Body of POST /projects/:id/odoo-sh/connect. */
+export class ConnectOdooShDto {
+  /** A registered Git credential (Settings → Git credentials); omitted means the default. */
+  @IsOptional()
+  @IsUUID()
+  credentialId?: string;
 }

@@ -50,8 +50,7 @@ describe('CreateAiProjectDto hosting', () => {
   });
 
   it('refuses a hosting target that is not offered', async () => {
-    // Odoo.sh is planned, not implemented: it must not slip through.
-    expect(hasError(await validate(build({ hosting: 'odoo_sh' })), 'hosting')).toBe(true);
+    expect(hasError(await validate(build({ hosting: 'odoo_cloud' })), 'hosting')).toBe(true);
   });
 
   it('refuses a subdomain with an uppercase letter or a leading hyphen', async () => {

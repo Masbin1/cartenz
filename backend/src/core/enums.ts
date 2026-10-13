@@ -34,10 +34,18 @@ export const REPOSITORY_BACKED_PROJECT_TYPES: readonly ProjectType[] = ['reposit
  * this host. `odoo_online` records a project whose database the operator
  * creates at odoo.com/trial and then connects — that signup is protected by
  * reCAPTCHA v3 and Cloudflare Turnstile, so it cannot be automated and is
- * assisted instead. Odoo.sh is planned but not yet offered here.
+ * assisted instead. `odoo_sh` is assisted the same way (ADR-071): Odoo.sh has
+ * no project-creation API and its login is GitHub OAuth.
  */
-export const AI_HOSTING_TARGETS = ['on_host', 'odoo_online'] as const;
+export const AI_HOSTING_TARGETS = ['on_host', 'odoo_online', 'odoo_sh'] as const;
 export type AiHostingTarget = (typeof AI_HOSTING_TARGETS)[number];
+
+/**
+ * Odoo.sh hosting locations, as the values its project form posts (ADR-071).
+ * `sa` is Middle East and `me` Southern Asia: Odoo's spelling, kept verbatim.
+ */
+export const ODOO_SH_REGIONS = ['am', 'ca', 'eu', 'sa', 'me', 'as', 'au'] as const;
+export type OdooShRegion = (typeof ODOO_SH_REGIONS)[number];
 
 /**
  * Where a connected project's linked instance actually lives (ADR-050, ADR-054).
