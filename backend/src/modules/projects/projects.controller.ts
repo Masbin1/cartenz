@@ -14,6 +14,7 @@ import {
 import { ProjectsService } from './projects.service';
 import {
   CreateAiProjectDto,
+  ConnectOdooShDto,
   CreateConnectionDto,
   CreateProjectDto,
   DeleteProjectDto,
@@ -247,6 +248,16 @@ export class ProjectsController {
     @Body() dto: CreateConnectionDto,
   ) {
     return this.projects.createConnection(user, projectId, dto);
+  }
+
+  /** Links an assisted Odoo.sh project to the repository Odoo.sh created (ADR-071). */
+  @Post(':projectId/odoo-sh/connect')
+  connectOdooSh(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Body() dto: ConnectOdooShDto,
+  ) {
+    return this.projects.connectOdooSh(user, projectId, dto);
   }
 
   @Delete(':projectId/connections/:connectionId')

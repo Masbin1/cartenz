@@ -77,6 +77,8 @@ import {
   type GitHubConnectionResult,
 } from './github-repository.service';
 import { WorkspaceManager } from '../../agent/workspace/workspace-manager';
+import { GitHubClient, GitHubApiError } from '../../agent/git/github-client';
+import { odooShSignupOf } from './odoo-sh-signup';
 import { TERMINAL_TASK_STATUSES } from '../../agent/task-state';
 import { assertSafeRemoteUrl, UnsafeRemoteUrlError } from '../../agent/git/git-url';
 import { GitService } from '../../agent/git/git.service';
@@ -94,6 +96,7 @@ import type { AppConfig } from '../../core/config/configuration';
 import { listOnPremiseFolders, type OnPremiseFolder } from './on-premise-locations';
 import type {
   CreateAiProjectDto,
+  ConnectOdooShDto,
   CreateConnectionDto,
   CreateProjectDto,
   ListProjectsQueryDto,
@@ -175,6 +178,7 @@ export class ProjectsService {
     private readonly deployment: ProjectDeploymentService,
     private readonly merge: ProjectMergeService,
     private readonly checkouts: ProjectCheckoutService,
+    private readonly github: GitHubClient,
   ) {}
   /**
    * Brings a project's provisioned instance up to date with its repository
@@ -1148,6 +1152,12 @@ export class ProjectsService {
       return this.createOdooOnlineAiProject(user, dto, odooEdition);
     }
 
+    // Odoo.sh is deployed by the operator at odoo.sh, which also creates the
+    // GitHub repository (ADR-071). Like Odoo Online: record the plan, provision nothing.
+    if (dto.hosting === 'odoo_sh') {
+      return this.createOdooShAiProject(user, dto);
+    }
+
     /**
      * ADR-056. A selection is validated against this version/edition's real
      * catalog before anything is created — an unknown module name refuses the
@@ -1465,6 +1475,107 @@ export class ProjectsService {
         projectType: 'odoo_online',
         flow: 'create_with_ai',
         hosting: 'odoo_online',
+        requirementCount: specification.requirements.length,
+      },
+    });
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.PROJECT_SPECIFICATION_CREATED,
+      projectId: result.project.id,
+      userId: user.userId,
+      metadata: { version: 1 },
+    });
+
+    return {
+      ...this.present(result.project),
+      specification: result.spec.specification,
+      github: null,
+    };
+  }
+
+  /**
+   * Records an Odoo.sh project and its deploy plan (ADR-071).
+   *
+   * No directory, no scaffold and no GitHub call. If Cartenz created the
+   * repository first, Odoo.sh's "New repository" deploy would fail on the name.
+   * `repository_url` stays null until `connectOdooSh`, which is what the task
+   * guard reads, so no task can run against a repository that does not exist yet.
+   */
+  private async createOdooShAiProject(user: AuthenticatedUser, dto: CreateAiProjectDto) {
+    const plan = dto.odooSh;
+    if (!plan) {
+      throw new BadRequestException(
+        'An Odoo.sh project needs its deploy plan: GitHub owner, repository name and region.',
+      );
+    }
+
+    const specification = buildProjectSpecification({
+      projectName: dto.name,
+      odooVersion: dto.odooVersion,
+      description: dto.description,
+      requirements: dto.requirements,
+      modules: undefined,
+    });
+
+    const result = await this.database.transaction(async (tx) => {
+      const [project] = await tx
+        .insert(projects)
+        .values({
+          region: dto.region,
+          name: dto.name,
+          description: dto.description,
+          projectType: 'odoo_sh',
+          odooVersion: dto.odooVersion,
+          // Odoo.sh runs Enterprise only.
+          odooEdition: 'enterprise',
+          // Replaced at connect time by the repository's own default branch.
+          defaultBranch: 'main',
+          repositoryUrl: null,
+          environmentConfig: {
+            hosting: 'odoo_sh',
+            signup: {
+              owner: plan.owner,
+              repositoryName: plan.repositoryName,
+              region: plan.region,
+              odooVersion: dto.odooVersion,
+            },
+          },
+          agentPermissions: { ...DEFAULT_AGENT_PERMISSIONS },
+          createdByUserId: user.userId,
+          provisioningStatus: 'none',
+        })
+        .returning();
+
+      // Development is where tasks land; Odoo.sh builds the branch on each push.
+      // Production is not declared: it is never a task target (ADR-021).
+      await tx.insert(projectEnvironments).values(
+        this.environments.buildForCreation(project.id, 'main', [
+          { name: 'Development', branch: 'development', kind: 'development', isDefaultTarget: true },
+        ]),
+      );
+
+      const [spec] = await tx
+        .insert(projectSpecifications)
+        .values({
+          projectId: project.id,
+          version: 1,
+          specification: specification as unknown as Record<string, unknown>,
+          createdByUserId: user.userId,
+        })
+        .returning();
+
+      return { project, spec };
+    });
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.PROJECT_CREATED,
+      projectId: result.project.id,
+      userId: user.userId,
+      metadata: {
+        name: result.project.name,
+        projectType: 'odoo_sh',
+        flow: 'create_with_ai',
+        hosting: 'odoo_sh',
         requirementCount: specification.requirements.length,
       },
     });
@@ -2093,6 +2204,121 @@ export class ProjectsService {
     });
 
     return { ...connection, hasCredentials: secretRef !== null };
+  }
+
+  /**
+   * Connects an assisted Odoo.sh project to the repository Odoo.sh created (ADR-071).
+   *
+   * The token comes from Settings → Git credentials (ADR-058). `GITHUB_TOKEN` is
+   * a fallback so a deployment configured the older way keeps working.
+   * Idempotent: once `repository_url` is set, a second click reports the same
+   * repository rather than recording a second connection.
+   */
+  async connectOdooSh(user: AuthenticatedUser, projectId: string, dto: ConnectOdooShDto) {
+    await this.authz.requireProjectAccess(user, projectId, { requireAdmin: true });
+
+    const [project] = await this.database.db
+      .select()
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!project) throw new NotFoundException('Project not found');
+
+    const plan = project.projectType === 'odoo_sh' ? odooShSignupOf(project.environmentConfig) : null;
+    if (!plan) {
+      throw new BadRequestException('This project was not created as an Odoo.sh project.');
+    }
+
+    const fullName = `${plan.owner}/${plan.repositoryName}`;
+    if (project.repositoryUrl) {
+      return {
+        repository: fullName,
+        url: `https://github.com/${fullName}`,
+        defaultBranch: project.defaultBranch,
+        createdBranch: false,
+      };
+    }
+
+    const registered = await this.gitCredentials.resolveForHost({
+      credentialId: dto.credentialId ?? null,
+      host: 'github.com',
+    });
+    const token =
+      registered?.kind === 'token' ? registered.value : (this.config.github.token ?? null);
+    if (!token) {
+      throw new BadRequestException(
+        'No GitHub access token is available. Add one in Settings → Git credentials ' +
+          '(kind: Access token, host: github.com).',
+      );
+    }
+
+    let repository;
+    let createdBranch: boolean;
+    try {
+      repository = await this.github.getRepository(plan.owner, plan.repositoryName, token);
+      if (!repository) {
+        throw new BadRequestException(
+          `The repository ${fullName} was not found. Finish the deploy on Odoo.sh first. ` +
+            'If it is deployed, the access token cannot see it: give the token access to ' +
+            `all repositories of ${plan.owner}.`,
+        );
+      }
+      createdBranch = await this.github.ensureBranch(
+        plan.owner,
+        plan.repositoryName,
+        'development',
+        repository.defaultBranch,
+        token,
+      );
+    } catch (error) {
+      if (error instanceof GitHubApiError) throw new BadRequestException(error.message);
+      throw error;
+    }
+
+    // The existing path: adopts the registered credential's secret by reference,
+    // or seals the fallback token against this project.
+    await this.createConnection(user, projectId, {
+      connectionType: 'github',
+      credentialKind: 'token',
+      ...(registered?.kind === 'token'
+        ? { credentialId: registered.credentialId ?? undefined }
+        : { credential: token }),
+      metadata: {
+        repository: repository.fullName,
+        url: repository.htmlUrl,
+        repositoryUrl: repository.cloneUrl,
+        cloneUrl: repository.cloneUrl,
+        branch: repository.defaultBranch,
+      },
+    } as CreateConnectionDto);
+
+    await this.database.db
+      .update(projects)
+      .set({
+        repositoryUrl: repository.cloneUrl,
+        defaultBranch: repository.defaultBranch,
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, projectId));
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.PROJECT_ODOO_SH_CONNECTED,
+      projectId,
+      userId: user.userId,
+      metadata: {
+        repository: repository.fullName,
+        defaultBranch: repository.defaultBranch,
+        createdBranch,
+        registeredCredentialId: registered?.credentialId ?? null,
+      },
+    });
+
+    return {
+      repository: repository.fullName,
+      url: repository.htmlUrl,
+      defaultBranch: repository.defaultBranch,
+      createdBranch,
+    };
   }
 
   /**

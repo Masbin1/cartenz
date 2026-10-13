@@ -43,6 +43,8 @@ export const AUDIT_EVENTS = {
    * real and usable either way, but a person who expected a remote has to know.
    */
   PROJECT_GITHUB_REPOSITORY_FAILED: 'project.github_repository_failed',
+  /** An assisted Odoo.sh project was connected to the repository Odoo.sh created (ADR-071). */
+  PROJECT_ODOO_SH_CONNECTED: 'project.odoo_sh_connected',
   // ADR-049 (§2). Recorded separately from the pull itself: what a person who
   // pressed Deploy needs to know is that the code on the branch is now what the
   // instance has on disk, and the commit is the evidence.
