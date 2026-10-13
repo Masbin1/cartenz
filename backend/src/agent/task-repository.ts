@@ -318,6 +318,18 @@ export class TaskRepository {
     if (to === 'analyzing') patch.startedAt = new Date();
     if (isTerminalStatus(to)) patch.completedAt = new Date();
     if (options.failureReason) patch.failureReason = options.failureReason;
+    /**
+     * A chat task's reply is the thing read as "the answer" in the thread
+     * (ADR-029, `saveAnswer`). A change task has nothing playing that role: its
+     * completion message only ever reached the Activity log, so the chat
+     * surface showed a status change and nothing else once a request finished.
+     * `coalesce` keeps a chat's own `saveAnswer()` call authoritative - this
+     * never overwrites it - while giving every other kind the same completion
+     * line as its answer the first time it reaches `completed`.
+     */
+    if (to === 'completed' && options.message) {
+      patch.answer = sql`coalesce(${agentTasks.answer}, ${options.message})`;
+    }
 
     const updated = await this.database.db
       .update(agentTasks)
