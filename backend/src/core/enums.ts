@@ -28,6 +28,18 @@ export type ProjectType = (typeof PROJECT_TYPES)[number];
 export const REPOSITORY_BACKED_PROJECT_TYPES: readonly ProjectType[] = ['repository', 'odoo_sh'];
 
 /**
+ * Where a project created through the AI flow runs.
+ *
+ * `on_host` is the long-standing behaviour: Cartenz provisions an instance on
+ * this host. `odoo_online` records a project whose database the operator
+ * creates at odoo.com/trial and then connects — that signup is protected by
+ * reCAPTCHA v3 and Cloudflare Turnstile, so it cannot be automated and is
+ * assisted instead. Odoo.sh is planned but not yet offered here.
+ */
+export const AI_HOSTING_TARGETS = ['on_host', 'odoo_online'] as const;
+export type AiHostingTarget = (typeof AI_HOSTING_TARGETS)[number];
+
+/**
  * Where a connected project's linked instance actually lives (ADR-050, ADR-054).
  *
  * This is metadata about the *link* a connect-existing flow records, not a new

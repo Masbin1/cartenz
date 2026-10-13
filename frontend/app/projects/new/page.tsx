@@ -34,6 +34,15 @@ import {
   type EnvironmentDraft,
 } from '@/components/projects/environment-editor';
 import { ModulePicker } from '@/components/projects/module-picker';
+import {
+  ODOO_ONLINE_COUNTRIES,
+  ODOO_ONLINE_COMPANY_SIZES,
+  ODOO_ONLINE_LANGUAGES,
+  ODOO_ONLINE_PLANS,
+  ODOO_ONLINE_SUBDOMAIN,
+  odooOnlineAppGroups,
+  suggestSubdomain,
+} from '@/lib/odoo-online-apps';
 
 
 const ODOO_VERSIONS = ['19.0', '20.0'];
@@ -217,6 +226,7 @@ function ChoiceTile({
   icon: Icon,
   title,
   description,
+  disabled = false,
 }: {
   name: string;
   value: string;
@@ -225,13 +235,16 @@ function ChoiceTile({
   icon: LucideIcon;
   title: string;
   description: string;
+  disabled?: boolean;
 }) {
   return (
     <label
-      className={`flex cursor-pointer items-start gap-3.5 rounded-xl border p-4 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent/60 ${
-        checked
-          ? 'border-accent/60 bg-accent-subtle ring-1 ring-accent/30'
-          : 'border-surface-border bg-surface-raised hover:border-surface-strong'
+      className={`flex items-start gap-3.5 rounded-xl border p-4 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent/60 ${
+        disabled
+          ? 'cursor-not-allowed border-surface-border bg-surface-raised opacity-60'
+          : checked
+            ? 'cursor-pointer border-accent/60 bg-accent-subtle ring-1 ring-accent/30'
+            : 'cursor-pointer border-surface-border bg-surface-raised hover:border-surface-strong'
       }`}
     >
       <input
@@ -240,6 +253,7 @@ function ChoiceTile({
         value={value}
         checked={checked}
         onChange={onChange}
+        disabled={disabled}
         className="sr-only"
       />
       <Icon
@@ -1167,8 +1181,55 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
    */
   const [installMode, setInstallMode] = useState<'all' | 'choose'>('all');
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
+  /**
+   * Where the project runs. `on_host` is the original behaviour and the default:
+   * Cartenz provisions an instance here. `odoo_online` records the project and a
+   * signup plan for a database the operator creates at odoo.com, then connects.
+   */
+  const [hosting, setHosting] = useState<'on_host' | 'odoo_online'>('on_host');
+  const [odooOnline, setOdooOnline] = useState({
+    companyName: '',
+    adminEmail: '',
+    subdomain: '',
+    countryCode: 'ID',
+    fullName: '',
+    phone: '',
+    lang: 'en_US',
+    companySize: '1-5',
+    plan: 'plan_to_use',
+    apps: [] as string[],
+  });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const setOdooOnlineField = (
+    field:
+      | 'companyName'
+      | 'adminEmail'
+      | 'subdomain'
+      | 'countryCode'
+      | 'fullName'
+      | 'phone'
+      | 'lang'
+      | 'companySize'
+      | 'plan',
+    value: string,
+  ) =>
+    setOdooOnline((previous) => ({ ...previous, [field]: value }));
+
+  const toggleOdooOnlineApp = (technicalName: string) =>
+    setOdooOnline((previous) => ({
+      ...previous,
+      apps: previous.apps.includes(technicalName)
+        ? previous.apps.filter((name) => name !== technicalName)
+        : [...previous.apps, technicalName],
+    }));
+
+  const odooOnlineReady =
+    hosting === 'on_host' ||
+    (odooOnline.companyName.trim().length > 0 &&
+      /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(odooOnline.adminEmail.trim()) &&
+      ODOO_ONLINE_SUBDOMAIN.test(odooOnline.subdomain.trim()));
 
   const setRequirement = (index: number, field: 'title' | 'detail', value: string) =>
     setRequirements((previous) =>
@@ -1190,8 +1251,15 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
       return;
     }
 
-    if (installMode === 'choose' && selectedModules.length === 0) {
+    if (hosting === 'on_host' && installMode === 'choose' && selectedModules.length === 0) {
       setError('Choose at least one module, or switch back to "Install everything".');
+      return;
+    }
+
+    if (!odooOnlineReady) {
+      setError(
+        'Fill the Odoo Online signup: company name, a valid admin email and a subdomain of 4-50 lowercase letters, digits or hyphens.',
+      );
       return;
     }
 
@@ -1201,13 +1269,30 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
         region: regionChoice,
         name,
         odooVersion,
-        odooEdition,
+        // Odoo Online is Enterprise only, so the choice is not offered there.
+        odooEdition: hosting === 'odoo_online' ? 'enterprise' : odooEdition,
         description,
         requirements: populated.map((entry) => ({
           title: entry.title,
           detail: entry.detail.length > 0 ? entry.detail : undefined,
         })),
-        modules: installMode === 'choose' ? selectedModules : undefined,
+        ...(hosting === 'on_host'
+          ? { modules: installMode === 'choose' ? selectedModules : undefined }
+          : {
+              hosting: 'odoo_online' as const,
+              odooOnline: {
+                companyName: odooOnline.companyName.trim(),
+                adminEmail: odooOnline.adminEmail.trim(),
+                subdomain: odooOnline.subdomain.trim(),
+                countryCode: odooOnline.countryCode,
+                apps: odooOnline.apps,
+                fullName: odooOnline.fullName.trim() || undefined,
+                phone: odooOnline.phone.trim() || undefined,
+                lang: odooOnline.lang,
+                companySize: odooOnline.companySize,
+                plan: odooOnline.plan,
+              },
+            }),
       });
       router.push(`/projects/${project.id}`);
     } catch (caught) {
@@ -1261,26 +1346,69 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
             </select>
           </div>
 
-          <div>
-            <label htmlFor="ai-edition" className="field-label">
-              Odoo edition
-            </label>
-            <select
-              id="ai-edition"
-              value={odooEdition}
-              onChange={(event) => setOdooEdition(event.target.value)}
-              className="field-input"
-            >
-              {ODOO_EDITIONS.map((edition) => (
-                <option key={edition.value} value={edition.value}>
-                  {edition.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          {hosting === 'on_host' ? (
+            <div>
+              <label htmlFor="ai-edition" className="field-label">
+                Odoo edition
+              </label>
+              <select
+                id="ai-edition"
+                value={odooEdition}
+                onChange={(event) => setOdooEdition(event.target.value)}
+                className="field-input"
+              >
+                {ODOO_EDITIONS.map((edition) => (
+                  <option key={edition.value} value={edition.value}>
+                    {edition.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
 
           <RegionField region={regionChoice} isAdmin={isAdmin} onChange={setRegionChoice} />
         </div>
+      </Section>
+
+      <Section
+        size="small"
+        divided
+        title="Where it runs"
+        description="On this server, Cartenz provisions and runs the instance. On Odoo Online, the database is created at odoo.com and Cartenz connects it once it exists."
+      >
+        <fieldset>
+          <legend className="sr-only">Where the project runs</legend>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ChoiceTile
+              name="hosting"
+              value="on_host"
+              checked={hosting === 'on_host'}
+              onChange={() => setHosting('on_host')}
+              icon={Server}
+              title="On this server"
+              description="A new Odoo instance Cartenz creates and runs here, with a repository the agent can write to."
+            />
+            <ChoiceTile
+              name="hosting"
+              value="odoo_online"
+              checked={hosting === 'odoo_online'}
+              onChange={() => setHosting('odoo_online')}
+              icon={Globe}
+              title="Odoo Online"
+              description="A database created at odoo.com from the details you fill here. Cartenz keeps them and pre-fills the odoo.com form."
+            />
+            <ChoiceTile
+              name="hosting"
+              value="odoo_sh"
+              checked={false}
+              onChange={() => undefined}
+              disabled
+              icon={Cloud}
+              title="Odoo.sh"
+              description="Coming soon."
+            />
+          </div>
+        </fieldset>
       </Section>
 
       <Section
@@ -1365,47 +1493,254 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
         </div>
       </Section>
 
-      <Section
-        size="small"
-        divided
-        title="Modules"
-        description="What the new instance installs when it is created."
-      >
-        <fieldset>
-          <legend className="sr-only">Modules to install</legend>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <ChoiceTile
-              name="install-mode"
-              value="all"
-              checked={installMode === 'all'}
-              onChange={() => setInstallMode('all')}
-              icon={LayoutGrid}
-              title="Install everything"
-              description="Every module this edition ships, ready to switch on per user. The fast path: the project is cloned from a pre-built database."
-            />
-            <ChoiceTile
-              name="install-mode"
-              value="choose"
-              checked={installMode === 'choose'}
-              onChange={() => setInstallMode('choose')}
-              icon={Boxes}
-              title="Choose what to install"
-              description="Only the apps this project needs. The instance starts small and is built in the background; dependencies are installed automatically."
-            />
-          </div>
-        </fieldset>
+      {hosting === 'on_host' ? (
+        <Section
+          size="small"
+          divided
+          title="Modules"
+          description="What the new instance installs when it is created."
+        >
+          <fieldset>
+            <legend className="sr-only">Modules to install</legend>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ChoiceTile
+                name="install-mode"
+                value="all"
+                checked={installMode === 'all'}
+                onChange={() => setInstallMode('all')}
+                icon={LayoutGrid}
+                title="Install everything"
+                description="Every module this edition ships, ready to switch on per user. The fast path: the project is cloned from a pre-built database."
+              />
+              <ChoiceTile
+                name="install-mode"
+                value="choose"
+                checked={installMode === 'choose'}
+                onChange={() => setInstallMode('choose')}
+                icon={Boxes}
+                title="Choose what to install"
+                description="Only the apps this project needs. The instance starts small and is built in the background; dependencies are installed automatically."
+              />
+            </div>
+          </fieldset>
 
-        {installMode === 'choose' ? (
-          <div className="mt-6 animate-rise-in">
-            <ModulePicker
-              version={odooVersion}
-              edition={odooEdition}
-              value={selectedModules}
-              onChange={setSelectedModules}
-            />
+          {installMode === 'choose' ? (
+            <div className="mt-6 animate-rise-in">
+              <ModulePicker
+                version={odooVersion}
+                edition={odooEdition}
+                value={selectedModules}
+                onChange={setSelectedModules}
+              />
+            </div>
+          ) : null}
+        </Section>
+      ) : (
+        <Section
+          size="small"
+          divided
+          title="Odoo Online signup"
+          description="The same details odoo.com/trial asks for. They are saved on the project, and the project page fills the odoo.com form with them — you only press Start Now there."
+        >
+          {/* Same fields, same order as the odoo.com/trial form, so "Fill from Cartenz" fills all of it. */}
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label htmlFor="oo-fullname" className="field-label">
+                First and last name
+              </label>
+              <input
+                id="oo-fullname"
+                value={odooOnline.fullName}
+                onChange={(event) => setOdooOnlineField('fullName', event.target.value)}
+                className="field-input"
+                autoComplete="name"
+                placeholder="Ayu Lestari"
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label htmlFor="oo-company" className="field-label">
+                Company name
+              </label>
+              <input
+                id="oo-company"
+                value={odooOnline.companyName}
+                onChange={(event) => setOdooOnlineField('companyName', event.target.value)}
+                className="field-input"
+                placeholder="Acme Manufacturing"
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label htmlFor="oo-subdomain" className="field-label">
+                Domain
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="oo-subdomain"
+                  value={odooOnline.subdomain}
+                  onChange={(event) => setOdooOnlineField('subdomain', event.target.value)}
+                  className="field-input"
+                  placeholder="acme"
+                />
+                <span className="shrink-0 text-callout text-content-subtle">.odoo.com</span>
+              </div>
+              <p className="field-hint">
+                odoo.com decides what is available.
+                <button
+                  type="button"
+                  onClick={() =>
+                    setOdooOnlineField('subdomain', suggestSubdomain(odooOnline.companyName || name))
+                  }
+                  className="link ml-1.5"
+                >
+                  Suggest from company name
+                </button>
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="oo-email" className="field-label">
+                Email
+              </label>
+              <input
+                id="oo-email"
+                type="email"
+                value={odooOnline.adminEmail}
+                onChange={(event) => setOdooOnlineField('adminEmail', event.target.value)}
+                className="field-input"
+                autoComplete="email"
+                placeholder="you@company.com"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="oo-phone" className="field-label">
+                Phone number
+              </label>
+              <input
+                id="oo-phone"
+                type="tel"
+                value={odooOnline.phone}
+                onChange={(event) => setOdooOnlineField('phone', event.target.value)}
+                className="field-input"
+                autoComplete="tel"
+                placeholder="+62 812 3456 7890"
+              />
+              <p className="field-hint">odoo.com may send a verification code here.</p>
+            </div>
+
+            <div>
+              <label htmlFor="oo-country" className="field-label">
+                Country
+              </label>
+              <select
+                id="oo-country"
+                value={odooOnline.countryCode}
+                onChange={(event) => setOdooOnlineField('countryCode', event.target.value)}
+                className="field-input"
+              >
+                {ODOO_ONLINE_COUNTRIES.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="oo-lang" className="field-label">
+                Language
+              </label>
+              <select
+                id="oo-lang"
+                value={odooOnline.lang}
+                onChange={(event) => setOdooOnlineField('lang', event.target.value)}
+                className="field-input"
+              >
+                {ODOO_ONLINE_LANGUAGES.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="oo-size" className="field-label">
+                Company size
+              </label>
+              <select
+                id="oo-size"
+                value={odooOnline.companySize}
+                onChange={(event) => setOdooOnlineField('companySize', event.target.value)}
+                className="field-input"
+              >
+                {ODOO_ONLINE_COMPANY_SIZES.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="oo-plan" className="field-label">
+                Primary interest
+              </label>
+              <select
+                id="oo-plan"
+                value={odooOnline.plan}
+                onChange={(event) => setOdooOnlineField('plan', event.target.value)}
+                className="field-input"
+              >
+                {ODOO_ONLINE_PLANS.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        ) : null}
-      </Section>
+
+          <div className="mt-8">
+            <span className="field-label">Apps to install</span>
+            <p className="-mt-1 mb-3 text-meta text-content-subtle">
+              What you tick on odoo.com, kept here so the instance matches the project. {odooOnline.apps.length} selected.
+            </p>
+            <div className="space-y-5">
+              {odooOnlineAppGroups().map((group) => (
+                <div key={group.category}>
+                  <p className="mb-2 text-callout font-medium text-content">{group.category}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {group.apps.map((app) => {
+                      const checked = odooOnline.apps.includes(app.technicalName);
+                      return (
+                        <label
+                          key={app.technicalName}
+                          className={`flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-callout transition-colors ${
+                            checked
+                              ? 'border-accent/60 bg-accent-subtle text-content'
+                              : 'border-surface-border text-content-muted hover:border-surface-strong'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="sr-only"
+                            checked={checked}
+                            onChange={() => toggleOdooOnlineApp(app.technicalName)}
+                          />
+                          {app.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Section>
+      )}
 
       <Alert tone="info" title="No repository yet">
         A project created this way has no repository, so the agent can analyse and plan but cannot

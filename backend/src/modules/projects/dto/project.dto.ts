@@ -2,18 +2,21 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsEmail,
   IsIn,
   IsNotEmpty,
   IsObject,
   IsOptional,
   IsString,
   IsUUID,
+  Length,
   Matches,
   MaxLength,
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import {
+  AI_HOSTING_TARGETS,
   CONNECTION_TYPES,
   CREDENTIAL_KINDS,
   ENVIRONMENT_KINDS,
@@ -22,6 +25,7 @@ import {
   ODOO_VERSIONS,
   PROJECT_TYPES,
   USER_REGIONS,
+  type AiHostingTarget,
   type ConnectionType,
   type CredentialKind,
   type EnvironmentKind,
@@ -204,6 +208,76 @@ export class RequirementDto {
 }
 
 /**
+ * The signup the operator completes at odoo.com/trial, collected on the create
+ * form so the portal can show it as a checklist. None of it is secret: the
+ * trial form asks for no password, and these fields are only recorded as the
+ * plan for the project's Odoo Online database.
+ */
+export class OdooOnlineSignupDto {
+  @IsString()
+  @IsNotEmpty({ message: 'An Odoo Online signup needs the company name' })
+  @MaxLength(200)
+  @Transform(trim)
+  companyName!: string;
+
+  @IsEmail({}, { message: 'The admin email must be a valid email address' })
+  @MaxLength(320)
+  @Transform(trim)
+  adminEmail!: string;
+
+  @IsString()
+  // The rule odoo.com/trial itself enforces (DB_NAME_REGEX in its signup JS).
+  @Matches(/^[a-z0-9][a-z0-9-]{2,48}[a-z0-9]$/, {
+    message:
+      'The subdomain must be 4-50 lowercase letters, digits and hyphens, not starting or ending with a hyphen',
+  })
+  @Transform(trim)
+  subdomain!: string;
+
+  /** The trial form's "First and Last Name". */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  @Transform(trim)
+  fullName?: string;
+
+  /** Where odoo.com may send its verification code. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^\+?[0-9 ()-]{6,20}$/, { message: 'The phone must be digits with an optional leading +' })
+  @Transform(trim)
+  phone?: string;
+
+  /** An odoo.com language code such as `en_US` or `id_ID`. */
+  @IsOptional()
+  @Matches(/^[a-z]{2}_[A-Z0-9]{2,3}$/, { message: 'The language must be a code such as en_US' })
+  lang?: string;
+
+  /** odoo.com/trial's "Company size". */
+  @IsOptional()
+  @IsIn(['1-5', '5-20', '20-50', '50-250', '250-over'])
+  companySize?: string;
+
+  /** odoo.com/trial's "Primary Interest" (its `plan` field). */
+  @IsOptional()
+  @IsIn(['plan_to_use', 'plan_to_sell', 'plan_to_test_student', 'plan_to_test_teacher'])
+  plan?: string;
+
+  @IsString()
+  @Length(2, 2, { message: 'The country code must be a two-letter ISO code' })
+  @Transform(trim)
+  countryCode!: string;
+
+  @IsArray()
+  @ArrayMaxSize(40)
+  @Matches(/^[a-z][a-z0-9_]*$/, {
+    each: true,
+    message: 'Each app must be a module technical name',
+  })
+  apps!: string[];
+}
+
+/**
  * Create a new project with AI. Collects the four documented inputs - name,
  * Odoo version, description and initial requirements - and produces a structured
  * specification, so that project context is persisted rather than left to be
@@ -247,6 +321,27 @@ export class CreateAiProjectDto {
   @ArrayMaxSize(50)
   @IsString({ each: true })
   modules?: string[];
+
+  /**
+   * Where the project runs. Omitted means `on_host`, the behaviour before this
+   * field existed: Cartenz provisions an instance here. `odoo_online` records a
+   * project whose database the operator creates at odoo.com/trial, to be
+   * connected afterwards — see `odooOnline`.
+   */
+  @IsOptional()
+  @IsIn(AI_HOSTING_TARGETS, {
+    message: `hosting must be one of: ${AI_HOSTING_TARGETS.join(', ')}`,
+  })
+  hosting?: AiHostingTarget;
+
+  /**
+   * The Odoo Online signup plan. Required when `hosting` is `odoo_online`
+   * (checked in the service); ignored for `on_host`.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => OdooOnlineSignupDto)
+  odooOnline?: OdooOnlineSignupDto;
 }
 
 export class UpdateProjectDto {

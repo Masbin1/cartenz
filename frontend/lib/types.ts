@@ -154,6 +154,25 @@ export interface ProjectSpecification {
   deployment: { environment: string };
 }
 
+/**
+ * The signup plan recorded for a project created on Odoo Online. The database
+ * is created by the operator at odoo.com/trial; the portal shows this back as a
+ * checklist so what they enter there matches what the project expects. Stored in
+ * the project's `environmentConfig` — none of it is a secret.
+ */
+export interface OdooOnlineSignup {
+  subdomain: string;
+  companyName: string;
+  adminEmail: string;
+  countryCode: string;
+  apps: string[];
+  fullName?: string;
+  phone?: string;
+  lang?: string;
+  companySize?: string;
+  plan?: string;
+}
+
 export interface ProjectDetail {
   id: string;
   region: UserRegion;

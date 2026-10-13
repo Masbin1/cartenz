@@ -534,6 +534,24 @@ export const api = {
       description: string;
       requirements: { title: string; detail?: string }[];
       modules?: string[];
+      /**
+       * Where the project runs. Omitted means on this host (Cartenz provisions
+       * it); `odoo_online` records the project and its signup plan for a
+       * database the operator creates at odoo.com/trial, then connects.
+       */
+      hosting?: 'on_host' | 'odoo_online';
+      odooOnline?: {
+        companyName: string;
+        adminEmail: string;
+        subdomain: string;
+        countryCode: string;
+        apps: string[];
+        fullName?: string;
+        phone?: string;
+        lang?: string;
+        companySize?: string;
+        plan?: string;
+      };
     }) => request<ProjectDetail>('/projects/ai', { method: 'POST', body }),
 
     /** The branches a repository advertises, before the project exists. */

@@ -1138,6 +1138,17 @@ export class ProjectsService {
     const odooEdition: OdooEdition = dto.odooEdition ?? DEFAULT_ODOO_EDITION;
 
     /**
+     * Odoo Online is created by the operator at odoo.com, not provisioned here:
+     * our job is to record the project and the signup plan, then connect once an
+     * API key arrives. It has no repository, no environments to build and nothing
+     * to shell out to, so it takes a path of its own and leaves the provisioning
+     * branch below untouched.
+     */
+    if ((dto.hosting ?? 'on_host') === 'odoo_online') {
+      return this.createOdooOnlineAiProject(user, dto, odooEdition);
+    }
+
+    /**
      * ADR-056. A selection is validated against this version/edition's real
      * catalog before anything is created — an unknown module name refuses the
      * whole request rather than reaching provisioning, where it would either
@@ -1367,6 +1378,108 @@ export class ProjectsService {
       ...this.present(result.project),
       specification: result.spec.specification,
       github,
+    };
+  }
+
+  /**
+   * Create a project whose database lives on Odoo Online.
+   *
+   * The database itself is created by the operator at odoo.com/trial — that
+   * signup is behind reCAPTCHA v3 and Cloudflare Turnstile and cannot be
+   * automated — so this records the project and the signup plan and stops.
+   * There is nothing to provision, no repository to scaffold and no GitHub
+   * repository to create. The portal shows the plan as a checklist; once the
+   * instance exists, the operator connects it with an API key through the
+   * ordinary `createConnection` path.
+   */
+  private async createOdooOnlineAiProject(
+    user: AuthenticatedUser,
+    dto: CreateAiProjectDto,
+    odooEdition: OdooEdition,
+  ) {
+    const signup = dto.odooOnline;
+    if (!signup) {
+      throw new BadRequestException(
+        'An Odoo Online project needs its signup details: company name, admin email and subdomain.',
+      );
+    }
+
+    const specification = buildProjectSpecification({
+      projectName: dto.name,
+      odooVersion: dto.odooVersion,
+      description: dto.description,
+      requirements: dto.requirements,
+      modules: undefined,
+    });
+
+    const result = await this.database.transaction(async (tx) => {
+      const [project] = await tx
+        .insert(projects)
+        .values({
+          region: dto.region,
+          name: dto.name,
+          description: dto.description,
+          projectType: 'odoo_online',
+          odooVersion: dto.odooVersion,
+          odooEdition,
+          defaultBranch: 'main',
+          // The signup plan, kept in the JSON config the portal already reads.
+          // Nothing here is a secret: the trial form asks for no password.
+          environmentConfig: {
+            hosting: 'odoo_online',
+            signup: { ...signup },
+          },
+          agentPermissions: { ...DEFAULT_AGENT_PERMISSIONS },
+          createdByUserId: user.userId,
+          provisioningStatus: 'none',
+        })
+        .returning();
+
+      // One development environment so the row matches every other project's
+      // shape — a task reports "no environment" without one. Nothing runs on it:
+      // an Odoo Online project has no repository, so its tasks plan and answer
+      // (ADR-053) and reach the instance only through the odoo_online tools.
+      await tx
+        .insert(projectEnvironments)
+        .values(this.environments.buildForCreation(project.id, 'main', undefined));
+
+      const [spec] = await tx
+        .insert(projectSpecifications)
+        .values({
+          projectId: project.id,
+          version: 1,
+          specification: specification as unknown as Record<string, unknown>,
+          createdByUserId: user.userId,
+        })
+        .returning();
+
+      return { project, spec };
+    });
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.PROJECT_CREATED,
+      projectId: result.project.id,
+      userId: user.userId,
+      metadata: {
+        name: result.project.name,
+        projectType: 'odoo_online',
+        flow: 'create_with_ai',
+        hosting: 'odoo_online',
+        requirementCount: specification.requirements.length,
+      },
+    });
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.PROJECT_SPECIFICATION_CREATED,
+      projectId: result.project.id,
+      userId: user.userId,
+      metadata: { version: 1 },
+    });
+
+    return {
+      ...this.present(result.project),
+      specification: result.spec.specification,
+      github: null,
     };
   }
 

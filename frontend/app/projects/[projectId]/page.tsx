@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ArrowUpRight, GitBranch, MessageSquarePlus, Settings2 } from 'lucide-react';
+import { ArrowUpRight, Copy, GitBranch, MessageSquarePlus, Settings2 } from 'lucide-react';
 import { useRequireAuth } from '@/lib/auth';
 import { ApiError, api } from '@/lib/api';
 import { AppShell } from '@/components/ui/app-shell';
@@ -18,6 +18,12 @@ import { Disclosure } from '@/components/ui/disclosure';
 import { DetailItem, DetailList } from '@/components/ui/detail-list';
 import { Skeleton, SkeletonRows, SkeletonText } from '@/components/ui/skeleton';
 import { PROJECT_TYPE_LABELS, humanise, relativeTime } from '@/lib/format';
+import {
+  appLabel,
+  odooOnlineInstanceUrl,
+  trialFillBookmarklet,
+  trialSignupUrl,
+} from '@/lib/odoo-online-apps';
 import type {
   BackupSummary,
   CheckoutStatus,
@@ -27,6 +33,7 @@ import type {
   ProjectRestartInfo,
   RestoredInstanceInfo,
   ConnectedInstanceInfo,
+  OdooOnlineSignup,
 } from '@/lib/types';
 import { RestoredInstancePanel } from '@/components/projects/restored-instance-panel';
 import { ConnectedInstancePanel } from '@/components/projects/connected-instance-panel';
@@ -91,6 +98,36 @@ function odooOnlineInstanceOf(project: ProjectDetail): OdooOnlineInstance | null
   const url = typeof connection.metadata.url === 'string' ? connection.metadata.url : null;
   const database = typeof connection.metadata.db === 'string' ? connection.metadata.db : null;
   return { url, database, status: connection.status };
+}
+
+/**
+ * The signup plan recorded when an Odoo Online project was created with AI,
+ * read back from the project's `environmentConfig`. Null for anything else -
+ * including an Odoo Online project connected the older way, which never had a
+ * plan and reaches the ordinary overview instead.
+ */
+function odooOnlineSignupOf(project: ProjectDetail): OdooOnlineSignup | null {
+  if (project.projectType !== 'odoo_online') return null;
+  const signup = project.environmentConfig?.signup;
+  if (!signup || typeof signup !== 'object') return null;
+
+  const value = signup as Record<string, unknown>;
+  if (typeof value.subdomain !== 'string' || value.subdomain.length === 0) return null;
+
+  return {
+    subdomain: value.subdomain,
+    companyName: typeof value.companyName === 'string' ? value.companyName : '',
+    adminEmail: typeof value.adminEmail === 'string' ? value.adminEmail : '',
+    countryCode: typeof value.countryCode === 'string' ? value.countryCode : '',
+    apps: Array.isArray(value.apps)
+      ? value.apps.filter((name): name is string => typeof name === 'string')
+      : [],
+    fullName: typeof value.fullName === 'string' ? value.fullName : undefined,
+    phone: typeof value.phone === 'string' ? value.phone : undefined,
+    lang: typeof value.lang === 'string' ? value.lang : undefined,
+    companySize: typeof value.companySize === 'string' ? value.companySize : undefined,
+    plan: typeof value.plan === 'string' ? value.plan : undefined,
+  };
 }
 
 const ODOO_ONLINE_STATE: Record<
@@ -228,6 +265,12 @@ export default function ProjectDetailPage() {
           <div className="min-w-0 space-y-12 lg:col-span-2 lg:space-y-16">
             {odooOnline ? (
               <OdooOnlineInstanceOverview projectId={project.id} instance={odooOnline} />
+            ) : project.projectType === 'odoo_online' ? (
+              <OdooOnlineSetupPanel
+                projectId={project.id}
+                signup={odooOnlineSignupOf(project)}
+                onConnected={() => void load()}
+              />
             ) : hasInstance ? (
               <InstanceOverview provisioning={project.provisioning} />
             ) : null}
@@ -680,6 +723,205 @@ function OdooOnlineInstanceOverview({
             <span className="break-all">{instance.url ?? 'Not set'}</span>
           </DetailItem>
         </DetailList>
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * The assisted half of Odoo Online creation: the project row and the signup
+ * plan exist, but the database is created by the operator at odoo.com — its
+ * signup is behind a CAPTCHA and cannot be automated. This panel shows the plan
+ * as a checklist, links to the signup, and takes the API key that connects the
+ * finished instance. Once a connection exists the page renders the ordinary
+ * `OdooOnlineInstanceOverview` instead.
+ */
+function OdooOnlineSetupPanel({
+  projectId,
+  signup,
+  onConnected,
+}: {
+  projectId: string;
+  signup: OdooOnlineSignup | null;
+  onConnected: () => void;
+}) {
+  const [url, setUrl] = useState(signup ? odooOnlineInstanceUrl(signup.subdomain) : '');
+  const [login, setLogin] = useState(signup?.adminEmail ?? '');
+  const [apiKey, setApiKey] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const connect = useCallback(async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await api.projects.createConnection(projectId, {
+        connectionType: 'odoo_api',
+        credential: apiKey,
+        // The database defaults to the subdomain server-side, proven by a real
+        // authentication call before the connection is stored.
+        metadata: { url, login },
+      });
+      onConnected();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The instance could not be connected.');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [projectId, url, login, apiKey, onConnected]);
+
+  const copy = (label: string, value: string) => {
+    void navigator.clipboard?.writeText(value);
+    setCopied(label);
+  };
+
+  const signupUrl = trialSignupUrl(signup?.apps ?? [], signup?.companyName);
+
+  const checklist: { label: string; value: string }[] = signup
+    ? [
+        { label: 'Signup link', value: signupUrl },
+        { label: 'Instance', value: odooOnlineInstanceUrl(signup.subdomain) },
+        { label: 'Name', value: signup.fullName ?? '' },
+        { label: 'Company name', value: signup.companyName },
+        { label: 'Admin email', value: signup.adminEmail },
+        { label: 'Phone', value: signup.phone ?? '' },
+        { label: 'Country', value: signup.countryCode },
+        { label: 'Apps', value: signup.apps.map(appLabel).join(', ') },
+      ].filter((entry) => entry.value.length > 0)
+    : [];
+
+  return (
+    <Section
+      title="Finish Odoo Online setup"
+      description="The database is created at odoo.com. Cartenz connects it once it exists."
+    >
+      <div className="space-y-8">
+        <ol className="space-y-1.5 text-callout text-content-muted">
+          <li>
+            1. Drag <span className="text-content">Fill from Cartenz</span> to your bookmarks bar (once).
+          </li>
+          <li>
+            2. Open odoo.com/trial, press Continue, click the bookmark, then press{' '}
+            <span className="text-content">Start Now</span>. Enter the code if odoo.com sends one.
+          </li>
+          <li>3. Verify the email and set the admin password.</li>
+          <li>
+            4. In the new database, open{' '}
+            <span className="text-content">Preferences &rarr; Account Security</span> and generate an{' '}
+            <span className="text-content">API key</span> for this project.
+          </li>
+          <li>5. Paste the instance URL, the login and the API key here.</li>
+        </ol>
+
+        <div className="flex flex-wrap gap-3">
+          {signup ? (
+            // A bookmarklet: React refuses javascript: hrefs as props, so it is set
+            // on the DOM node. Clicking it here does nothing; it runs on odoo.com.
+            <a
+              ref={(node) => node?.setAttribute('href', trialFillBookmarklet(signup))}
+              onClick={(event) => event.preventDefault()}
+              className="btn-secondary w-fit cursor-grab"
+              title="Drag to your bookmarks bar, then click it on odoo.com/trial"
+            >
+              Fill from Cartenz
+            </a>
+          ) : null}
+          <a
+            href={signupUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-primary w-fit"
+          >
+            Open odoo.com/trial
+            <ArrowUpRight className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
+          </a>
+        </div>
+
+        {checklist.length > 0 ? (
+          <div className="panel divide-y divide-surface-border">
+            {checklist.map((entry) => (
+              <div
+                key={entry.label}
+                className="flex items-center justify-between gap-4 px-4 py-3"
+              >
+                <span className="min-w-0">
+                  <span className="block text-meta text-content-subtle">{entry.label}</span>
+                  <span className="block break-all font-mono text-callout text-content">
+                    {entry.value}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => copy(entry.label, entry.value)}
+                  className="btn-ghost btn-sm shrink-0"
+                  aria-label={`Copy ${entry.label}`}
+                >
+                  <Copy className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                  {copied === entry.label ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div>
+            <label htmlFor="oo-url" className="field-label">
+              Instance URL
+            </label>
+            <input
+              id="oo-url"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              className="field-input"
+              placeholder="https://acme.odoo.com"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="oo-login" className="field-label">
+              Login
+            </label>
+            <input
+              id="oo-login"
+              value={login}
+              onChange={(event) => setLogin(event.target.value)}
+              className="field-input"
+              placeholder="you@company.com"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <label htmlFor="oo-apikey" className="field-label">
+              API key
+            </label>
+            <input
+              id="oo-apikey"
+              type="password"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              className="field-input"
+              placeholder="Paste the API key from the new database"
+            />
+            <p className="field-hint">
+              External API access needs an Odoo Online <span className="text-content-muted">Custom</span>{' '}
+              plan; the free trial may refuse the key.
+            </p>
+          </div>
+        </div>
+
+        {error ? <Alert tone="error">{error}</Alert> : null}
+
+        <button
+          type="button"
+          onClick={() => void connect()}
+          disabled={submitting || !url || !login || !apiKey}
+          className="btn-primary"
+        >
+          {submitting ? <Spinner className="h-3.5 w-3.5" /> : null}
+          {submitting ? 'Connecting…' : 'Connect instance'}
+        </button>
       </div>
     </Section>
   );

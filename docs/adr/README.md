@@ -66,3 +66,4 @@ with the condition under which it is retired.
 | [ADR-066](ADR-066-ai-office-read-only-board.md) | AI Office is a read-only board over tasks, not a multi-agent runtime | Accepted |
 | [ADR-067](ADR-067-restored-copy-of-connected-project.md) | Restored copy of a connected odoo.sh project | Accepted |
 | [ADR-068](ADR-068-odoo-online-model-creation.md) | Odoo Online can create a model, as one Studio-shaped sequence | Accepted |
+| [ADR-070](ADR-070-odoo-online-assisted-creation.md) | Creating an Odoo Online database is assisted, not automated | Accepted |
