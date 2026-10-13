@@ -78,7 +78,7 @@ import {
 } from './github-repository.service';
 import { WorkspaceManager } from '../../agent/workspace/workspace-manager';
 import { GitHubClient, GitHubApiError } from '../../agent/git/github-client';
-import { odooShSignupOf } from './odoo-sh-signup';
+import { chooseOdooShToken, odooShSignupOf } from './odoo-sh-signup';
 import { TERMINAL_TASK_STATUSES } from '../../agent/task-state';
 import { assertSafeRemoteUrl, UnsafeRemoteUrlError } from '../../agent/git/git-url';
 import { GitService } from '../../agent/git/git.service';
@@ -2239,12 +2239,25 @@ export class ProjectsService {
       };
     }
 
-    const registered = await this.gitCredentials.resolveForHost({
+    // A default registered for another host is "nothing registered" here, as in
+    // createConnection; a credential the operator named still fails loudly.
+    const resolving = this.gitCredentials.resolveForHost({
       credentialId: dto.credentialId ?? null,
       host: 'github.com',
     });
-    const token =
-      registered?.kind === 'token' ? registered.value : (this.config.github.token ?? null);
+    const registered = dto.credentialId ? await resolving : await resolving.catch(() => null);
+
+    let token: string | null;
+    let registeredCredentialId: string | null;
+    try {
+      ({ token, credentialId: registeredCredentialId } = chooseOdooShToken({
+        credentialId: dto.credentialId ?? null,
+        registered,
+        fallback: this.config.github.token ?? null,
+      }));
+    } catch (error) {
+      throw new BadRequestException((error as Error).message);
+    }
     if (!token) {
       throw new BadRequestException(
         'No GitHub access token is available. Add one in Settings → Git credentials ' +
@@ -2280,8 +2293,8 @@ export class ProjectsService {
     await this.createConnection(user, projectId, {
       connectionType: 'github',
       credentialKind: 'token',
-      ...(registered?.kind === 'token'
-        ? { credentialId: registered.credentialId ?? undefined }
+      ...(registeredCredentialId
+        ? { credentialId: registeredCredentialId }
         : { credential: token }),
       metadata: {
         repository: repository.fullName,
@@ -2309,7 +2322,7 @@ export class ProjectsService {
         repository: repository.fullName,
         defaultBranch: repository.defaultBranch,
         createdBranch,
-        registeredCredentialId: registered?.credentialId ?? null,
+        registeredCredentialId,
       },
     });
 

@@ -26,3 +26,24 @@ export function odooShSignupOf(environmentConfig: unknown): OdooShSignup | null 
     odooVersion: text('odooVersion'),
   };
 }
+
+/**
+ * Which GitHub token the Odoo.sh connect step uses (ADR-071).
+ *
+ * A registered access token wins. `GITHUB_TOKEN` is the fallback only when the
+ * operator chose nothing. A credential they did choose is never swapped for
+ * another token: that would act with access they did not pick.
+ */
+export function chooseOdooShToken(input: {
+  readonly credentialId: string | null;
+  readonly registered: { kind: string; value: string; credentialId: string | null } | null;
+  readonly fallback: string | null;
+}): { token: string | null; credentialId: string | null } {
+  if (input.registered?.kind === 'token') {
+    return { token: input.registered.value, credentialId: input.registered.credentialId };
+  }
+  if (input.credentialId) {
+    throw new Error('The chosen credential is not an enabled access token for github.com.');
+  }
+  return { token: input.fallback, credentialId: null };
+}
