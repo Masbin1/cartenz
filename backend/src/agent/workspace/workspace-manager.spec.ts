@@ -121,10 +121,23 @@ describe('on-premise workspace allocation', () => {
   });
 
   const manager = (
-    overrides: { dirty?: boolean; odooSourcePaths?: string[]; extraRoots?: string[] } = {},
+    overrides: {
+      dirty?: boolean;
+      odooSourcePaths?: string[];
+      extraRoots?: string[];
+      retainOnFailure?: boolean;
+      /** Status read on a SECOND call (e.g. by `release`), separate from allocation's clean-tree gate. */
+      dirtyAtRelease?: boolean;
+      commit?: (repositoryPath: string, message: string) => Promise<{ commit: string; filesChanged: number }>;
+    } = {},
   ) => {
     const config = {
-      workspace: { root: workspaceRoot, maxBytes: 1, maxFiles: 1, retainOnFailure: false },
+      workspace: {
+        root: workspaceRoot,
+        maxBytes: 1,
+        maxFiles: 1,
+        retainOnFailure: overrides.retainOnFailure ?? false,
+      },
       onPremise: {
         root: onPremiseRoot,
         roots: [onPremiseRoot, ...(overrides.extraRoots ?? [])],
@@ -133,10 +146,20 @@ describe('on-premise workspace allocation', () => {
       odooSource: { paths: overrides.odooSourcePaths ?? [] },
     } as unknown as AppConfig;
 
+    let statusCalls = 0;
     const git = {
       revParse: async () => 'abc123def456',
-      status: async () => ({ clean: !overrides.dirty, entries: [] }),
+      status: async () => {
+        statusCalls += 1;
+        // The allocation-time check is the first call; `dirtyAtRelease` applies from the second on.
+        const dirty = statusCalls === 1 ? overrides.dirty : overrides.dirtyAtRelease ?? overrides.dirty;
+        return { clean: !dirty, entries: [] };
+      },
       checkoutBranch: async () => undefined,
+      commit:
+        overrides.commit ??
+        (async () => ({ commit: 'f'.repeat(40), filesChanged: 1 })),
+      gitCommonDir: async (repositoryPath: string) => join(repositoryPath, '.git'),
     } as unknown as GitService;
 
     const database = {
@@ -184,6 +207,63 @@ describe('on-premise workspace allocation', () => {
     // The customer's directory survives; the platform's metadata directory does not.
     await expect(stat(projectPath)).resolves.toBeTruthy();
     await expect(stat(metadataRoot)).rejects.toBeTruthy();
+  });
+
+  it('auto-commits a dirty working tree on release after a failed task, so the next task is not refused', async () => {
+    let committedMessage: string | null = null;
+    const workspaceManager = manager({
+      // Clean at allocation (the clean-tree gate), dirty by the time release runs
+      // (the implementation run wrote files and then failed before `commit`).
+      dirty: false,
+      dirtyAtRelease: true,
+      commit: async (_repositoryPath, message) => {
+        committedMessage = message;
+        return { commit: 'f'.repeat(40), filesChanged: 3 };
+      },
+    });
+    const workspace = await workspaceManager.allocate(input({ taskReference: 'task_recovery' }));
+
+    await workspaceManager.release(workspace, 'failed');
+
+    expect(committedMessage).not.toBeNull();
+    expect(committedMessage).toContain('task_recovery');
+    // The customer's directory, and whatever the failed run wrote to it, is never removed.
+    await expect(stat(projectPath)).resolves.toBeTruthy();
+  });
+
+  it('does not auto-commit a clean working tree on release after a failed task', async () => {
+    let commitCalls = 0;
+    const workspaceManager = manager({
+      dirty: false,
+      dirtyAtRelease: false,
+      commit: async () => {
+        commitCalls += 1;
+        return { commit: 'f'.repeat(40), filesChanged: 0 };
+      },
+    });
+    const workspace = await workspaceManager.allocate(input({ taskReference: 'task_clean_fail' }));
+
+    await workspaceManager.release(workspace, 'failed');
+
+    expect(commitCalls).toBe(0);
+  });
+
+  it('retaining a failed workspace skips the auto-commit entirely', async () => {
+    let commitCalls = 0;
+    const workspaceManager = manager({
+      dirty: false,
+      dirtyAtRelease: true,
+      retainOnFailure: true,
+      commit: async () => {
+        commitCalls += 1;
+        return { commit: 'f'.repeat(40), filesChanged: 1 };
+      },
+    });
+    const workspace = await workspaceManager.allocate(input({ taskReference: 'task_retained' }));
+
+    await workspaceManager.release(workspace, 'failed');
+
+    expect(commitCalls).toBe(0);
   });
 
   it('refuses a project directory outside the configured on-premise root', async () => {

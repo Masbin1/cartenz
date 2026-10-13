@@ -866,6 +866,23 @@ export class WorkspaceManager {
       return;
     }
 
+    /**
+     * A failed on-premise task operates directly on the customer's own directory
+     * (ADR-028): there is no platform-owned clone to discard, so a run that wrote
+     * files and then failed before `commit` — a model provider outage mid-task,
+     * for instance — otherwise leaves that directory dirty forever. The next task
+     * on the same project is then refused at allocation (`allocateOnPremise`'s
+     * clean-tree check) for a reason that has nothing to do with what it asked
+     * for, and stays refused until a person notices and commits or stashes by
+     * hand. Auto-committing is the one recovery that cannot destroy anything: it
+     * is the opposite of `reset --hard` or `clean -fd`, fully reversible with
+     * `git revert`, and it preserves whatever partial work the failed run did
+     * instead of discarding it silently.
+     */
+    if (outcome === 'failed' && !workspace.simulated && this.isOnPremiseRepository(workspace.repositoryPath)) {
+      await this.commitDirtyOnPremiseWorkingTree(workspace);
+    }
+
     // Before the files go: which clone owns this working tree is read from the
     // working tree itself, so it cannot be asked once the directory is removed.
     const owningClone = await this.owningClone(workspace.repositoryPath);
@@ -885,6 +902,58 @@ export class WorkspaceManager {
     this.logger.log(`Workspace ${workspace.workspaceId} released`);
   }
 
+
+  /**
+   * Whether this repository path is the customer's own on-premise directory
+   * rather than a clone the platform made under its own workspace root.
+   *
+   * Every platform-owned clone (including the odoo_online no-op workspace)
+   * lives under `this.root`; an on-premise workspace's `repositoryPath` is the
+   * customer's own project directory elsewhere on disk (ADR-030). The same
+   * containment test `owningClone` already uses to protect against
+   * "unregistering" a customer's worktree.
+   */
+  private isOnPremiseRepository(repositoryPath: string): boolean {
+    return !resolve(repositoryPath).startsWith(this.root + sep);
+  }
+
+  /**
+   * Auto-commits a failed on-premise task's uncommitted changes, so a run that
+   * wrote files and then failed before reaching the commit step does not leave
+   * the customer's working tree dirty - which would otherwise refuse every
+   * later task on this project at allocation (see `allocateOnPremise`'s
+   * clean-tree check) until a person notices and commits or stashes by hand.
+   *
+   * Never throws: a failure here must not stop the rest of release, and the
+   * original failure reason is what matters to the person reading the task.
+   */
+  private async commitDirtyOnPremiseWorkingTree(workspace: Workspace): Promise<void> {
+    try {
+      const status = await this.git.status(workspace.repositoryPath);
+      if (status.clean) return;
+
+      const { commit, filesChanged } = await this.git.commit(
+        workspace.repositoryPath,
+        `[LinkedERP AI] WIP recovery: ${workspace.taskReference} failed before committing\n\n` +
+          'This task did not reach its own commit step, and the platform never ' +
+          'discards an on-premise working tree, so its partial changes are committed ' +
+          'here instead of being left uncommitted. Review and `git revert` this commit ' +
+          'if the partial work should not be kept.',
+      );
+
+      this.logger.warn(
+        `Workspace ${workspace.workspaceId} (${workspace.taskReference}): committed ` +
+          `${filesChanged} uncommitted file(s) as ${commit.slice(0, 8)} before release, so the ` +
+          'next task on this project is not refused by a dirty working tree.',
+      );
+    } catch (error) {
+      this.logger.error(
+        `Workspace ${workspace.workspaceId} (${workspace.taskReference}): could not auto-commit ` +
+          `the dirty on-premise working tree: ${(error as Error).message}. The next task on this ` +
+          'project may be refused until this is committed or stashed by hand.',
+      );
+    }
+  }
 
   /**
    * The clone a working tree belongs to, when that is not the working tree
