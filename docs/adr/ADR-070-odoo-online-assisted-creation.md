@@ -94,6 +94,7 @@ that can be done without one.
   message at connect time; the panel says so up front.
 - Odoo.sh is not covered. Its provisioning is repository-based and also has no
   public API; it will follow the same assisted shape when it is built.
+  Superseded for Odoo.sh by ADR-071.
 
 ## Verification
 
