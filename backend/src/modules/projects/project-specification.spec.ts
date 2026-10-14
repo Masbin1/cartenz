@@ -52,6 +52,11 @@ describe('buildProjectSpecification', () => {
     expect(specification.requirements[0]).not.toHaveProperty('detail');
   });
 
+  it('accepts a brief with no requirement list', () => {
+    const { requirements: _omitted, ...briefOnly } = input;
+    expect(buildProjectSpecification(briefOnly).requirements).toEqual([]);
+  });
+
   it('accepts an empty requirement list', () => {
     const specification = buildProjectSpecification({ ...input, requirements: [] });
     expect(specification.requirements).toEqual([]);

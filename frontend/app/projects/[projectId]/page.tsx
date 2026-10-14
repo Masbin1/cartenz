@@ -482,7 +482,7 @@ export default function ProjectDetailPage() {
                 description={`Version ${project.specificationVersion}`}
               >
                 <div className="space-y-6">
-                  <p className="max-w-2xl text-body text-content-muted">
+                  <p className="max-w-2xl whitespace-pre-line text-body text-content-muted">
                     {project.specification.description}
                   </p>
                   <p className="text-meta text-content-subtle">
@@ -491,26 +491,29 @@ export default function ProjectDetailPage() {
                       {project.specification.deployment.environment}
                     </span>
                   </p>
-                  <Disclosure
-                    summary="Requirements"
-                    hint={project.specification.requirements.length}
-                  >
-                    <ul className="space-y-3">
-                      {project.specification.requirements.map((requirement) => (
-                        <li key={requirement.id} className="flex gap-3">
-                          <span className="mt-0.5 w-14 shrink-0 font-mono text-caption text-content-subtle">
-                            {requirement.id}
-                          </span>
-                          <span className="min-w-0 text-callout text-content">
-                            {requirement.title}
-                            {requirement.detail ? (
-                              <span className="block text-content-muted">{requirement.detail}</span>
-                            ) : null}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </Disclosure>
+                  {/* Older projects carry a requirement list; a brief-only project does not. */}
+                  {project.specification.requirements.length > 0 ? (
+                    <Disclosure
+                      summary="Requirements"
+                      hint={project.specification.requirements.length}
+                    >
+                      <ul className="space-y-3">
+                        {project.specification.requirements.map((requirement) => (
+                          <li key={requirement.id} className="flex gap-3">
+                            <span className="mt-0.5 w-14 shrink-0 font-mono text-caption text-content-subtle">
+                              {requirement.id}
+                            </span>
+                            <span className="min-w-0 text-callout text-content">
+                              {requirement.title}
+                              {requirement.detail ? (
+                                <span className="block text-content-muted">{requirement.detail}</span>
+                              ) : null}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </Disclosure>
+                  ) : null}
                 </div>
               </Section>
             ) : null}

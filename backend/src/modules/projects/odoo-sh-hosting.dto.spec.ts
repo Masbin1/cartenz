@@ -25,6 +25,12 @@ describe('CreateAiProjectDto odoo_sh hosting', () => {
     expect(await validate(build(valid))).toHaveLength(0);
   });
 
+  it('accepts a brief with no requirement list', async () => {
+    const { requirements: _omitted, ...briefOnly } = base;
+    const dto = plainToInstance(CreateAiProjectDto, { ...briefOnly, hosting: 'odoo_sh', odooSh: valid });
+    expect(await validate(dto)).toHaveLength(0);
+  });
+
   it.each([
     ['owner with a slash', { ...valid, owner: 'Bintang/Linked' }],
     ['owner with a leading hyphen', { ...valid, owner: '-bintang' }],

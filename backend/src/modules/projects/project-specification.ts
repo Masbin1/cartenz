@@ -30,7 +30,7 @@ export interface BuildSpecificationInput {
   readonly projectName: string;
   readonly odooVersion: OdooVersion;
   readonly description: string;
-  readonly requirements: readonly { title: string; detail?: string }[];
+  readonly requirements?: readonly { title: string; detail?: string }[];
   readonly modules?: readonly string[];
 }
 
@@ -59,7 +59,7 @@ export function buildProjectSpecification(
     odoo_version: input.odooVersion.replace(/[.]0$/, ''),
     description: input.description,
     modules: [...(input.modules ?? [])],
-    requirements: input.requirements.map((requirement, index) => ({
+    requirements: (input.requirements ?? []).map((requirement, index) => ({
       id: `REQ-${String(index + 1).padStart(3, '0')}`,
       title: requirement.title,
       ...(requirement.detail ? { detail: requirement.detail } : {}),

@@ -306,8 +306,8 @@ export class OdooShSignupDto {
 }
 
 /**
- * Create a new project with AI. Collects the four documented inputs - name,
- * Odoo version, description and initial requirements - and produces a structured
+ * Create a new project with AI. Collects the name, Odoo version and one project
+ * brief (`description`) and produces a structured
  * specification, so that project context is persisted rather than left to be
  * re-derived from chat history.
  */
@@ -338,11 +338,16 @@ export class CreateAiProjectDto {
   @Transform(trim)
   description!: string;
 
+  /**
+   * Superseded by the single brief in `description`; still accepted from API
+   * callers that send a list. The portal no longer does.
+   */
+  @IsOptional()
   @IsArray()
   @ArrayMaxSize(50)
   @ValidateNested({ each: true })
   @Type(() => RequirementDto)
-  requirements!: RequirementDto[];
+  requirements?: RequirementDto[];
 
   @IsOptional()
   @IsArray()

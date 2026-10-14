@@ -12,10 +12,8 @@ import {
   Globe,
   LayoutGrid,
   Lock,
-  Plus,
   Server,
   Sparkles,
-  X,
   type LucideIcon,
 } from 'lucide-react';
 import { useRequireAuth } from '@/lib/auth';
@@ -99,8 +97,8 @@ type Flow = 'connect' | 'ai';
  *
  * They are separate forms rather than one form with conditional fields, because
  * they collect different things for different reasons: connecting needs a
- * repository and a branch, while specifying needs a description and requirements
- * that become a persisted project specification.
+ * repository and a branch, while specifying needs a project brief
+ * that becomes a persisted project specification.
  */
 export default function NewProjectPage() {
   const { loading, user } = useRequireAuth();
@@ -179,7 +177,7 @@ const FLOWS: Record<Flow, FlowOption> = {
     icon: Sparkles,
     title: 'Create a new project with AI',
     description:
-      'Describe what the project must do and list its requirements. The platform records a structured specification that the agent works from.',
+      'Describe what the project must do in one brief. The platform records it as the specification the agent works from.',
     summary: 'Describe the project; the platform records a specification the agent works from.',
   },
 };
@@ -1172,9 +1170,6 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
   const [odooVersion, setOdooVersion] = useState('19.0');
   const [odooEdition, setOdooEdition] = useState('enterprise');
   const [description, setDescription] = useState('');
-  const [requirements, setRequirements] = useState<{ title: string; detail: string }[]>([
-    { title: '', detail: '' },
-  ]);
   /**
    * ADR-056: which of the two install modes this project uses, and — when the
    * second is chosen — the modules ticked in the picker. `'all'` is the default
@@ -1235,25 +1230,9 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
         /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(odooOnline.adminEmail.trim()) &&
         ODOO_ONLINE_SUBDOMAIN.test(odooOnline.subdomain.trim()));
 
-  const setRequirement = (index: number, field: 'title' | 'detail', value: string) =>
-    setRequirements((previous) =>
-      previous.map((entry, position) =>
-        position === index ? { ...entry, [field]: value } : entry,
-      ),
-    );
-
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
-
-    const populated = requirements
-      .map((entry) => ({ title: entry.title.trim(), detail: entry.detail.trim() }))
-      .filter((entry) => entry.title.length > 0);
-
-    if (populated.length === 0) {
-      setError('Add at least one requirement. The specification is what the agent works from.');
-      return;
-    }
 
     if (hosting === 'on_host' && installMode === 'choose' && selectedModules.length === 0) {
       setError('Choose at least one module, or switch back to "Install everything".');
@@ -1278,10 +1257,6 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
         // Odoo Online and Odoo.sh are Enterprise only, so the choice is not offered there.
         odooEdition: hosting === 'on_host' ? odooEdition : 'enterprise',
         description,
-        requirements: populated.map((entry) => ({
-          title: entry.title,
-          detail: entry.detail.length > 0 ? entry.detail : undefined,
-        })),
         ...(hosting === 'on_host'
           ? { modules: installMode === 'choose' ? selectedModules : undefined }
           : hosting === 'odoo_sh'
@@ -1476,81 +1451,22 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
         size="small"
         divided
         title="What it must do"
-        description="The purpose in a sentence or two, then the requirements the agent works from."
+        description="One brief the agent works from: the purpose, then whatever it must handle."
       >
         <div>
           <label htmlFor="ai-description" className="field-label">
-            What must the project do?
+            Project brief
           </label>
           <textarea
             id="ai-description"
             required
-            rows={3}
+            rows={8}
+            maxLength={4000}
             value={description}
             onChange={(event) => setDescription(event.target.value)}
-            className="field-input resize-none"
-            placeholder="Manage employee equipment: issue, track and return company assets."
+            className="field-input resize-y"
+            placeholder={'Manage employee equipment: issue, track and return company assets.\n\n- Register equipment against an employee\n- Record returns with a condition note'}
           />
-        </div>
-
-        <div className="mt-8">
-          <span className="field-label">Initial requirements</span>
-          <p className="-mt-1 mb-3 text-meta text-content-subtle">
-            At least one. A detail line is optional.
-          </p>
-
-          {/* Contained: each requirement is a pair of fields that act together. */}
-          <ol className="panel divide-y divide-surface-border">
-            {requirements.map((requirement, index) => (
-              <li key={index} className="p-4">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <span className="font-mono text-caption text-content-subtle">
-                    REQ-{String(index + 1).padStart(3, '0')}
-                  </span>
-                  {requirements.length > 1 ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setRequirements((previous) =>
-                          previous.filter((_, position) => position !== index),
-                        )
-                      }
-                      className="btn-ghost btn-sm -my-1 -mr-2"
-                      aria-label={`Remove requirement ${index + 1}`}
-                    >
-                      <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-                      Remove
-                    </button>
-                  ) : null}
-                </div>
-                <div className="space-y-2">
-                  <input
-                    value={requirement.title}
-                    onChange={(event) => setRequirement(index, 'title', event.target.value)}
-                    className="field-input"
-                    placeholder="Register equipment against an employee"
-                    aria-label={`Requirement ${index + 1}`}
-                  />
-                  <input
-                    value={requirement.detail}
-                    onChange={(event) => setRequirement(index, 'detail', event.target.value)}
-                    className="field-input text-callout"
-                    placeholder="Detail (optional)"
-                    aria-label={`Requirement ${index + 1} detail`}
-                  />
-                </div>
-              </li>
-            ))}
-          </ol>
-
-          <button
-            type="button"
-            onClick={() => setRequirements((previous) => [...previous, { title: '', detail: '' }])}
-            className="btn-secondary btn-sm mt-3"
-          >
-            <Plus className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-            Add requirement
-          </button>
         </div>
       </Section>
 
@@ -1590,6 +1506,7 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
               <ModulePicker
                 version={odooVersion}
                 edition={odooEdition}
+                brief={description}
                 value={selectedModules}
                 onChange={setSelectedModules}
               />
