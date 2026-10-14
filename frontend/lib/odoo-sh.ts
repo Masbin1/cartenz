@@ -49,3 +49,26 @@ export function odooShSignupOf(project: {
     odooVersion: text('odooVersion'),
   };
 }
+
+/**
+ * A bookmarklet that fills odoo.sh's "Deploy your platform" form from the plan.
+ *
+ * odoo.sh reads nothing from its URL and can only be submitted from the
+ * operator's own session, so the values are filled in their browser: run on
+ * odoo.sh/project/create, this picks "New repository", sets owner, name and
+ * version, and clicks the region on the map, firing the events the form
+ * listens to. The subscription code and Deploy stay with the operator.
+ *
+ * ponytail: selectors mirror odoo.sh's markup as of 2026-10-14; if they rename
+ * a field, that field is silently left for the operator to fill.
+ */
+export function odooShFillBookmarklet(signup: OdooShSignup): string {
+  const values = {
+    owner: signup.owner,
+    name: signup.repositoryName,
+    version: signup.odooVersion,
+    region: signup.region,
+  };
+  const script = `(()=>{const v=${JSON.stringify(values)};const f=document.querySelector('form.o_project_create');if(!f){alert('Open odoo.sh/project/create first.');return}const fire=(e,t)=>e.dispatchEvent(new Event(t,{bubbles:true}));const set=(s,x)=>{const e=f.querySelector(s);if(!e||!x)return;e.value=x;fire(e,'input');fire(e,'change')};const r=f.querySelector('input[type="radio"][value="create"]');if(r&&!r.checked){r.click()}setTimeout(()=>{set('select#owner',v.owner);set('input[name="name"]',v.name);set('select[name="odoo_branch"]',v.version);const c=document.querySelector('circle.trigger[location="'+v.region+'"]');if(c)c.dispatchEvent(new MouseEvent('click',{bubbles:true}))},300)})()`;
+  return `javascript:${encodeURIComponent(script)}`;
+}

@@ -7,7 +7,12 @@ import { ApiError, api } from '@/lib/api';
 import type { GitCredential } from '@/lib/types';
 import { Alert } from '@/components/ui/alert';
 import { Section } from '@/components/ui/section';
-import { ODOO_SH_CREATE_URL, odooShRegionLabel, type OdooShSignup } from '@/lib/odoo-sh';
+import {
+  ODOO_SH_CREATE_URL,
+  odooShFillBookmarklet,
+  odooShRegionLabel,
+  type OdooShSignup,
+} from '@/lib/odoo-sh';
 
 /**
  * Finish an assisted Odoo.sh project (ADR-071): the deploy values to copy into
@@ -76,7 +81,12 @@ export function OdooShSetupPanel({
     >
       <div className="space-y-8">
         <ol className="list-decimal space-y-1.5 pl-5 text-callout text-content-muted">
-          <li>Open odoo.sh and fill the form with the values below.</li>
+          <li>
+            Once: drag <span className="text-content">Fill from Cartenz</span> to your bookmarks bar.
+          </li>
+          <li>
+            Open odoo.sh, then click that bookmark: it fills the form with the values below.
+          </li>
           <li>Enter your subscription code there and click Deploy. Cartenz never sees the code.</li>
           <li>Come back and connect the repository.</li>
         </ol>
@@ -101,22 +111,23 @@ export function OdooShSetupPanel({
         </dl>
         {copied ? <p className="text-caption text-content-muted" role="status">Copied {copied}.</p> : null}
 
-        <a
-          href={ODOO_SH_CREATE_URL}
-          target="odoo-sh"
-          rel="noreferrer"
-          className="btn-secondary inline-flex"
-          onClick={(event) => {
-            // A sized popup keeps Cartenz visible beside it; a blocked popup
-            // falls back to the link's own new-tab behaviour.
-            if (window.open(ODOO_SH_CREATE_URL, 'odoo-sh', 'popup,width=1100,height=860')) {
-              event.preventDefault();
-            }
-          }}
-        >
-          Open Odoo.sh
-          <ArrowUpRight className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
-        </a>
+        <div className="flex flex-wrap gap-3">
+          {/* A bookmarklet: React refuses javascript: hrefs as props, so it is set
+              on the DOM node. Clicking it here does nothing; it runs on odoo.sh. */}
+          <a
+            ref={(node) => node?.setAttribute('href', odooShFillBookmarklet(signup))}
+            onClick={(event) => event.preventDefault()}
+            className="btn-secondary w-fit cursor-grab"
+            title="Drag to your bookmarks bar, then click it on odoo.sh/project/create"
+          >
+            Fill from Cartenz
+          </a>
+          {/* A normal tab, not a popup: a popup window has no bookmarks bar. */}
+          <a href={ODOO_SH_CREATE_URL} target="_blank" rel="noreferrer" className="btn-primary w-fit">
+            Open Odoo.sh
+            <ArrowUpRight className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
+          </a>
+        </div>
 
         <div className="space-y-3">
           {tokens && tokens.length === 0 ? (
