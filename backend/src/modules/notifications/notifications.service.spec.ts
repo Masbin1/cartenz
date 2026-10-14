@@ -1,4 +1,5 @@
 import webpush from 'web-push';
+import type { MailSettingsService } from '../settings/mail-settings.service';
 import { NotificationsService, eventWanted } from './notifications.service';
 import type { DatabaseService } from '../../core/database/database.service';
 import type { AppConfig } from '../../core/config/configuration';
@@ -88,7 +89,10 @@ describe('NotificationsService', () => {
 
   const build = (scenario: Scenario, pushConfig?: Partial<AppConfig['push']>) => {
     const db = makeDatabase();
-    const service = new NotificationsService(db.database, config(pushConfig));
+    const resolved = config(pushConfig);
+    // The portal URL now comes from mail settings; this stand-in returns the configured one.
+    const mailSettings = { portalUrl: async () => resolved.push.portalUrl } as unknown as MailSettingsService;
+    const service = new NotificationsService(db.database, resolved, mailSettings);
     const internals = service as unknown as {
       recipientsFor: (...args: unknown[]) => Promise<{ id: string }[]>;
       subscriptionsFor: (userId: string) => Promise<Subscription[]>;

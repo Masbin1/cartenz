@@ -11,6 +11,7 @@ import {
 } from '../../core/database/schema';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
+import { MailSettingsService } from '../settings/mail-settings.service';
 import {
   buildPushPayload,
   isNotifyingEvent,
@@ -58,6 +59,8 @@ export class NotificationsService {
   constructor(
     private readonly database: DatabaseService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    // The portal address can be set in Settings → Email; it wins over PORTAL_PUBLIC_URL.
+    private readonly mailSettings: MailSettingsService,
   ) {
     this.enabled = Boolean(config.push.publicKey && config.push.privateKey);
 
@@ -202,7 +205,7 @@ export class NotificationsService {
       title: 'Cartenz notifications are on',
       body: 'This is a test. You will be told when a task needs approval or finishes.',
       tag: 'cartenz-test',
-      url: this.config.push.portalUrl ?? '/',
+      url: (await this.mailSettings.portalUrl()) ?? '/',
       sound: 'done',
       event: 'task_completed',
       taskId: '00000000-0000-0000-0000-000000000000',
@@ -259,7 +262,7 @@ export class NotificationsService {
             taskReference: task.reference,
             projectId: task.projectId,
             projectName: task.projectName,
-            portalUrl: this.config.push.portalUrl,
+            portalUrl: await this.mailSettings.portalUrl(),
             soundEnabled: preference.soundEnabled,
           });
 

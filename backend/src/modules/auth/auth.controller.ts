@@ -32,8 +32,9 @@ export class AuthController {
   /** Whether this deployment still accepts its first, admin, registration. */
   @Public()
   @Get('registration')
-  registration(): Promise<{ open: boolean; mailEnabled: boolean }> {
-    return this.auth.registrationOpen().then((open) => ({ open, mailEnabled: this.links.mailEnabled }));
+  async registration(): Promise<{ open: boolean; mailEnabled: boolean }> {
+    const [open, mailEnabled] = await Promise.all([this.auth.registrationOpen(), this.links.mailEnabled()]);
+    return { open, mailEnabled };
   }
 
   /**

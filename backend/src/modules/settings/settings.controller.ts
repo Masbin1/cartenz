@@ -22,7 +22,8 @@ import {
 import { ModelSettingsService } from './model-settings.service';
 import { OdooSettingsService } from './odoo-settings.service';
 import { OdooVersionsService } from './odoo-versions.service';
-import { UpdateOdooSettingsDto } from './dto/odoo-settings.dto';
+import { UpdateMailSettingsDto, UpdateOdooSettingsDto } from './dto/odoo-settings.dto';
+import { MailSettingsService } from './mail-settings.service';
 import {
   CreateOdooVersionRepositoryDto,
   UpdateOdooVersionRepositoryDto,
@@ -70,6 +71,7 @@ export class SettingsController {
   constructor(
     private readonly modelSettings: ModelSettingsService,
     private readonly odooSettings: OdooSettingsService,
+    private readonly mailSettings: MailSettingsService,
     private readonly odooVersions: OdooVersionsService,
     private readonly gitCredentials: GitCredentialsService,
     private readonly git: GitService,
@@ -95,6 +97,33 @@ export class SettingsController {
   ) {
     await this.authz.requireAdmin(user);
     return this.odooSettings.update(user.userId, dto);
+  }
+
+  /**
+   * Outgoing mail and the portal URL (ADR-072 addendum). Admin only, reads
+   * included: the SMTP host and user say where the deployment's mail goes.
+   */
+  @Get('mail-settings')
+  async getMailSettings(@CurrentUser() user: AuthenticatedUser) {
+    await this.authz.requireAdmin(user);
+    return this.mailSettings.get();
+  }
+
+  @Put('mail-settings')
+  async updateMailSettings(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdateMailSettingsDto,
+  ) {
+    await this.authz.requireAdmin(user);
+    return this.mailSettings.update(user.userId, dto);
+  }
+
+  /** Sends a test email to the admin who asked, with the settings as saved. */
+  @Post('mail-settings/test')
+  @HttpCode(HttpStatus.OK)
+  async testMailSettings(@CurrentUser() user: AuthenticatedUser) {
+    await this.authz.requireAdmin(user);
+    return this.mailSettings.sendTest(user.email);
   }
 
   /**

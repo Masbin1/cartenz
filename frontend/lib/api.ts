@@ -116,6 +116,20 @@ export interface InvitationLink {
   readonly mailed: boolean;
 }
 
+/** Mail settings as the portal sees them; the password itself never leaves the server. */
+export interface MailSettings {
+  readonly smtpHost: string | null;
+  readonly smtpPort: number | null;
+  readonly smtpSecure: boolean;
+  readonly smtpUser: string | null;
+  readonly hasPassword: boolean;
+  readonly mailFrom: string | null;
+  readonly portalUrl: string | null;
+  readonly smtpFromEnvironment: boolean;
+  readonly mailEnabled: boolean;
+  readonly effectivePortalUrl: string | null;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -340,6 +354,21 @@ export const api = {
 
   settings: {
     modelProviders: () => request<ModelProviderList>('/settings/model-providers'),
+
+    /** Outgoing mail and the portal URL (ADR-072). Admin only. Never returns the password. */
+    mailSettings: () => request<MailSettings>('/settings/mail-settings'),
+    updateMailSettings: (body: {
+      smtpHost?: string;
+      smtpPort?: number | null;
+      smtpSecure?: boolean;
+      smtpUser?: string;
+      /** Omitted keeps the stored password; empty removes it. */
+      smtpPassword?: string;
+      mailFrom?: string;
+      portalUrl?: string;
+    }) => request<MailSettings>('/settings/mail-settings', { method: 'PUT', body }),
+    /** Sends a test email to the signed-in admin with the saved settings. */
+    testMail: () => request<{ sent: true }>('/settings/mail-settings/test', { method: 'POST' }),
 
     /** Where this deployment's Odoo estate lives (ADR-033, ADR-044). */
     odooSettings: () => request<OdooSettings>('/settings/odoo-settings'),

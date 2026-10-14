@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 /**
  * The deployment's Odoo paths (ADR-033, ADR-044).
@@ -27,4 +27,46 @@ export class UpdateOdooSettingsDto {
   @IsString()
   @MaxLength(500)
   projectsRoot?: string;
+}
+
+/**
+ * Outgoing mail and the portal URL (ADR-072 addendum). Every field optional: an
+ * omitted field keeps its stored value. `smtpPassword` omitted keeps the stored
+ * password; an empty string removes it.
+ */
+export class UpdateMailSettingsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(253)
+  smtpHost?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  smtpPort?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  smtpSecure?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(320)
+  smtpUser?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  smtpPassword?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(320)
+  mailFrom?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  portalUrl?: string;
 }

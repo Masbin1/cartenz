@@ -4,7 +4,7 @@ import { PasswordService } from './password.service';
 import type { DatabaseService } from '../../core/database/database.service';
 import type { AuditService } from '../../core/audit/audit.service';
 import type { TokenService } from './token.service';
-import type { AppConfig } from '../../core/config/configuration';
+import type { MailSettingsService } from '../settings/mail-settings.service';
 
 /**
  * ADR-072. What matters is the refusals: a link works once, a spent or unknown
@@ -13,10 +13,11 @@ import type { AppConfig } from '../../core/config/configuration';
 describe('user links', () => {
   const passwords = new PasswordService();
   const noAudit = { record: async () => undefined } as unknown as AuditService;
-  const config = {
-    mail: { smtpUrl: null, from: 'x' },
-    push: { portalUrl: 'https://cartenz.test' },
-  } as unknown as AppConfig;
+  const mail = {
+    get: async () => ({ mailEnabled: false }),
+    transport: async () => null,
+    portalUrl: async () => 'https://cartenz.test',
+  } as unknown as MailSettingsService;
 
   /** One stored token and one user, with the conditional consume the service relies on. */
   function build() {
@@ -52,7 +53,7 @@ describe('user links', () => {
       revokeAllForUser: async (userId: string) => void revocations.push(userId),
     } as unknown as TokenService;
 
-    const service = new UserLinksService(db, passwords, tokens, noAudit, config);
+    const service = new UserLinksService(db, passwords, tokens, noAudit, mail);
     const redeem = (raw: string) => {
       consumedHash = hashLinkToken(raw);
       return service.redeem(raw, 'new-password-456', null);

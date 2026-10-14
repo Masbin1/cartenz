@@ -34,3 +34,18 @@ channel. There was no way to recover a forgotten password without an admin.
 - A reset is limited to one per account per two minutes. There is no per-IP
   limit yet; add one if the form is abused across many addresses.
 - The admin "Set password" action stays as a fallback.
+
+## Addendum (14 October 2026): mail settings in the portal
+
+An admin can set SMTP host, port, TLS mode, user, password, From and the portal
+URL under **Settings → Email** (`mail_settings`, one row). The password is
+sealed through the secrets provider like a model API key and never returned;
+the form shows only that one is stored. A saved host wins over `SMTP_URL`; with
+none, the environment applies, so an env-configured server keeps working. The
+portal URL there also feeds push-notification links. Settings are read on every
+send, so a change applies without a restart. **Send test email** mails the
+signed-in admin and reports the SMTP server's own error.
+
+Any admin can therefore redirect where invitation and reset mail is sent. That
+is within what an admin already controls, and every change is audited
+(`mail_settings.updated`, without the password).

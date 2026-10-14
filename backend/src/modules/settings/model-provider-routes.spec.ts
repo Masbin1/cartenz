@@ -4,6 +4,7 @@ import request from 'supertest';
 import { SettingsController } from './settings.controller';
 import { ModelSettingsService } from './model-settings.service';
 import { OdooSettingsService } from './odoo-settings.service';
+import { MailSettingsService } from './mail-settings.service';
 import { OdooVersionsService } from './odoo-versions.service';
 import { GitCredentialsService } from './git-credentials.service';
 import { ModelProviderResolver } from '../../agent/model/model-provider-resolver';
@@ -34,6 +35,7 @@ describe('model provider route matching', () => {
       providers: [
         { provide: ModelSettingsService, useValue: { reorder, updateRow } },
         { provide: OdooSettingsService, useValue: { get: jest.fn(), update: jest.fn() } },
+        { provide: MailSettingsService, useValue: { get: jest.fn(), update: jest.fn() } },
         { provide: OdooVersionsService, useValue: { list: jest.fn() } },
         {
           provide: GitCredentialsService,

@@ -1,13 +1,11 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, gt, isNull, sql } from 'drizzle-orm';
-import { createTransport, type Transporter } from 'nodemailer';
 import { DatabaseService } from '../../core/database/database.service';
 import { userTokens, users } from '../../core/database/schema';
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
-import { APP_CONFIG } from '../../core/config/config.module';
-import type { AppConfig } from '../../core/config/configuration';
+import { MailSettingsService } from '../settings/mail-settings.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
 
@@ -30,27 +28,24 @@ export function linkUrl(portalUrl: string, purpose: LinkPurpose, token: string):
  * Invitation and password-reset links (ADR-072).
  *
  * A link is a random token, stored only as its hash, used once, and expiring.
- * Mail is the delivery, not the mechanism: with `SMTP_URL` unset the link is
- * still issued and returned to the admin who asked, so a mail outage never locks
- * anyone out of the platform.
+ * Mail is the delivery, not the mechanism: with no SMTP configured (in the
+ * portal or by `SMTP_URL`) the link is still issued and returned to the admin
+ * who asked, so a mail outage never locks anyone out of the platform.
  */
 @Injectable()
 export class UserLinksService {
   private readonly logger = new Logger(UserLinksService.name);
-  private readonly mailer: Transporter | null;
 
   constructor(
     private readonly database: DatabaseService,
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
     private readonly audit: AuditService,
-    @Inject(APP_CONFIG) private readonly config: AppConfig,
-  ) {
-    this.mailer = config.mail.smtpUrl ? createTransport(config.mail.smtpUrl) : null;
-  }
+    private readonly mail: MailSettingsService,
+  ) {}
 
-  get mailEnabled(): boolean {
-    return this.mailer !== null;
+  async mailEnabled(): Promise<boolean> {
+    return (await this.mail.get()).mailEnabled;
   }
 
   /**
@@ -83,7 +78,7 @@ export class UserLinksService {
       });
     });
 
-    const url = linkUrl(this.portalUrl(), purpose, token);
+    const url = linkUrl(await this.portalUrl(), purpose, token);
     return { url, mailed: await this.send(user, purpose, url) };
   }
 
@@ -103,10 +98,10 @@ export class UserLinksService {
       event: AUDIT_EVENTS.USER_RESET_REQUESTED,
       userId: user?.id ?? null,
       ipAddress,
-      metadata: { email, matched: Boolean(user?.isActive), mailEnabled: this.mailEnabled },
+      metadata: { email, matched: Boolean(user?.isActive) },
     });
 
-    if (!user?.isActive || !this.mailer) return;
+    if (!user?.isActive || !(await this.mailEnabled())) return;
 
     // ponytail: one recent reset per account stands in for a rate limiter; add
     // a per-IP throttle if the form is ever abused across many addresses.
@@ -164,11 +159,11 @@ export class UserLinksService {
     });
   }
 
-  private portalUrl(): string {
-    const url = this.config.push.portalUrl;
+  private async portalUrl(): Promise<string> {
+    const url = await this.mail.portalUrl();
     if (!url) {
       throw new BadRequestException(
-        'PORTAL_PUBLIC_URL is not set, so a link back to the portal cannot be built.',
+        'The portal URL is not set (Settings → Email, or PORTAL_PUBLIC_URL), so a link back to the portal cannot be built.',
       );
     }
     return url;
@@ -180,7 +175,11 @@ export class UserLinksService {
     purpose: LinkPurpose,
     url: string,
   ): Promise<boolean> {
-    if (!this.mailer) return false;
+    const transport = await this.mail.transport().catch((error: Error) => {
+      this.logger.error(`Mail settings could not be read: ${error.message}`);
+      return null;
+    });
+    if (!transport) return false;
 
     const invite = purpose === 'invite';
     const subject = invite ? 'You are invited to Cartenz' : 'Reset your Cartenz password';
@@ -199,7 +198,7 @@ export class UserLinksService {
     ].join('\n');
 
     try {
-      await this.mailer.sendMail({ from: this.config.mail.from, to: user.email, subject, text });
+      await transport.mailer.sendMail({ from: transport.from, to: user.email, subject, text });
       return true;
     } catch (error) {
       // The address is not logged: it is personal data, and the audit row has it.

@@ -137,6 +137,8 @@ export const AUDIT_EVENTS = {
 
   /** The organisation's Odoo paths were configured in the portal (ADR-033). */
   ODOO_SETTINGS_UPDATED: 'odoo_settings.updated',
+  /** An admin changed the outgoing mail settings or the portal URL (ADR-072). */
+  MAIL_SETTINGS_UPDATED: 'mail_settings.updated',
 
   /**
    * An ephemeral preview instance was started, stopped, or failed to build

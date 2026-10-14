@@ -508,6 +508,28 @@ export const odooSettings = pgTable('odoo_settings', {
 export type OdooSettingsRow = typeof odooSettings.$inferSelect;
 
 /**
+ * Outgoing mail and the portal's public address (ADR-072 addendum). One row for
+ * the deployment, edited by an admin in the portal; when it has no host, the
+ * environment (`SMTP_URL`, `MAIL_FROM`, `PORTAL_PUBLIC_URL`) applies instead.
+ * The SMTP password is sealed in `secret_records`; only its reference is here.
+ */
+export const mailSettings = pgTable('mail_settings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  smtpHost: text('smtp_host'),
+  smtpPort: integer('smtp_port'),
+  /** True for implicit TLS (usually 465); false upgrades with STARTTLS (usually 587). */
+  smtpSecure: boolean('smtp_secure').notNull().default(true),
+  smtpUser: text('smtp_user'),
+  smtpPasswordRef: text('smtp_password_ref'),
+  mailFrom: text('mail_from'),
+  portalUrl: text('portal_url'),
+  updatedByUserId: uuid('updated_by_user_id').references(() => users.id, {
+    onDelete: 'set null',
+  }),
+  ...timestamps,
+});
+
+/**
  * Deployment-wide git credentials (ADR-021, ADR-058).
  *
  * One row per credential an operator registers once, so a project-creation form
