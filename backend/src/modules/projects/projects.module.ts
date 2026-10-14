@@ -10,6 +10,7 @@ import { ProjectPreviewController } from './project-preview.controller';
 import { ProjectProvisioningQueue } from './project-provisioning.queue';
 import { ProjectBackupService } from './project-backup.service';
 import { ProjectBackupController } from './project-backup.controller';
+import { ProjectTeardownService } from './project-teardown.service';
 import { ProjectModulesService } from './project-modules.service';
 import { ProjectModulesController } from './project-modules.controller';
 import { ProjectRestoreService } from './project-restore.service';
@@ -51,6 +52,7 @@ import { ProjectsService } from './projects.service';
     ProjectMergeService,
     ProjectPreviewService,
     ProjectBackupService,
+    ProjectTeardownService,
     ProjectModulesService,
     ProjectCheckoutService,
     ProjectRestoreService,
@@ -66,6 +68,7 @@ import { ProjectsService } from './projects.service';
     ProjectMergeService,
     ProjectPreviewService,
     ProjectBackupService,
+    ProjectTeardownService,
     ProjectModulesService,
     ProjectCheckoutService,
     ProjectRestoreService,

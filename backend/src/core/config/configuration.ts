@@ -343,6 +343,22 @@ const environmentSchema = z.object({
     .default('/opt/cartenz/infrastructure/provisioning/restore-existing-instance.sh'),
 
   /**
+   * Absolute path to the project-teardown script (ADR-068).
+   *
+   * Same posture as PROJECT_RESTART_SCRIPT: this one stops a project's
+   * systemd unit, drops its database, and deletes its project directory,
+   * Nginx site and certificate — the widest-reaching of the provisioning
+   * scripts after restore, so an empty value is what keeps a permanent
+   * project delete from touching anything on the host rather than offered
+   * and then refused. Without this configured, deleting a project only
+   * removes the platform's own database row; the on-premise instance
+   * (unit, database, directory) survives untouched.
+   */
+  PROJECT_TEARDOWN_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/teardown-project.sh'),
+
+  /**
    * Where an operator places the odoo.sh backup zips a restore reads (ADR-067).
    *
    * Read only to *list* what is available; the script resolves its own copy of
@@ -732,6 +748,13 @@ export interface AppConfig {
      * the guard refuses the invocation and the portal does not offer it.
      */
     readonly restoreScript: string | null;
+    /**
+     * The project-teardown script (ADR-068), or null when the deployment has
+     * not configured one. Null disables the on-premise side of deleting a
+     * project: the guard refuses the invocation, and a project delete only
+     * removes the platform's own database row.
+     */
+    readonly teardownScript: string | null;
     /** Where the operator places odoo.sh backup zips (ADR-067). Read-only. */
     readonly restoreStagingDir: string;
     readonly portRangeStart: number;
@@ -1153,6 +1176,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       modulesListScript: emptyToUndefined(env.PROJECT_MODULES_LIST_SCRIPT) ?? null,
       restartScript: emptyToUndefined(env.PROJECT_RESTART_SCRIPT) ?? null,
       restoreScript: emptyToUndefined(env.PROJECT_RESTORE_SCRIPT) ?? null,
+      teardownScript: emptyToUndefined(env.PROJECT_TEARDOWN_SCRIPT) ?? null,
       restoreStagingDir: env.PROJECT_RESTORE_STAGING_DIR,
       portRangeStart: env.PROJECT_PORT_RANGE_START,
       portRangeEnd: env.PROJECT_PORT_RANGE_END,

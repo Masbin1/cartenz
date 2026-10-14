@@ -72,6 +72,7 @@ import type {
 import { ProjectDeploymentService, technicalNameFromOnPremisePath, projectsDirForVersion } from './project-deployment.service';
 import { ProjectMergeService } from './project-merge.service';
 import { ProjectCheckoutService } from './project-checkout.service';
+import { ProjectTeardownService } from './project-teardown.service';
 import {
   GitHubRepositoryService,
   type GitHubConnectionResult,
@@ -179,6 +180,7 @@ export class ProjectsService {
     private readonly merge: ProjectMergeService,
     private readonly checkouts: ProjectCheckoutService,
     private readonly github: GitHubClient,
+    private readonly teardown: ProjectTeardownService,
   ) {}
   /**
    * Brings a project's provisioned instance up to date with its repository
@@ -1999,6 +2001,24 @@ export class ProjectsService {
 
     const workspaces = await this.workspaces.discardForProject(projectId);
 
+    // The on-premise instance (systemd unit, database, directory, Nginx
+    // site, certificate) is torn down before the row is deleted, for the
+    // same reason the secrets above are: `project.environmentConfig` (the
+    // on-premise path this resolves a technical name from) only exists while
+    // the row does. A teardown failure is logged and audited but does not
+    // block the delete itself — an operator fixes a stuck instance by hand,
+    // using the script's own output, rather than being left with an
+    // undeletable project record.
+    const teardownResult = await this.teardown
+      .run(projectId, project.environmentConfig, { userId: user.userId })
+      .catch((error: Error) => ({ ok: false, message: error.message }));
+    if (!teardownResult.ok) {
+      this.logger.error(
+        `Instance teardown for project "${project.name}" (${projectId}) failed: ` +
+          `${teardownResult.message}`,
+      );
+    }
+
     // Everything else cascades: sessions, tasks and their actions, events, model
     // calls and approvals, connections, environments, memory and specifications.
     await this.database.db.delete(projects).where(eq(projects.id, projectId));
@@ -2014,6 +2034,8 @@ export class ProjectsService {
       tasksDeleted: taskCount,
       secretsDestroyed: secrets.length,
       workspacesDiscarded: workspaces,
+      instanceTornDown: teardownResult.ok,
+      instanceTeardownMessage: teardownResult.message,
     };
   }
 

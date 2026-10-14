@@ -190,6 +190,8 @@ export class CommandRunner {
   private readonly restartScript: string;
   /** The restored-copy script sudo may be asked to run (ADR-067). */
   private readonly restoreScript: string;
+  /** The project-teardown script sudo may be asked to run (ADR-068). */
+  private readonly teardownScript: string;
   /** Settings that enable a guarded subcommand, by setting name. */
   private readonly enabled: Readonly<Record<string, boolean>>;
 
@@ -251,6 +253,13 @@ export class CommandRunner {
     // switch, and it must hold even when provisioning is on.
     this.restoreScript = config.provisioning?.enabled
       ? (config.provisioning.restoreScript ?? '')
+      : '';
+    // ADR-068. Same posture again: empty PROJECT_TEARDOWN_SCRIPT is the off
+    // switch, and it must hold even when provisioning is on. This stops a
+    // unit, drops a database and deletes a directory permanently — the
+    // widest-reaching grant after restore.
+    this.teardownScript = config.provisioning?.enabled
+      ? (config.provisioning.teardownScript ?? '')
       : '';
 
     if (config.validation.enabled) {
@@ -349,6 +358,7 @@ export class CommandRunner {
         this.modulesListScript || null,
         this.restartScript || null,
         this.restoreScript || null,
+        this.teardownScript || null,
       );
     }
 
@@ -659,6 +669,7 @@ export function assertProvisioningInvocation(
   modulesListScript: string | null = null,
   restartScript: string | null = null,
   restoreScript: string | null = null,
+  teardownScript: string | null = null,
 ): void {
   if (args[0] !== '-n') {
     throw new CommandArgumentError(
@@ -682,6 +693,7 @@ export function assertProvisioningInvocation(
   const isModulesList = modulesListScript !== null && script === modulesListScript;
   const isRestart = restartScript !== null && script === restartScript;
   const isRestore = restoreScript !== null && script === restoreScript;
+  const isTeardown = teardownScript !== null && script === teardownScript;
 
   if (
     !isCreate &&
@@ -692,7 +704,8 @@ export function assertProvisioningInvocation(
     !isBackup &&
     !isModulesList &&
     !isRestart &&
-    !isRestore
+    !isRestore &&
+    !isTeardown
   ) {
     const configured = [
       ...createScripts,
@@ -704,6 +717,7 @@ export function assertProvisioningInvocation(
       ...(modulesListScript ? [modulesListScript] : []),
       ...(restartScript ? [restartScript] : []),
       ...(restoreScript ? [restoreScript] : []),
+      ...(teardownScript ? [teardownScript] : []),
     ];
     throw new CommandArgumentError(
       `"${script}" is not a configured provisioning script. Configured: ` +
@@ -788,6 +802,21 @@ export function assertProvisioningInvocation(
     if (args.length !== 3) {
       throw new CommandArgumentError(
         `The installed-modules script takes exactly "-n <script> <project-name>"; got ` +
+          `${args.length} arguments.`,
+      );
+    }
+    return;
+  }
+
+  // ADR-068. The teardown script takes the same shape as the grant, backup
+  // and installed-modules scripts - one project name and nothing else - and
+  // is distinguishable from them only by its configured path. Nothing in the
+  // argument vector steers which unit, database or directory is affected:
+  // that is derived entirely inside the script from the project name alone.
+  if (isTeardown) {
+    if (args.length !== 3) {
+      throw new CommandArgumentError(
+        `The teardown script takes exactly "-n <script> <project-name>"; got ` +
           `${args.length} arguments.`,
       );
     }

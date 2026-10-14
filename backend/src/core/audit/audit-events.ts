@@ -162,6 +162,14 @@ export const AUDIT_EVENTS = {
   PROJECT_BACKUP_FAILED: 'project.backup_failed',
 
   /**
+   * ADR-068: a project's on-premise instance (systemd unit, database,
+   * directory, Nginx site, certificate) was torn down as part of a
+   * permanent project delete, or that teardown failed.
+   */
+  PROJECT_INSTANCE_TORN_DOWN: 'project.instance_torn_down',
+  PROJECT_INSTANCE_TEARDOWN_FAILED: 'project.instance_teardown_failed',
+
+  /**
    * A project's repository was cloned to this host, or its local clone was
    * brought up to date with the remote (ADR-063).
    *
