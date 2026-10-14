@@ -59,6 +59,11 @@ export function assemblePrompt(parts: readonly PromptPart[], nonce: string): Ass
  */
 export function buildSystemPrompt(context: {
   readonly projectName: string;
+  /**
+   * The project brief from its specification. Written by the people who own the
+   * project, so it is context the work should serve, not repository content.
+   */
+  readonly projectBrief?: string | null;
   readonly odooVersion: string | null;
   readonly branch: string;
   readonly grantedTools: readonly string[];
@@ -97,6 +102,9 @@ export function buildSystemPrompt(context: {
     `Project: ${context.projectName}`,
     `Odoo version: ${context.odooVersion ?? 'not determined'}`,
     `Working branch: ${context.branch}`,
+    ...(context.projectBrief?.trim()
+      ? ['', '# What the project is for', context.projectBrief.trim()]
+      : []),
     '',
     '# How you work',
     '- You act only through the tools you are given. You have no shell, no database',

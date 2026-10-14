@@ -31,6 +31,8 @@ export interface TaskExecutionSnapshot {
   readonly reference: string;
   readonly projectId: string;
   readonly projectName: string;
+  /** The latest specification's brief (`description`), when the project has one. */
+  readonly projectBrief: string | null;
   readonly projectType: ProjectType;
   /**
    * The execution mode this task runs in, derived from the project type (ADR-028).
@@ -144,6 +146,10 @@ export class TaskRepository {
         reference: agentTasks.reference,
         projectId: agentTasks.projectId,
         projectName: projects.name,
+        projectBrief: sql<string | null>`(
+          select specification->>'description' from project_specifications
+          where project_id = ${projects.id} order by version desc limit 1
+        )`,
         prompt: agentTasks.prompt,
         attachedDocumentIds: agentTasks.attachedDocumentIds,
         kind: agentTasks.kind,
@@ -239,6 +245,7 @@ export class TaskRepository {
       reference: row.reference,
       projectId: row.projectId,
       projectName: row.projectName,
+      projectBrief: row.projectBrief,
       projectType: row.projectType as ProjectType,
       executionMode: executionModeFor(row.projectType as ProjectType, {
         hasLocalDirectory: onPremiseProjectPath !== null,

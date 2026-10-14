@@ -22,6 +22,8 @@ export interface ModelPlanningInput {
   readonly localProviderOnly?: boolean;
   readonly prompt: string;
   readonly projectName: string;
+  /** The project brief from its specification; the agent's standing context. */
+  readonly projectBrief?: string | null;
   readonly taskReference: string;
   readonly branch: string;
   readonly declaredOdooVersion: string | null;
@@ -71,6 +73,8 @@ export interface OdooOnlinePlanningInput {
   readonly localProviderOnly?: boolean;
   readonly prompt: string;
   readonly projectName: string;
+  /** The project brief from its specification; the agent's standing context. */
+  readonly projectBrief?: string | null;
   readonly taskReference: string;
   readonly odooVersion: string | null;
   readonly instanceUrl: string | null;
@@ -118,6 +122,7 @@ export class ModelAgentPlanner {
 
     const system = buildSystemPrompt({
       projectName: input.projectName,
+      projectBrief: input.projectBrief,
       odooVersion: input.analysis?.detectedOdooVersion ?? input.declaredOdooVersion,
       branch: input.branch,
       grantedTools: input.grantedTools,
@@ -173,6 +178,7 @@ export class ModelAgentPlanner {
 
     const system = buildSystemPrompt({
       projectName: input.projectName,
+      projectBrief: input.projectBrief,
       odooVersion: input.odooVersion,
       branch: 'the live Odoo Online instance',
       grantedTools: input.grantedTools,

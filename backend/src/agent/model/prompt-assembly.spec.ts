@@ -46,3 +46,17 @@ describe('buildSystemPrompt — Odoo source reference (ADR-031)', () => {
     expect(prompt).toContain('Never include credentials');
   });
 });
+
+/** The project brief is the agent's standing context for every task. */
+describe('buildSystemPrompt — project brief', () => {
+  const base = { projectName: 'Vania', odooVersion: '19.0', branch: 'ai/task_1', grantedTools: [] };
+
+  it('states the brief when the project has one', () => {
+    const prompt = buildSystemPrompt({ ...base, projectBrief: '  Manage employee equipment.  ' });
+    expect(prompt).toContain('# What the project is for\nManage employee equipment.\n');
+  });
+
+  it.each([undefined, null, '   '])('omits the section for a brief of %p', (projectBrief) => {
+    expect(buildSystemPrompt({ ...base, projectBrief })).not.toContain('What the project is for');
+  });
+});

@@ -65,6 +65,8 @@ export interface ImplementationLoopInput {
   readonly localProviderOnly?: boolean;
   readonly prompt: string;
   readonly projectName: string;
+  /** The project brief from its specification; the agent's standing context. */
+  readonly projectBrief?: string | null;
   readonly taskReference: string;
   readonly branch: string;
   readonly odooVersion: string | null;
@@ -156,6 +158,7 @@ export class ModelImplementationLoop {
 
     const system = buildSystemPrompt({
       projectName: input.projectName,
+      projectBrief: input.projectBrief,
       odooVersion: input.odooVersion,
       branch: input.branch,
       grantedTools: tools.map((tool) => tool.name),
