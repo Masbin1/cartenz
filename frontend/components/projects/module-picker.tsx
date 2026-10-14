@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
-import { api } from '@/lib/api';
+import { Search, Sparkles } from 'lucide-react';
+import { ApiError, api } from '@/lib/api';
 import { Alert } from '@/components/ui/alert';
 import { Disclosure } from '@/components/ui/disclosure';
 import { SkeletonRows } from '@/components/ui/skeleton';
@@ -26,11 +26,14 @@ import {
 export function ModulePicker({
   version,
   edition,
+  brief,
   value,
   onChange,
 }: {
   version: string;
   edition: string;
+  /** The project brief; recommendations are drawn from it. */
+  brief: string;
   value: string[];
   onChange: (selected: string[]) => void;
 }) {
@@ -39,6 +42,30 @@ export function ModulePicker({
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [appsOnly, setAppsOnly] = useState(true);
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [recommending, setRecommending] = useState(false);
+  const [recommendError, setRecommendError] = useState<string | null>(null);
+
+  /** Ticks what the model suggests, on top of anything already ticked. */
+  const recommend = async () => {
+    setRecommending(true);
+    setRecommendError(null);
+    try {
+      const { modules } = await api.settings.recommendOdooModules(version, edition, brief);
+      if (modules.length === 0) {
+        setRecommendError('No module in this catalogue matched the brief. Choose them by hand.');
+        return;
+      }
+      setReasons(Object.fromEntries(modules.map((entry) => [entry.technicalName, entry.reason])));
+      onChange([...new Set([...value, ...modules.map((entry) => entry.technicalName)])]);
+    } catch (caught) {
+      setRecommendError(
+        caught instanceof ApiError ? caught.message : 'Modules could not be recommended. Choose them by hand.',
+      );
+    } finally {
+      setRecommending(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +96,7 @@ export function ModulePicker({
    */
   useEffect(() => {
     onChange([]);
+    setReasons({});
     // Deliberately keyed on the catalogue identity, not on `onChange`: the
     // parent re-creates that callback each render, and depending on it would
     // clear the selection on every keystroke.
@@ -119,6 +147,24 @@ export function ModulePicker({
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-meta text-content-subtle">
+          {brief.trim()
+            ? 'Let the model tick what the brief needs. Review it before you create the project.'
+            : 'Write the project brief first to get a recommendation.'}
+        </p>
+        <button
+          type="button"
+          onClick={recommend}
+          disabled={!brief.trim() || recommending}
+          className="btn-secondary btn-sm shrink-0"
+        >
+          <Sparkles className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+          {recommending ? 'Recommending…' : 'Recommend from brief'}
+        </button>
+      </div>
+      {recommendError ? <Alert tone="error">{recommendError}</Alert> : null}
+
       {/*
        * Contained: the list scrolls, and its filters and counts act on it
        * together, beside the rest of the form.
@@ -203,6 +249,11 @@ export function ModulePicker({
                         <span className="hidden truncate sm:inline">· {module.category}</span>
                       ) : null}
                     </span>
+                    {checked && reasons[module.technicalName] ? (
+                      <span className="mt-0.5 block text-meta text-accent">
+                        {reasons[module.technicalName]}
+                      </span>
+                    ) : null}
                   </span>
                 </label>
               );

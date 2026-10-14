@@ -247,3 +247,17 @@ default path is unaffected either way and would remain.
   `base` as `state='installed'` — nothing else — and whose provisioning status
   transitioned `provisioning` → `provisioned` (or `failed`, with a reason, on
   an install error) rather than blocking the request.
+
+## Addendum (14 October 2026): recommendation from the project brief
+
+The Create-with-AI form now collects one project brief instead of a
+description and a requirement list. The module picker offers **Recommend from
+brief**: `POST /settings/odoo-versions/:version/modules/recommend` sends the
+brief and the catalogue's applications to the configured model and returns
+suggested technical names with a one-line reason each.
+
+The suggestion never bypasses §1 or §3. Names outside the version/edition
+catalogue are dropped server-side (`keepCatalogued`), the result only ticks
+boxes in the picker, and the person reviews them before the project is
+created. The brief is sent through the AI data boundary marked untrusted. With
+no model provider configured the endpoint refuses, and the picker stays manual.

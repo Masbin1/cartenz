@@ -1,5 +1,5 @@
-import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
-import { ODOO_VERSIONS, type OdooVersion } from '../../../core/enums';
+import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { ODOO_EDITIONS, ODOO_VERSIONS, type OdooEdition, type OdooVersion } from '../../../core/enums';
 
 /**
  * Registering a full Odoo source checkout for one version (ADR-045).
@@ -49,4 +49,15 @@ export class UpdateOdooVersionRepositoryDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+}
+
+/** A project brief to recommend modules for (ADR-056 addendum). */
+export class RecommendModulesDto {
+  @IsString()
+  @IsNotEmpty({ message: 'A project brief is required' })
+  @MaxLength(4000)
+  brief!: string;
+
+  @IsIn(ODOO_EDITIONS, { message: `edition must be one of: ${ODOO_EDITIONS.join(', ')}` })
+  edition!: OdooEdition;
 }

@@ -11,6 +11,7 @@ import {
   Post,
   Put,
   Query,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   AddModelProviderDto,
@@ -25,8 +26,15 @@ import { UpdateOdooSettingsDto } from './dto/odoo-settings.dto';
 import {
   CreateOdooVersionRepositoryDto,
   UpdateOdooVersionRepositoryDto,
+  RecommendModulesDto,
 } from './dto/odoo-versions.dto';
 import { ModelProviderResolver } from '../../agent/model/model-provider-resolver';
+import {
+  RECOMMENDATION_SCHEMA,
+  RECOMMENDATION_SYSTEM,
+  catalogueForPrompt,
+  keepCatalogued,
+} from './odoo-module-recommendation';
 import { GitService } from '../../agent/git/git.service';
 import { GitCredentialsService } from './git-credentials.service';
 import {
@@ -116,6 +124,37 @@ export class SettingsController {
     const resolvedEdition: OdooEdition = edition === 'community' ? 'community' : 'enterprise';
     const modules = await this.odooVersions.modulesFor(version, resolvedEdition);
     return { version, edition: resolvedEdition, modules };
+  }
+
+  /**
+   * Suggests modules for a project brief (ADR-056 addendum). A suggestion only:
+   * the names are filtered to this version/edition's catalogue, and the person
+   * reviews the ticked boxes before anything installs.
+   */
+  @Post('odoo-versions/:version/modules/recommend')
+  @HttpCode(HttpStatus.OK)
+  async recommendOdooVersionModules(
+    @Param('version') version: string,
+    @Body() dto: RecommendModulesDto,
+  ) {
+    const catalogue = await this.odooVersions.modulesFor(version, dto.edition);
+    const provider = await this.providers.forProject();
+    if (!provider.callsExternalService) {
+      throw new BadRequestException(
+        'No model provider is configured, so modules cannot be recommended. Choose them by hand.',
+      );
+    }
+    const result = await provider.generateStructured({
+      system: RECOMMENDATION_SYSTEM,
+      parts: [
+        { label: 'Project brief', content: dto.brief, untrusted: true },
+        { label: 'Catalogue', content: catalogueForPrompt(catalogue) },
+      ],
+      schema: RECOMMENDATION_SCHEMA,
+      schemaName: 'ModuleRecommendation',
+      maxTokens: 1024,
+    });
+    return { modules: keepCatalogued(result.value.modules, catalogue) };
   }
 
   @Post('odoo-versions')

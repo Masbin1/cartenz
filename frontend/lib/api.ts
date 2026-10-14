@@ -349,6 +349,12 @@ export const api = {
           depends: string[];
         }[];
       }>(`/settings/odoo-versions/${encodeURIComponent(version)}/modules?edition=${encodeURIComponent(edition)}`),
+    /** Modules the configured model suggests for a project brief, filtered to the catalogue. */
+    recommendOdooModules: (version: string, edition: string, brief: string) =>
+      request<{ modules: { technicalName: string; reason: string }[] }>(
+        `/settings/odoo-versions/${encodeURIComponent(version)}/modules/recommend`,
+        { method: 'POST', body: { edition, brief } },
+      ),
 
     addOdooVersion: (body: {
       version: string;
@@ -532,7 +538,6 @@ export const api = {
       odooVersion: string;
       odooEdition?: string;
       description: string;
-      requirements: { title: string; detail?: string }[];
       modules?: string[];
       /**
        * Where the project runs. Omitted means on this host (Cartenz provisions
