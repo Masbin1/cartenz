@@ -676,7 +676,7 @@ export default function AgentWorkspacePage() {
                           </button>
                         </div>
 
-                        {turn.kind === 'chat' && turn.answer ? (
+                        {turn.answer ? (
                           <div className="flex max-w-[95%] gap-3 sm:max-w-[88%]">
                             <span
                               className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-raised ring-1 ring-surface-border"
