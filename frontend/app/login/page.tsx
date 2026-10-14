@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { ApiError } from '@/lib/api';
+import { ApiError, api } from '@/lib/api';
 import { Alert } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import { CartenzMark } from '@/components/ui/cartenz-mark';
@@ -20,10 +20,19 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Only the first, admin, account registers itself; everyone else is invited (ADR-072).
+  const [registrationOpen, setRegistrationOpen] = useState(false);
 
   useEffect(() => {
     if (!loading && user) router.replace('/dashboard');
   }, [loading, user, router]);
+
+  useEffect(() => {
+    api.auth
+      .registration()
+      .then(({ open }) => setRegistrationOpen(open))
+      .catch(() => setRegistrationOpen(false));
+  }, []);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -72,9 +81,14 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label htmlFor="password" className="field-label">
-                Password
-              </label>
+              <div className="flex items-baseline justify-between">
+                <label htmlFor="password" className="field-label">
+                  Password
+                </label>
+                <Link href="/forgot-password" className="link text-meta">
+                  Forgot your password?
+                </Link>
+              </div>
               <input
                 id="password"
                 type="password"
@@ -97,10 +111,16 @@ export default function LoginPage() {
         </div>
 
         <p className="mt-8 text-center text-callout text-content-muted">
-          No account yet?{' '}
-          <Link href="/register" className="link">
-            Create one
-          </Link>
+          {registrationOpen ? (
+            <>
+              Setting up this deployment?{' '}
+              <Link href="/register" className="link">
+                Create the first account
+              </Link>
+            </>
+          ) : (
+            'No account yet? Ask an administrator for an invitation.'
+          )}
         </p>
 
         <p className="mt-12 text-center text-caption text-content-subtle">Cartenz by LinkedERP</p>

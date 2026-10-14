@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRequireAuth } from '@/lib/auth';
-import { ApiError, api } from '@/lib/api';
-import { KeyRound, Pencil, Trash2, UserPlus, Users as UsersIcon } from 'lucide-react';
+import { ApiError, api, type InvitationLink } from '@/lib/api';
+import { KeyRound, Mail, Pencil, Trash2, UserPlus, Users as UsersIcon } from 'lucide-react';
 import { AppShell } from '@/components/ui/app-shell';
 import { PageHeader } from '@/components/ui/page';
 import { Alert } from '@/components/ui/alert';
@@ -26,17 +26,23 @@ interface EditingUser {
   isActive: boolean;
 }
 
-/** The create form: an email and password only make sense when adding. */
+/** The create form: an email only makes sense when adding. */
 interface CreateForm {
   name: string;
   email: string;
   region: UserRegion;
   isAdmin: boolean;
-  password: string;
 }
 
 function emptyCreate(): CreateForm {
-  return { name: '', email: '', region: 'indonesia', isAdmin: false, password: '' };
+  return { name: '', email: '', region: 'indonesia', isAdmin: false };
+}
+
+/** Says where a link went, so an admin knows whether to hand it over themselves. */
+function linkNotice(who: string, kind: string, link: InvitationLink): string {
+  return link.mailed
+    ? `${kind} for ${who} was emailed. The link below works too, if it does not arrive.`
+    : `${kind} for ${who} is ready. Mail is not configured or failed, so share the link below directly.`;
 }
 
 export default function UsersPage() {
@@ -51,6 +57,8 @@ export default function UsersPage() {
   const [resetting, setResetting] = useState<EditingUser | null>(null);
   const [resetPassword, setResetPassword] = useState('');
   const [saving, setSaving] = useState(false);
+  /** The last link issued, shown once so an admin can copy it. */
+  const [link, setLink] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -70,6 +78,7 @@ export default function UsersPage() {
     setSaving(true);
     setError(null);
     setNotice(null);
+    setLink(null);
     try {
       await api.users.update(editing.id, {
         name: editing.name,
@@ -91,15 +100,16 @@ export default function UsersPage() {
     setSaving(true);
     setError(null);
     setNotice(null);
+    setLink(null);
     try {
-      await api.users.create({
+      const created = await api.users.create({
         name: createForm.name,
         email: createForm.email,
         region: createForm.region,
         isAdmin: createForm.isAdmin,
-        password: createForm.password,
       });
-      setNotice(`${createForm.name || createForm.email} was created.`);
+      setNotice(linkNotice(createForm.name || createForm.email, 'An invitation', created.invitation));
+      setLink(created.invitation.url);
       setAdding(false);
       setCreateForm(emptyCreate());
       await load();
@@ -110,11 +120,27 @@ export default function UsersPage() {
     }
   };
 
+  const sendLink = async (row: UserRow, purpose: 'invite' | 'reset') => {
+    setError(null);
+    setNotice(null);
+    setLink(null);
+    try {
+      const issued = await api.users.issueLink(row.id, purpose);
+      setNotice(
+        linkNotice(row.name || row.email, purpose === 'invite' ? 'A new invitation' : 'A reset link', issued),
+      );
+      setLink(issued.url);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'The link could not be issued.');
+    }
+  };
+
   const confirmReset = async () => {
     if (!resetting) return;
     setSaving(true);
     setError(null);
     setNotice(null);
+    setLink(null);
     try {
       await api.users.resetPassword(resetting.id, resetPassword);
       setNotice(
@@ -134,6 +160,7 @@ export default function UsersPage() {
     setSaving(true);
     setError(null);
     setNotice(null);
+    setLink(null);
     try {
       await api.users.remove(deleting.id);
       setNotice(`${deleting.name || deleting.email} was deleted.`);
@@ -173,7 +200,12 @@ export default function UsersPage() {
     if (!isSelf) {
       items.push(
         {
-          label: 'Reset password',
+          label: row.lastLoginAt ? 'Send reset link' : 'Resend invitation',
+          icon: Mail,
+          onSelect: () => void sendLink(row, row.lastLoginAt ? 'reset' : 'invite'),
+        },
+        {
+          label: 'Set password',
           icon: KeyRound,
           onSelect: () => {
             setResetPassword('');
@@ -226,6 +258,27 @@ export default function UsersPage() {
             <div className="space-y-3">
               {error ? <Alert tone="error">{error}</Alert> : null}
               {notice ? <Alert tone="success">{notice}</Alert> : null}
+              {link ? (
+                <div className="flex gap-2">
+                  <label htmlFor="issued-link" className="sr-only">
+                    Link
+                  </label>
+                  <input
+                    id="issued-link"
+                    readOnly
+                    value={link}
+                    onFocus={(event) => event.target.select()}
+                    className="field-input min-w-0 flex-1 font-mono text-caption"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void navigator.clipboard?.writeText(link)}
+                    className="btn-secondary shrink-0"
+                  >
+                    Copy
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -233,7 +286,7 @@ export default function UsersPage() {
           {adding ? (
             <FormPanel
               title="Add user"
-              description="Set a temporary password and share it with the new owner directly."
+              description="They receive an email invitation and choose their own password. The link is also shown here to share directly."
             >
               <div className="grid gap-5 sm:grid-cols-2">
                 <div>
@@ -284,22 +337,6 @@ export default function UsersPage() {
                   </select>
                 </div>
 
-                <div>
-                  <label htmlFor="new-password" className="field-label">
-                    Temporary password
-                  </label>
-                  <input
-                    id="new-password"
-                    type="password"
-                    value={createForm.password}
-                    onChange={(event) => setCreateForm({ ...createForm, password: event.target.value })}
-                    disabled={saving}
-                    className="field-input"
-                  />
-                  <p className="field-hint">
-                    At least {MINIMUM_PASSWORD_LENGTH} characters. Share it with the new owner.
-                  </p>
-                </div>
               </div>
 
               <Checkbox
@@ -314,7 +351,7 @@ export default function UsersPage() {
                 onCancel={() => setAdding(false)}
                 onSave={() => void saveCreate()}
                 saving={saving}
-                saveLabel="Create user"
+                saveLabel="Send invitation"
               />
             </FormPanel>
           ) : null}

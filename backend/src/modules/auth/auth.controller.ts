@@ -1,11 +1,14 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
+import { UserLinksService } from './user-links.service';
 import {
   ChangePasswordDto,
+  ForgotPasswordDto,
   LoginDto,
   RefreshDto,
   RegisterDto,
+  SetPasswordDto,
   type AuthTokensResponse,
 } from './dto/auth.dto';
 import { Public } from '../../core/http/public.decorator';
@@ -15,13 +18,44 @@ import type { AuthenticatedUser } from '../../core/authz/authenticated-user';
 /**
  * Authentication endpoints, at /api/v1/auth per chapter 15.
  *
- * The three unauthenticated routes are marked @Public explicitly; every other
+ * The unauthenticated routes are marked @Public explicitly; every other
  * route in the application is protected by the global guard without needing to
  * say so.
  */
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly links: UserLinksService,
+  ) {}
+
+  /** Whether this deployment still accepts its first, admin, registration. */
+  @Public()
+  @Get('registration')
+  registration(): Promise<{ open: boolean; mailEnabled: boolean }> {
+    return this.auth.registrationOpen().then((open) => ({ open, mailEnabled: this.links.mailEnabled }));
+  }
+
+  /**
+   * Mails a reset link when the address has an account. The answer is the same
+   * either way, so the form cannot reveal which addresses are registered.
+   */
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() request: Request): Promise<{ accepted: true }> {
+    await this.links.requestReset(dto.email, clientIp(request));
+    return { accepted: true };
+  }
+
+  /** Sets a password from an invitation or reset link. */
+  @Public()
+  @Post('set-password')
+  @HttpCode(HttpStatus.OK)
+  async setPassword(@Body() dto: SetPasswordDto, @Req() request: Request): Promise<{ set: true }> {
+    await this.links.redeem(dto.token, dto.newPassword, clientIp(request));
+    return { set: true };
+  }
 
   @Public()
   @Post('register')

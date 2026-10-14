@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { ApiError } from '@/lib/api';
+import { ApiError, api } from '@/lib/api';
 import { Alert } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import { CartenzMark } from '@/components/ui/cartenz-mark';
@@ -14,7 +14,8 @@ const MINIMUM_PASSWORD_LENGTH = 12;
 /**
  * Account creation, laid out like sign-in: the mark, one title, one form and
  * one button. Region is asked for here because it decides which projects the
- * new account can see.
+ * new account can see. Only the first, admin, account registers here; once it
+ * exists the page says to ask for an invitation (ADR-072).
  */
 export default function RegisterPage() {
   const { register } = useAuth();
@@ -26,6 +27,14 @@ export default function RegisterPage() {
   });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    api.auth
+      .registration()
+      .then((answer) => setOpen(answer.open))
+      .catch(() => undefined);
+  }, []);
 
   const update = (field: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) =>
     setForm((previous) => ({ ...previous, [field]: event.target.value }));
@@ -65,82 +74,89 @@ export default function RegisterPage() {
         </div>
 
         <div className="panel p-6 sm:p-8">
-          <form onSubmit={submit} className="space-y-5">
-            <div>
-              <label htmlFor="name" className="field-label">
-                Full name
-              </label>
-              <input
-                id="name"
-                required
-                value={form.name}
-                onChange={update('name')}
-                className="field-input"
-                placeholder="Thandi Mokoena"
-              />
-            </div>
+          {!open ? (
+            <Alert tone="info">
+              Registration is closed. Ask an administrator for an invitation; it arrives by email
+              with a link to choose your password.
+            </Alert>
+          ) : (
+            <form onSubmit={submit} className="space-y-5">
+              <div>
+                <label htmlFor="name" className="field-label">
+                  Full name
+                </label>
+                <input
+                  id="name"
+                  required
+                  value={form.name}
+                  onChange={update('name')}
+                  className="field-input"
+                  placeholder="Thandi Mokoena"
+                />
+              </div>
 
-            <div>
-              <label htmlFor="email" className="field-label">
-                Email address
-              </label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={form.email}
-                onChange={update('email')}
-                className="field-input"
-                placeholder="you@example.com"
-              />
-            </div>
+              <div>
+                <label htmlFor="email" className="field-label">
+                  Email address
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={form.email}
+                  onChange={update('email')}
+                  className="field-input"
+                  placeholder="you@example.com"
+                />
+              </div>
 
-            <div>
-              <label htmlFor="region" className="field-label">
-                Region
-              </label>
-              <select
-                id="region"
-                required
-                value={form.region}
-                onChange={(event) => setForm((p) => ({ ...p, region: event.target.value }))}
-                className="field-input"
-              >
-                {USER_REGIONS.map((region) => (
-                  <option key={region} value={region}>
-                    {USER_REGION_LABELS[region]}
-                  </option>
-                ))}
-              </select>
-              <p className="field-hint">You will see the projects in this region.</p>
-            </div>
+              <div>
+                <label htmlFor="region" className="field-label">
+                  Region
+                </label>
+                <select
+                  id="region"
+                  required
+                  value={form.region}
+                  onChange={(event) => setForm((p) => ({ ...p, region: event.target.value }))}
+                  className="field-input"
+                >
+                  {USER_REGIONS.map((region) => (
+                    <option key={region} value={region}>
+                      {USER_REGION_LABELS[region]}
+                    </option>
+                  ))}
+                </select>
+                <p className="field-hint">You will see the projects in this region.</p>
+              </div>
 
-            <div>
-              <label htmlFor="password" className="field-label">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                autoComplete="new-password"
-                required
-                minLength={MINIMUM_PASSWORD_LENGTH}
-                value={form.password}
-                onChange={update('password')}
-                className="field-input"
-                placeholder="At least 12 characters"
-              />
-              <p className="field-hint">At least {MINIMUM_PASSWORD_LENGTH} characters.</p>
-            </div>
+              <div>
+                <label htmlFor="password" className="field-label">
+                  Password
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                  minLength={MINIMUM_PASSWORD_LENGTH}
+                  value={form.password}
+                  onChange={update('password')}
+                  className="field-input"
+                  placeholder="At least 12 characters"
+                />
+                <p className="field-hint">At least {MINIMUM_PASSWORD_LENGTH} characters.</p>
+              </div>
 
-            {error ? <Alert tone="error">{error}</Alert> : null}
+              {error ? <Alert tone="error">{error}</Alert> : null}
 
-            <button type="submit" disabled={submitting} className="btn-primary h-11 w-full">
-              {submitting ? <Spinner /> : null}
-              {submitting ? 'Creating account' : 'Create account'}
-            </button>
-          </form>
+              <button type="submit" disabled={submitting} className="btn-primary h-11 w-full">
+                {submitting ? <Spinner /> : null}
+                {submitting ? 'Creating account' : 'Create account'}
+              </button>
+            </form>
+          )}
         </div>
 
         <p className="mt-8 text-center text-callout text-content-muted">

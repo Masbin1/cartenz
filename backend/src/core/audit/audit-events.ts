@@ -23,6 +23,12 @@ export const AUDIT_EVENTS = {
    * credential, which is exactly the event an audit reader is looking for.
    */
   USER_PASSWORD_RESET: 'user.password_reset',
+  /** An admin issued an invitation link to a new account (ADR-072). */
+  USER_INVITED: 'user.invited',
+  /** Somebody asked for a password-reset link (ADR-072). Recorded whether or not the address exists. */
+  USER_RESET_REQUESTED: 'user.reset_requested',
+  /** A one-time link was used to set a password (ADR-072). */
+  USER_LINK_REDEEMED: 'user.link_redeemed',
 
   PROJECT_CREATED: 'project.created',
   PROJECT_UPDATED: 'project.updated',

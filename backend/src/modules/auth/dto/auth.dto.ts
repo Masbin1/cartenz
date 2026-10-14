@@ -88,6 +88,27 @@ export class ResetPasswordDto {
   newPassword!: string;
 }
 
+/** The public "forgot password" form (ADR-072). */
+export class ForgotPasswordDto {
+  @IsEmail({}, { message: 'A valid email address is required' })
+  @MaxLength(320)
+  @Transform(trimLower)
+  email!: string;
+}
+
+/** Setting a password from an invitation or reset link (ADR-072). */
+export class SetPasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  token!: string;
+
+  @IsString()
+  @MinLength(12, { message: 'The password must be at least 12 characters' })
+  @MaxLength(256)
+  newPassword!: string;
+}
+
 /** Response shape. Declared explicitly so no row field leaks by accident. */
 export interface AuthTokensResponse {
   readonly accessToken: string;

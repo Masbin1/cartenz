@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -28,9 +29,10 @@ import type {
 /**
  * Registration, sign-in, refresh and sign-out.
  *
- * Registration creates the user in the region they chose. The first account
- * registered becomes admin — with no organisation owner to inherit the role,
- * somebody has to be able to manage the deployment (ADR-044).
+ * Registration creates the user in the region they chose. Only the first
+ * account can register, and it becomes admin — with no organisation owner to
+ * inherit the role, somebody has to be able to manage the deployment
+ * (ADR-044). Everyone after arrives by invitation (ADR-072).
  */
 @Injectable()
 export class AuthService {
@@ -41,6 +43,11 @@ export class AuthService {
     private readonly audit: AuditService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
+
+  async registrationOpen(): Promise<boolean> {
+    const [{ total }] = await this.database.db.select({ total: count() }).from(users);
+    return total === 0;
+  }
 
   async register(dto: RegisterDto, ipAddress: string | null): Promise<AuthTokensResponse> {
     const passwordHash = await this.passwords.hash(dto.password);
@@ -57,8 +64,14 @@ export class AuthService {
       }
 
       // First account is admin, so a fresh deployment is never unmanageable.
+      // Every later account arrives by an admin's invitation (ADR-072).
       const [{ total }] = await tx.select({ total: count() }).from(users);
-      const isAdmin = total === 0;
+      if (total > 0) {
+        throw new ForbiddenException(
+          'Registration is closed. Ask an administrator for an invitation.',
+        );
+      }
+      const isAdmin = true;
 
       const [created] = await tx
         .insert(users)

@@ -110,6 +110,12 @@ export const tokenStore = {
 };
 
 /** An error carrying the API's status and message, for display. */
+/** A one-time link, and whether it was mailed (false when mail is off or failed). */
+export interface InvitationLink {
+  readonly url: string;
+  readonly mailed: boolean;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -283,6 +289,26 @@ export const api = {
         body: refreshToken ? { refreshToken } : {},
       }),
 
+    /** Whether the first, admin, registration is still open (ADR-072). */
+    registration: () =>
+      request<{ open: boolean; mailEnabled: boolean }>('/auth/registration', { skipRefresh: true }),
+
+    /** Mails a reset link when the address has an account; answers the same either way. */
+    forgotPassword: (email: string) =>
+      request<{ accepted: true }>('/auth/forgot-password', {
+        method: 'POST',
+        body: { email },
+        skipRefresh: true,
+      }),
+
+    /** Sets a password from an invitation or reset link. */
+    setPassword: (token: string, newPassword: string) =>
+      request<{ set: true }>('/auth/set-password', {
+        method: 'POST',
+        body: { token, newPassword },
+        skipRefresh: true,
+      }),
+
     /** Change your own password. Every other session is revoked on success. */
     changePassword: (body: { currentPassword: string; newPassword: string }) =>
       request<{ changed: true }>('/auth/change-password', { method: 'POST', body }),
@@ -291,13 +317,13 @@ export const api = {
   users: {
     me: () => request<CurrentUser>('/users/me'),
     list: () => request<UserRow[]>('/users'),
-    create: (body: {
-      email: string;
-      password: string;
-      name: string;
-      region: UserRegion;
-      isAdmin?: boolean;
-    }) => request<UserRow>('/users', { method: 'POST', body }),
+    /** Creates the account and issues its invitation link (ADR-072). */
+    create: (body: { email: string; name: string; region: UserRegion; isAdmin?: boolean }) =>
+      request<UserRow & { invitation: InvitationLink }>('/users', { method: 'POST', body }),
+
+    /** A fresh invitation or reset link; earlier unused ones of that kind stop working. */
+    issueLink: (userId: string, purpose: 'invite' | 'reset') =>
+      request<InvitationLink>(`/users/${userId}/link`, { method: 'POST', body: { purpose } }),
     update: (
       userId: string,
       body: { region?: UserRegion; isAdmin?: boolean; isActive?: boolean; name?: string },

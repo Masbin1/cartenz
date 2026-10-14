@@ -23,7 +23,6 @@ import {
   IsOptional,
   IsString,
   MaxLength,
-  MinLength,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { CurrentUser, clientIp } from '../../core/http/current-user.decorator';
@@ -36,6 +35,8 @@ import { users } from '../../core/database/schema';
 import { USER_REGIONS, type UserRegion } from '../../core/enums';
 import { PasswordService } from './password.service';
 import { AuthService } from './auth.service';
+import { UserLinksService } from './user-links.service';
+import { randomBytes } from 'node:crypto';
 import { ResetPasswordDto } from './dto/auth.dto';
 
 const trim = ({ value }: { value: unknown }) =>
@@ -73,11 +74,6 @@ class CreateUserDto {
   email!: string;
 
   @IsString()
-  @MinLength(12, { message: 'The password must be at least 12 characters' })
-  @MaxLength(256)
-  password!: string;
-
-  @IsString()
   @IsNotEmpty({ message: 'A name is required' })
   @MaxLength(200)
   @Transform(trim)
@@ -110,6 +106,7 @@ export class MeController {
     private readonly audit: AuditService,
     private readonly passwords: PasswordService,
     private readonly auth: AuthService,
+    private readonly links: UserLinksService,
   ) {}
 
   @Get('me')
@@ -140,7 +137,11 @@ export class MeController {
       .orderBy(asc(users.name));
   }
 
-  /** Admin provisioned account. Issues no tokens: the owner signs in themselves. */
+  /**
+   * Admin provisioned account, by invitation (ADR-072). The account starts with
+   * a random password nobody knows; the owner chooses theirs from the link,
+   * which is mailed when mail is on and returned here either way.
+   */
   @Post()
   async create(@CurrentUser() actor: AuthenticatedUser, @Body() dto: CreateUserDto) {
     await this.authz.requireAdmin(actor);
@@ -160,7 +161,7 @@ export class MeController {
       .values({
         email: dto.email,
         name: dto.name,
-        passwordHash: await this.passwords.hash(dto.password),
+        passwordHash: await this.passwords.hash(randomBytes(32).toString('base64url')),
         region: dto.region,
         isAdmin: dto.isAdmin ?? false,
       })
@@ -180,7 +181,44 @@ export class MeController {
       metadata: { createdUserId: created.id, email: created.email, isAdmin: created.isAdmin },
     });
 
-    return created;
+    const invitation = await this.links.issue(created, 'invite');
+    await this.audit.record({
+      event: AUDIT_EVENTS.USER_INVITED,
+      userId: actor.userId,
+      metadata: { targetUserId: created.id, mailed: invitation.mailed },
+    });
+
+    return { ...created, invitation };
+  }
+
+  /**
+   * Issues a fresh link for an account: an invitation for someone who never set
+   * a password, a reset otherwise. Earlier unused links of that kind stop
+   * working. The link is returned so the admin can hand it over directly.
+   */
+  @Post(':userId/link')
+  @HttpCode(HttpStatus.OK)
+  async issueLink(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('userId') userId: string,
+    @Body() body: { purpose?: string },
+  ) {
+    await this.authz.requireAdmin(actor);
+    const purpose = body?.purpose === 'reset' ? 'reset' : 'invite';
+    const [target] = await this.database.db
+      .select({ id: users.id, email: users.email, name: users.name })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!target) throw new NotFoundException('Account not found');
+
+    const link = await this.links.issue(target, purpose);
+    await this.audit.record({
+      event: AUDIT_EVENTS.USER_INVITED,
+      userId: actor.userId,
+      metadata: { targetUserId: target.id, purpose, mailed: link.mailed },
+    });
+    return link;
   }
 
   @Patch(':userId')

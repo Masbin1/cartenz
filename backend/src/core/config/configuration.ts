@@ -624,6 +624,15 @@ const environmentSchema = z.object({
    * notification opens. Falls back to the first CORS origin when empty.
    */
   PORTAL_PUBLIC_URL: z.string().default(''),
+  /**
+   * Outgoing mail for invitations and password resets (ADR-072), as one URL:
+   * `smtps://user:pass@smtp.example.com:465` or `smtp://…:587` (STARTTLS).
+   * Empty keeps mail off: links are still issued, and an admin copies them
+   * from the Users page instead.
+   */
+  SMTP_URL: z.string().default(''),
+  /** The From header, e.g. `Cartenz <no-reply@linkederp.com>`. */
+  MAIL_FROM: z.string().default(''),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;
@@ -843,6 +852,11 @@ export interface AppConfig {
     readonly privateKey: string;
     readonly subject: string;
     readonly portalUrl: string | null;
+  };
+  readonly mail: {
+    /** Null when mail is off. */
+    readonly smtpUrl: string | null;
+    readonly from: string;
   };
 }
 
@@ -1272,6 +1286,10 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
         emptyToUndefined(env.PORTAL_PUBLIC_URL)?.trim().replace(/\/+$/, '') ??
         env.CORS_ORIGINS[0]?.replace(/\/+$/, '') ??
         null,
+    },
+    mail: {
+      smtpUrl: emptyToUndefined(env.SMTP_URL)?.trim() ?? null,
+      from: emptyToUndefined(env.MAIL_FROM)?.trim() ?? 'Cartenz <no-reply@linkederp.com>',
     },
   };
 }

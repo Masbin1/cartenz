@@ -8,6 +8,7 @@ import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { UserLinksService } from './user-links.service';
 
 /**
  * Global because JwtAuthGuard is registered application-wide and therefore needs
@@ -26,7 +27,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
     }),
   ],
   controllers: [AuthController, MeController],
-  providers: [AuthService, PasswordService, TokenService, JwtAuthGuard],
+  providers: [AuthService, PasswordService, TokenService, JwtAuthGuard, UserLinksService],
   exports: [TokenService, JwtAuthGuard, PasswordService],
 })
 export class AuthModule {}

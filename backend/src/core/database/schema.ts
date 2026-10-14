@@ -118,6 +118,30 @@ export const refreshTokens = pgTable(
 );
 
 /**
+ * One-time links: an invitation to set a first password, or a reset of a
+ * forgotten one (ADR-072). Only the SHA-256 of the token is stored, like
+ * `refresh_tokens`, so a database read does not yield a usable link.
+ */
+export const userTokens = pgTable(
+  'user_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    purpose: text('purpose', { enum: ['invite', 'reset'] }).notNull(),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tokenHashUnique: uniqueIndex('user_tokens_hash_unique').on(table.tokenHash),
+    byUser: index('user_tokens_user_idx').on(table.userId),
+  }),
+);
+
+/**
  * Ciphertext store (ADR-014). The only table holding encrypted secret material,
  * and therefore the only table a migration to Vault must drain. `dataKeyId`
  * names the per-project key the value is sealed under.
