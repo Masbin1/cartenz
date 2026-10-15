@@ -9,17 +9,18 @@ import { MailSettingsService } from '../settings/mail-settings.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
 
-export type LinkPurpose = 'invite' | 'reset';
+export type LinkPurpose = 'invite' | 'reset' | 'verify';
 
 /** How long each kind of link stays usable. */
 export const LINK_TTL_MS: Record<LinkPurpose, number> = {
   invite: 72 * 60 * 60 * 1000,
   reset: 60 * 60 * 1000,
+  verify: 24 * 60 * 60 * 1000,
 };
 
 export const hashLinkToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
-/** The portal path a link opens. Both land on the same set-password page. */
+/** The portal path a link opens. All three land on the same set-password page. */
 export function linkUrl(portalUrl: string, purpose: LinkPurpose, token: string): string {
   return `${portalUrl}/set-password?purpose=${purpose}&token=${encodeURIComponent(token)}`;
 }
@@ -102,29 +103,38 @@ export class UserLinksService {
     });
 
     if (!user?.isActive || !(await this.mailEnabled())) return;
+    await this.issueUnlessRecent(user, 'reset');
+  }
 
-    // ponytail: one recent reset per account stands in for a rate limiter; add
-    // a per-IP throttle if the form is ever abused across many addresses.
+  /**
+   * Issues a link unless one of the same purpose went out in the last two
+   * minutes, for the public forms that anyone can submit repeatedly.
+   */
+  async issueUnlessRecent(
+    user: { id: string; email: string; name: string },
+    purpose: LinkPurpose,
+  ): Promise<void> {
+    // ponytail: one recent link per account stands in for a rate limiter; add
+    // a per-IP throttle if the forms are ever abused across many addresses.
     const [recent] = await this.database.db
       .select({ id: userTokens.id })
       .from(userTokens)
       .where(
         and(
           eq(userTokens.userId, user.id),
-          eq(userTokens.purpose, 'reset'),
+          eq(userTokens.purpose, purpose),
           gt(userTokens.createdAt, new Date(Date.now() - 2 * 60 * 1000)),
         ),
       )
       .limit(1);
-    if (recent) return;
-
-    await this.issue(user, 'reset');
+    if (!recent) await this.issue(user, purpose);
   }
 
   /**
    * Sets a password from a link. The token is consumed in the same statement
    * that checks it, so two submissions of one link cannot both succeed. Every
    * session of the account is revoked: whoever held the old password is out.
+   * Any link also proves the inbox, so the address counts as verified.
    */
   async redeem(token: string, newPassword: string, ipAddress: string | null): Promise<void> {
     const [consumed] = await this.database.db
@@ -147,7 +157,11 @@ export class UserLinksService {
 
     await this.database.db
       .update(users)
-      .set({ passwordHash: await this.passwords.hash(newPassword), updatedAt: new Date() })
+      .set({
+        passwordHash: await this.passwords.hash(newPassword),
+        emailVerifiedAt: sql`coalesce(${users.emailVerifiedAt}, now())`,
+        updatedAt: new Date(),
+      })
       .where(eq(users.id, consumed.userId));
     await this.tokens.revokeAllForUser(consumed.userId);
 
@@ -181,21 +195,8 @@ export class UserLinksService {
     });
     if (!transport) return false;
 
-    const invite = purpose === 'invite';
-    const subject = invite ? 'You are invited to Cartenz' : 'Reset your Cartenz password';
-    const text = [
-      `Hello ${user.name},`,
-      '',
-      invite
-        ? 'An account was created for you on Cartenz. Choose a password to start:'
-        : 'Somebody asked to reset the password for this account. If it was you, choose a new one:',
-      '',
-      url,
-      '',
-      invite
-        ? 'The link works once and expires in 72 hours.'
-        : 'The link works once and expires in 1 hour. If you did not ask, ignore this email; your password stays as it is.',
-    ].join('\n');
+    const text = [`Hello ${user.name},`, '', MAIL[purpose].intro, '', url, '', MAIL[purpose].outro].join('\n');
+    const subject = MAIL[purpose].subject;
 
     try {
       await transport.mailer.sendMail({ from: transport.from, to: user.email, subject, text });
@@ -207,3 +208,21 @@ export class UserLinksService {
     }
   }
 }
+
+const MAIL: Record<LinkPurpose, { subject: string; intro: string; outro: string }> = {
+  invite: {
+    subject: 'You are invited to Cartenz',
+    intro: 'An account was created for you on Cartenz. Choose a password to start:',
+    outro: 'The link works once and expires in 72 hours.',
+  },
+  reset: {
+    subject: 'Reset your Cartenz password',
+    intro: 'Somebody asked to reset the password for this account. If it was you, choose a new one:',
+    outro: 'The link works once and expires in 1 hour. If you did not ask, ignore this email; your password stays as it is.',
+  },
+  verify: {
+    subject: 'Confirm your email for Cartenz',
+    intro: 'Somebody signed up to Cartenz with this address. If it was you, confirm it by choosing your password:',
+    outro: 'The link works once and expires in 24 hours. If it was not you, ignore this email; no account becomes usable without it.',
+  },
+};

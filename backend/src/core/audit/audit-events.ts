@@ -29,6 +29,8 @@ export const AUDIT_EVENTS = {
   USER_RESET_REQUESTED: 'user.reset_requested',
   /** A one-time link was used to set a password (ADR-072). */
   USER_LINK_REDEEMED: 'user.link_redeemed',
+  /** A self-registered account proved its inbox with a verify link (ADR-072). */
+  USER_EMAIL_VERIFIED: 'user.email_verified',
 
   PROJECT_CREATED: 'project.created',
   PROJECT_UPDATED: 'project.updated',
@@ -139,6 +141,8 @@ export const AUDIT_EVENTS = {
   ODOO_SETTINGS_UPDATED: 'odoo_settings.updated',
   /** An admin changed the outgoing mail settings or the portal URL (ADR-072). */
   MAIL_SETTINGS_UPDATED: 'mail_settings.updated',
+  /** An admin changed the organisation name or allowed email domains (ADR-072). */
+  ORGANIZATION_UPDATED: 'organization.updated',
 
   /**
    * An ephemeral preview instance was started, stopped, or failed to build

@@ -47,7 +47,7 @@ describe('password flows', () => {
       },
     } as unknown as TokenService;
 
-    const service = new AuthService(db, passwords, tokens, noAudit, config);
+    const service = new AuthService(db, passwords, tokens, noAudit, config, {} as never, {} as never);
 
     return { service, row, revocations };
   }

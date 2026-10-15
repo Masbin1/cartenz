@@ -36,6 +36,7 @@ import { USER_REGIONS, type UserRegion } from '../../core/enums';
 import { PasswordService } from './password.service';
 import { AuthService } from './auth.service';
 import { UserLinksService } from './user-links.service';
+import { OrganizationService } from '../settings/organization.service';
 import { randomBytes } from 'node:crypto';
 import { ResetPasswordDto } from './dto/auth.dto';
 
@@ -96,7 +97,7 @@ class CreateUserDto {
  * — which is exactly the confusion the organisation model produced.
  *
  * Only an admin may create accounts, change them, or delete them. The exception
- * is self-registration, which stays open.
+ * is self-registration from an allowed domain (ADR-072 addendum 2).
  */
 @Controller('users')
 export class MeController {
@@ -107,6 +108,7 @@ export class MeController {
     private readonly passwords: PasswordService,
     private readonly auth: AuthService,
     private readonly links: UserLinksService,
+    private readonly organization: OrganizationService,
   ) {}
 
   @Get('me')
@@ -145,6 +147,7 @@ export class MeController {
   @Post()
   async create(@CurrentUser() actor: AuthenticatedUser, @Body() dto: CreateUserDto) {
     await this.authz.requireAdmin(actor);
+    await this.organization.requireAllowedEmail(dto.email);
 
     const [existing] = await this.database.db
       .select({ id: users.id })

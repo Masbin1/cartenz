@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 /**
  * The deployment's Odoo paths (ADR-033, ADR-044).
@@ -69,4 +69,19 @@ export class UpdateMailSettingsDto {
   @IsString()
   @MaxLength(500)
   portalUrl?: string;
+}
+
+/** Organisation name and allowed email domains (ADR-072 addendum 2). */
+export class UpdateOrganizationDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  name?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(253, { each: true })
+  allowedDomains?: string[];
 }

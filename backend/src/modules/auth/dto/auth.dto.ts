@@ -1,4 +1,4 @@
-import { IsEmail, IsIn, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { USER_REGIONS, type UserRegion } from '../../../core/enums';
 
@@ -21,10 +21,12 @@ export class RegisterDto {
   @Transform(trimLower)
   email!: string;
 
+  /** Only the first account types one; everyone after chooses it from the emailed link. */
+  @IsOptional()
   @IsString()
   @MinLength(12, { message: 'The password must be at least 12 characters' })
   @MaxLength(256)
-  password!: string;
+  password?: string;
 
   @IsString()
   @IsNotEmpty({ message: 'A name is required' })

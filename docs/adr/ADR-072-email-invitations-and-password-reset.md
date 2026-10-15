@@ -49,3 +49,28 @@ signed-in admin and reports the SMTP server's own error.
 Any admin can therefore redirect where invitation and reset mail is sent. That
 is within what an admin already controls, and every change is audited
 (`mail_settings.updated`, without the password).
+
+## Addendum 2 (15 October 2026): organisation domains and verified sign-up
+
+Supersedes decision 1 for every account after the first.
+
+- **Settings → Organization** holds a name and the allowed email domains
+  (`organization`, one row). Sign-up and admin invitations refuse any other
+  domain. Existing accounts outside the list keep working; an admin
+  deactivates them by hand if needed. The first account's domain is added
+  automatically, and migration 0030 seeds it from the first admin.
+- **Self-registration is open again, from an allowed domain only.** It asks for
+  no password: it creates the account with a random one and mails a `verify`
+  link (24 hours) that lands on the set-password page. Sign-in is refused until
+  `users.email_verified_at` is set; any redeemed link sets it, so invitations
+  verify too. Existing accounts were marked verified.
+- **Whether an address exists is proved only by the link.** SMTP probing
+  (`RCPT TO`) was rejected: Google Workspace, Microsoft 365 and catch-all
+  domains accept every address, and probing gets the server's IP listed. A
+  made-up address at an allowed domain gets an account row that can never sign
+  in.
+- The register form answers `{ pending: true }` whether or not the address is
+  taken, and re-sends a verify link at most once per two minutes. Without mail,
+  self-registration is closed; invitations still work.
+- Still no per-IP limit; it matters more now that sign-up is public. Unverified
+  rows are not purged; add a sweep if they pile up.

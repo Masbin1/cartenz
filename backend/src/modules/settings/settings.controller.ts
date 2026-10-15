@@ -22,7 +22,8 @@ import {
 import { ModelSettingsService } from './model-settings.service';
 import { OdooSettingsService } from './odoo-settings.service';
 import { OdooVersionsService } from './odoo-versions.service';
-import { UpdateMailSettingsDto, UpdateOdooSettingsDto } from './dto/odoo-settings.dto';
+import { UpdateMailSettingsDto, UpdateOdooSettingsDto, UpdateOrganizationDto } from './dto/odoo-settings.dto';
+import { OrganizationService } from './organization.service';
 import { MailSettingsService } from './mail-settings.service';
 import {
   CreateOdooVersionRepositoryDto,
@@ -72,6 +73,7 @@ export class SettingsController {
     private readonly modelSettings: ModelSettingsService,
     private readonly odooSettings: OdooSettingsService,
     private readonly mailSettings: MailSettingsService,
+    private readonly organization: OrganizationService,
     private readonly odooVersions: OdooVersionsService,
     private readonly gitCredentials: GitCredentialsService,
     private readonly git: GitService,
@@ -116,6 +118,22 @@ export class SettingsController {
   ) {
     await this.authz.requireAdmin(user);
     return this.mailSettings.update(user.userId, dto);
+  }
+
+  /** Organisation name and the email domains that may hold an account. Admin only. */
+  @Get('organization')
+  async getOrganization(@CurrentUser() user: AuthenticatedUser) {
+    await this.authz.requireAdmin(user);
+    return this.organization.get();
+  }
+
+  @Put('organization')
+  async updateOrganization(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdateOrganizationDto,
+  ) {
+    await this.authz.requireAdmin(user);
+    return this.organization.update(user.userId, dto);
   }
 
   /** Sends a test email to the admin who asked, with the settings as saved. */

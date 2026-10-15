@@ -83,6 +83,11 @@ export const users = pgTable(
     isAdmin: boolean('is_admin').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    /**
+     * When the owner proved they read this inbox: a verify or invitation link
+     * redeemed (ADR-072 addendum 2). Null blocks sign-in.
+     */
+    emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
     ...timestamps,
   },
   (table) => ({
@@ -129,7 +134,7 @@ export const userTokens = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    purpose: text('purpose', { enum: ['invite', 'reset'] }).notNull(),
+    purpose: text('purpose', { enum: ['invite', 'reset', 'verify'] }).notNull(),
     tokenHash: text('token_hash').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     usedAt: timestamp('used_at', { withTimezone: true }),
@@ -523,6 +528,20 @@ export const mailSettings = pgTable('mail_settings', {
   smtpPasswordRef: text('smtp_password_ref'),
   mailFrom: text('mail_from'),
   portalUrl: text('portal_url'),
+  updatedByUserId: uuid('updated_by_user_id').references(() => users.id, {
+    onDelete: 'set null',
+  }),
+  ...timestamps,
+});
+
+/**
+ * The organisation and the email domains that may hold an account (ADR-072
+ * addendum 2). One row.
+ */
+export const organization = pgTable('organization', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull().default(''),
+  allowedDomains: text('allowed_domains').array().notNull().default(sql`'{}'`),
   updatedByUserId: uuid('updated_by_user_id').references(() => users.id, {
     onDelete: 'set null',
   }),

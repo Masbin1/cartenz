@@ -4,6 +4,7 @@ import { OdooSettingsService } from './odoo-settings.service';
 import { OdooVersionsService } from './odoo-versions.service';
 import { GitCredentialsService } from './git-credentials.service';
 import { MailSettingsService } from './mail-settings.service';
+import { OrganizationService } from './organization.service';
 
 /**
  * Deployment settings: the model provider chain, the Odoo estate, and
@@ -22,6 +23,7 @@ import { MailSettingsService } from './mail-settings.service';
     OdooVersionsService,
     GitCredentialsService,
     MailSettingsService,
+    OrganizationService,
   ],
   exports: [
     ModelSettingsService,
@@ -29,6 +31,7 @@ import { MailSettingsService } from './mail-settings.service';
     OdooVersionsService,
     GitCredentialsService,
     MailSettingsService,
+    OrganizationService,
   ],
 })
 export class ModelSettingsModule {}

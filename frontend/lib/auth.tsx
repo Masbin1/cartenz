@@ -18,12 +18,13 @@ interface AuthState {
   user: CurrentUser | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
+  /** Resolves 'pending' when the account waits for its emailed verify link. */
   register: (input: {
     email: string;
-    password: string;
+    password?: string;
     name: string;
     region: string;
-  }) => Promise<void>;
+  }) => Promise<'pending' | void>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -82,8 +83,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const register = useCallback(
-    async (input: { email: string; password: string; name: string; region: string }) => {
+    async (input: { email: string; password?: string; name: string; region: string }) => {
       const tokens = await api.auth.register(input);
+      if ('pending' in tokens) return 'pending' as const;
       tokenStore.set(tokens);
       await load();
       router.push('/dashboard');

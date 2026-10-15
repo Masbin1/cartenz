@@ -20,8 +20,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  // Only the first, admin, account registers itself; everyone else is invited (ADR-072).
-  const [registrationOpen, setRegistrationOpen] = useState(false);
+  // Sign-up: the first, admin, account; then anyone from an allowed domain while mail works (ADR-072).
+  const [registration, setRegistration] = useState({ open: false, firstAccount: false });
 
   useEffect(() => {
     if (!loading && user) router.replace('/dashboard');
@@ -30,8 +30,8 @@ export default function LoginPage() {
   useEffect(() => {
     api.auth
       .registration()
-      .then(({ open }) => setRegistrationOpen(open))
-      .catch(() => setRegistrationOpen(false));
+      .then(setRegistration)
+      .catch(() => undefined);
   }, []);
 
   const submit = async (event: React.FormEvent) => {
@@ -111,11 +111,18 @@ export default function LoginPage() {
         </div>
 
         <p className="mt-8 text-center text-callout text-content-muted">
-          {registrationOpen ? (
+          {registration.firstAccount ? (
             <>
               Setting up this deployment?{' '}
               <Link href="/register" className="link">
                 Create the first account
+              </Link>
+            </>
+          ) : registration.open ? (
+            <>
+              No account yet?{' '}
+              <Link href="/register" className="link">
+                Create one with your work email
               </Link>
             </>
           ) : (

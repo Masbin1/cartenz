@@ -29,6 +29,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton, SkeletonRows } from '@/components/ui/skeleton';
 import { AccessRequestsPanel } from '@/components/projects/access-requests-panel';
 import { MailSettingsPanel } from '@/components/settings/mail-settings-panel';
+import { OrganizationPanel } from '@/components/settings/organization-panel';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
 import type {
@@ -719,7 +720,12 @@ export default function SettingsPage() {
     { id: 'odoo-source', label: 'Odoo source' },
     { id: 'odoo-versions', label: 'Odoo versions' },
     { id: 'git-credentials', label: 'Git credentials' },
-    ...(user?.isAdmin ? [{ id: 'email', label: 'Email' }] : []),
+    ...(user?.isAdmin
+      ? [
+          { id: 'organization', label: 'Organization' },
+          { id: 'email', label: 'Email' },
+        ]
+      : []),
     { id: 'ai-providers', label: 'AI providers' },
     { id: 'model-boundary', label: 'What the model sees' },
   ];
@@ -1609,6 +1615,7 @@ export default function SettingsPage() {
               </div>
             </Section>
 
+            {user?.isAdmin ? <OrganizationPanel id="organization" /> : null}
             {user?.isAdmin ? <MailSettingsPanel id="email" /> : null}
 
             {/* ---- AI providers (ADR-023) ---------------------------------- */}

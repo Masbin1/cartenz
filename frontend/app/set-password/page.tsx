@@ -25,7 +25,8 @@ export default function SetPasswordPage() {
 function SetPasswordForm() {
   const params = useSearchParams();
   const token = params.get('token') ?? '';
-  const invite = params.get('purpose') !== 'reset';
+  const purpose = params.get('purpose');
+  const invite = purpose !== 'reset';
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -65,7 +66,11 @@ function SetPasswordForm() {
         <div className="mb-10 flex flex-col items-center text-center">
           <CartenzMark size={44} />
           <h1 className="mt-6 text-display-sm text-content">
-            {invite ? 'Welcome to Cartenz' : 'Choose a new password'}
+            {purpose === 'verify'
+              ? 'Confirm your email'
+              : invite
+                ? 'Welcome to Cartenz'
+                : 'Choose a new password'}
           </h1>
           <p className="mt-2 text-body text-content-muted">
             {invite
@@ -82,7 +87,9 @@ function SetPasswordForm() {
             </Alert>
           ) : done ? (
             <div className="space-y-5">
-              <Alert tone="success">Your password is set.</Alert>
+              <Alert tone="success">
+                {purpose === 'verify' ? 'Your email is confirmed and your password is set.' : 'Your password is set.'}
+              </Alert>
               <Link href="/login" className="btn-primary h-11 w-full">
                 Sign in
               </Link>

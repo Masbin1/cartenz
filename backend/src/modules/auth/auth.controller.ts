@@ -29,12 +29,16 @@ export class AuthController {
     private readonly links: UserLinksService,
   ) {}
 
-  /** Whether this deployment still accepts its first, admin, registration. */
+  /**
+   * How the register page should behave: `firstAccount` asks for a password and
+   * makes an admin; otherwise sign-up is open only while mail can confirm the
+   * address (ADR-072 addendum 2).
+   */
   @Public()
   @Get('registration')
-  async registration(): Promise<{ open: boolean; mailEnabled: boolean }> {
-    const [open, mailEnabled] = await Promise.all([this.auth.registrationOpen(), this.links.mailEnabled()]);
-    return { open, mailEnabled };
+  async registration(): Promise<{ open: boolean; firstAccount: boolean; mailEnabled: boolean }> {
+    const [firstAccount, mailEnabled] = await Promise.all([this.auth.firstAccount(), this.links.mailEnabled()]);
+    return { open: firstAccount || mailEnabled, firstAccount, mailEnabled };
   }
 
   /**
@@ -61,7 +65,7 @@ export class AuthController {
   @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  register(@Body() dto: RegisterDto, @Req() request: Request): Promise<AuthTokensResponse> {
+  register(@Body() dto: RegisterDto, @Req() request: Request): Promise<AuthTokensResponse | { pending: true }> {
     return this.auth.register(dto, clientIp(request));
   }
 

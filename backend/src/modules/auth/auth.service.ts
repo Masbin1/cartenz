@@ -7,7 +7,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { scryptSync } from 'node:crypto';
+import { randomBytes, scryptSync } from 'node:crypto';
 import { count, eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
 import { users } from '../../core/database/schema';
@@ -18,6 +18,8 @@ import type { AppConfig } from '../../core/config/configuration';
 import type { UserRegion } from '../../core/enums';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
+import { UserLinksService } from './user-links.service';
+import { OrganizationService, emailDomain } from '../settings/organization.service';
 import type {
   AuthTokensResponse,
   ChangePasswordDto,
@@ -29,10 +31,12 @@ import type {
 /**
  * Registration, sign-in, refresh and sign-out.
  *
- * Registration creates the user in the region they chose. Only the first
- * account can register, and it becomes admin — with no organisation owner to
+ * Registration creates the user in the region they chose. The first account
+ * becomes admin with the password it typed — with no organisation owner to
  * inherit the role, somebody has to be able to manage the deployment
- * (ADR-044). Everyone after arrives by invitation (ADR-072).
+ * (ADR-044) — and its domain becomes the first allowed one. Everyone after
+ * registers only from an allowed domain and only through a link mailed to the
+ * address, which is how the inbox is proved to exist (ADR-072 addendum 2).
  */
 @Injectable()
 export class AuthService {
@@ -42,14 +46,72 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly audit: AuditService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly links: UserLinksService,
+    private readonly organization: OrganizationService,
   ) {}
 
-  async registrationOpen(): Promise<boolean> {
+  /** True while no account exists: the next registration is the first admin. */
+  async firstAccount(): Promise<boolean> {
     const [{ total }] = await this.database.db.select({ total: count() }).from(users);
     return total === 0;
   }
 
-  async register(dto: RegisterDto, ipAddress: string | null): Promise<AuthTokensResponse> {
+  /**
+   * Registration after the first account. Answers the same whether or not the
+   * address is taken, so the form cannot reveal who has an account; a link goes
+   * out only for a new or still-unverified address. The account it creates has
+   * a password nobody knows and cannot sign in until the link is used.
+   */
+  async registerByEmail(dto: RegisterDto, ipAddress: string | null): Promise<{ pending: true }> {
+    await this.organization.requireAllowedEmail(dto.email);
+    if (!(await this.links.mailEnabled())) {
+      throw new ForbiddenException(
+        'Sign-up needs email to confirm the address, and mail is not set up. Ask an administrator for an invitation.',
+      );
+    }
+
+    const [existing] = await this.database.db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        verified: users.emailVerifiedAt,
+      })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${dto.email.toLowerCase()}`)
+      .limit(1);
+
+    if (existing) {
+      if (!existing.verified) await this.links.issueUnlessRecent(existing, 'verify');
+      return { pending: true };
+    }
+
+    const [created] = await this.database.db
+      .insert(users)
+      .values({
+        email: dto.email,
+        name: dto.name,
+        passwordHash: await this.passwords.hash(randomBytes(32).toString('base64url')),
+        region: dto.region,
+      })
+      .onConflictDoNothing()
+      .returning({ id: users.id, email: users.email, name: users.name, region: users.region });
+    // A concurrent registration of the same address won; its link is on the way.
+    if (!created) return { pending: true };
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.USER_REGISTERED,
+      userId: created.id,
+      ipAddress,
+      metadata: { email: created.email, region: created.region, verified: false },
+    });
+    await this.links.issue(created, 'verify');
+    return { pending: true };
+  }
+
+  async register(dto: RegisterDto, ipAddress: string | null): Promise<AuthTokensResponse | { pending: true }> {
+    if (!(await this.firstAccount())) return this.registerByEmail(dto, ipAddress);
+    if (!dto.password) throw new BadRequestException('The first account needs a password.');
     const passwordHash = await this.passwords.hash(dto.password);
 
     const created = await this.database.transaction(async (tx) => {
@@ -64,12 +126,10 @@ export class AuthService {
       }
 
       // First account is admin, so a fresh deployment is never unmanageable.
-      // Every later account arrives by an admin's invitation (ADR-072).
+      // A race with another first registration is lost here, not merged.
       const [{ total }] = await tx.select({ total: count() }).from(users);
       if (total > 0) {
-        throw new ForbiddenException(
-          'Registration is closed. Ask an administrator for an invitation.',
-        );
+        throw new ConflictException('This deployment already has its first account. Register again.');
       }
       const isAdmin = true;
 
@@ -81,6 +141,8 @@ export class AuthService {
           passwordHash,
           region: dto.region,
           isAdmin,
+          // Nobody could have sent them mail yet; the admin's address is trusted.
+          emailVerifiedAt: new Date(),
         })
         .returning({
           id: users.id,
@@ -92,6 +154,11 @@ export class AuthService {
 
       return created;
     });
+
+    const { allowedDomains } = await this.organization.get();
+    if (!allowedDomains.length) {
+      await this.organization.update(created.id, { allowedDomains: [emailDomain(created.email)] });
+    }
 
     await this.audit.record({
       event: AUDIT_EVENTS.USER_REGISTERED,
@@ -113,6 +180,7 @@ export class AuthService {
         isAdmin: users.isAdmin,
         passwordHash: users.passwordHash,
         isActive: users.isActive,
+        emailVerifiedAt: users.emailVerifiedAt,
       })
       .from(users)
       .where(sql`lower(${users.email}) = ${dto.email.toLowerCase()}`)
@@ -137,6 +205,11 @@ export class AuthService {
         },
       });
       throw new UnauthorizedException('The email address or password is incorrect.');
+    }
+
+    // Reached only with the right password, so it reveals nothing to a guesser.
+    if (!user.emailVerifiedAt) {
+      throw new ForbiddenException('Confirm your email address first: open the link we sent you.');
     }
 
     await this.database.db

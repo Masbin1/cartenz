@@ -130,6 +130,11 @@ export interface MailSettings {
   readonly effectivePortalUrl: string | null;
 }
 
+export interface Organization {
+  readonly name: string;
+  readonly allowedDomains: string[];
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -287,12 +292,14 @@ async function attemptRefresh(): Promise<boolean> {
  */
 export const api = {
   auth: {
+    /** Tokens for the first account; `pending` for everyone after, until the emailed link is used. */
     register: (body: {
       email: string;
-      password: string;
+      password?: string;
       name: string;
       region: string;
-    }) => request<AuthTokens>('/auth/register', { method: 'POST', body, skipRefresh: true }),
+    }) =>
+      request<AuthTokens | { pending: true }>('/auth/register', { method: 'POST', body, skipRefresh: true }),
 
     login: (body: { email: string; password: string }) =>
       request<AuthTokens>('/auth/login', { method: 'POST', body, skipRefresh: true }),
@@ -303,9 +310,11 @@ export const api = {
         body: refreshToken ? { refreshToken } : {},
       }),
 
-    /** Whether the first, admin, registration is still open (ADR-072). */
+    /** Whether sign-up is open, and whether the next account is the first, admin, one (ADR-072). */
     registration: () =>
-      request<{ open: boolean; mailEnabled: boolean }>('/auth/registration', { skipRefresh: true }),
+      request<{ open: boolean; firstAccount: boolean; mailEnabled: boolean }>('/auth/registration', {
+        skipRefresh: true,
+      }),
 
     /** Mails a reset link when the address has an account; answers the same either way. */
     forgotPassword: (email: string) =>
@@ -367,6 +376,11 @@ export const api = {
       mailFrom?: string;
       portalUrl?: string;
     }) => request<MailSettings>('/settings/mail-settings', { method: 'PUT', body }),
+    /** Organisation name and the email domains allowed to hold an account. Admin only. */
+    organization: () => request<Organization>('/settings/organization'),
+    updateOrganization: (body: { name?: string; allowedDomains?: string[] }) =>
+      request<Organization>('/settings/organization', { method: 'PUT', body }),
+
     /** Sends a test email to the signed-in admin with the saved settings. */
     testMail: () => request<{ sent: true }>('/settings/mail-settings/test', { method: 'POST' }),
 
