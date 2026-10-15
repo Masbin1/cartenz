@@ -811,7 +811,8 @@ function OdooOnlineSetupPanel({
       <div className="space-y-8">
         <ol className="space-y-1.5 text-callout text-content-muted">
           <li>
-            1. Drag <span className="text-content">Fill from Cartenz</span> to your bookmarks bar (once).
+            1. Drag <span className="text-content">Fill from Cartenz</span> to your bookmarks bar. It
+            carries this project&apos;s details, so replace the old bookmark for each new project.
           </li>
           <li>
             2. Open odoo.com/trial, press Continue, click the bookmark, then press{' '}
@@ -834,7 +835,7 @@ function OdooOnlineSetupPanel({
               ref={(node) => node?.setAttribute('href', trialFillBookmarklet(signup))}
               onClick={(event) => event.preventDefault()}
               className="btn-secondary w-fit cursor-grab"
-              title="Drag to your bookmarks bar, then click it on odoo.com/trial"
+              title="Drag to your bookmarks bar (replacing any older one), then click it on odoo.com/trial"
             >
               Fill from Cartenz
             </a>

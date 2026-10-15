@@ -160,7 +160,7 @@ export const ODOO_ONLINE_SUBDOMAIN = /^[a-z0-9][a-z0-9-]{2,48}[a-z0-9]$/;
  * availability check). The operator still presses Start Now.
  *
  * ponytail: selectors mirror odoo.com's markup as of 2026-10-13; if they rename
- * a field, that field is silently left for the operator to type.
+ * a field, the bookmarklet names it in an alert for the operator to type.
  */
 export function trialFillBookmarklet(signup: {
   companyName: string;
@@ -184,7 +184,11 @@ export function trialFillBookmarklet(signup: {
     country: signup.countryCode,
     db_name: signup.subdomain,
   };
-  const script = `(()=>{const v=${JSON.stringify(values)};const f=document.querySelector('.oe_start_trial_form');if(!f){alert('Open odoo.com/trial and press Continue first.');return}const set=(n,x)=>{const e=f.querySelector('[name="'+n+'"]');if(!e||!x)return;e.value=x;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));e.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true}))};['username','company_name','email','phone','lang','company_size','plan'].forEach(n=>set(n,v[n]));const c=f.querySelector('select[name="country_id"] option[data-code="'+v.country+'"]');if(c)set('country_id',c.value);setTimeout(()=>{document.querySelector('#edit-db-name')?.click();set('db_name',v.db_name)},1500)})()`;
+  // Fields are re-applied for ~3 s (only when a value differs, so odoo.com's
+  // change handlers do not refire) because the browser's own autofill can
+  // clear or overwrite a field after a single write. Anything still not
+  // holding its value at the end is named in an alert, never left silently empty.
+  const script = `(()=>{const v=${JSON.stringify(values)};const f=document.querySelector('.oe_start_trial_form');if(!f){alert('Open odoo.com/trial first, then click Fill from Cartenz.');return}const el=n=>f.querySelector('[name="'+n+'"]');const set=(n,x)=>{const e=el(n);if(!e||!x||e.value===x)return;const d=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(e),'value');if(d&&d.set)d.set.call(e,x);else e.value=x;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));e.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true}))};const c=f.querySelector('select[name="country_id"] option[data-code="'+v.country+'"]');const all=()=>{['username','company_name','email','phone','lang','company_size','plan'].forEach(n=>set(n,v[n]));if(c)set('country_id',c.value)};all();let i=0;const t=setInterval(()=>{all();if(++i>=10)clearInterval(t)},300);setTimeout(()=>{document.querySelector('#edit-db-name')?.click();set('db_name',v.db_name);setTimeout(()=>{all();const miss=['username','company_name','email','phone','db_name'].filter(n=>v[n]&&(!el(n)||el(n).value!==v[n]));if(miss.length)alert('Cartenz could not fill: '+miss.join(', ')+'. Please type these by hand.')},2000)},1500)})()`;
   return `javascript:${encodeURIComponent(script)}`;
 }
 
