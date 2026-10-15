@@ -69,23 +69,39 @@ test('trialSignupUrl carries the chosen apps via selected_app, colon-separated',
   );
 });
 
-test('trialFillBookmarklet carries the plan and runs as a javascript: URL', () => {
-  const url = trialFillBookmarklet({
+test('trialSignupUrl carries a signup plan in the fragment, never the query', () => {
+  const url = trialSignupUrl(['account'], 'Acme "Co"', {
     companyName: 'Acme "Co"',
     adminEmail: 'a@acme.test',
     subdomain: 'acme-co',
     countryCode: 'ID',
-    phone: '+6281234',
+    phone: '+6****34',
     companySize: '5-20',
     plan: 'plan_to_sell',
   });
+  const parsed = new URL(url);
+  // Only what odoo.com itself reads goes to its server.
+  assert.deepEqual([...parsed.searchParams.keys()], ['selected_app', 'company_name']);
+  assert.ok(parsed.hash.startsWith('#cartenz='));
+  const plan = JSON.parse(decodeURIComponent(parsed.hash.slice('#cartenz='.length)));
+  assert.deepEqual(plan, {
+    company_name: 'Acme "Co"',
+    email: 'a@acme.test',
+    phone: '+6****34',
+    company_size: '5-20',
+    plan: 'plan_to_sell',
+    country: 'ID',
+    db_name: 'acme-co',
+  });
+});
+
+test('trialFillBookmarklet is the same for every project and carries no plan', () => {
+  const url = trialFillBookmarklet();
+  assert.equal(url, trialFillBookmarklet());
   assert.ok(url.startsWith('javascript:'));
   const script = decodeURIComponent(url.slice('javascript:'.length));
-  assert.ok(script.includes('"company_name":"Acme \\"Co\\""'));
-  assert.ok(script.includes('"db_name":"acme-co"'));
-  assert.ok(script.includes('"phone":"+6281234"'));
-  assert.ok(script.includes('"company_size":"5-20"'));
-  assert.ok(script.includes('"plan":"plan_to_sell"'));
+  assert.ok(script.includes('cartenz='));
+  assert.ok(!script.includes('@'));
   new Function(script); // parses
 });
 

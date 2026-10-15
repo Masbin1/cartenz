@@ -788,11 +788,14 @@ function OdooOnlineSetupPanel({
     setCopied(label);
   };
 
-  const signupUrl = trialSignupUrl(signup?.apps ?? [], signup?.companyName);
+  // The button opens the trial with this project's plan in the URL fragment,
+  // which the one generic bookmark reads; the checklist shows the plain link.
+  const signupUrl = trialSignupUrl(signup?.apps ?? [], signup?.companyName, signup);
+  const plainSignupUrl = trialSignupUrl(signup?.apps ?? [], signup?.companyName);
 
   const checklist: { label: string; value: string }[] = signup
     ? [
-        { label: 'Signup link', value: signupUrl },
+        { label: 'Signup link', value: plainSignupUrl },
         { label: 'Instance', value: odooOnlineInstanceUrl(signup.subdomain) },
         { label: 'Name', value: signup.fullName ?? '' },
         { label: 'Company name', value: signup.companyName },
@@ -811,12 +814,13 @@ function OdooOnlineSetupPanel({
       <div className="space-y-8">
         <ol className="space-y-1.5 text-callout text-content-muted">
           <li>
-            1. Drag <span className="text-content">Fill from Cartenz</span> to your bookmarks bar. It
-            carries this project&apos;s details, so replace the old bookmark for each new project.
+            1. Once only: drag <span className="text-content">Fill from Cartenz</span> to your
+            bookmarks bar. The same bookmark works for every project.
           </li>
           <li>
-            2. Open odoo.com/trial, press Continue, click the bookmark, then press{' '}
-            <span className="text-content">Start Now</span>. Enter the code if odoo.com sends one.
+            2. Press <span className="text-content">Open odoo.com/trial</span> below, click the
+            bookmark on that tab, then press <span className="text-content">Start Now</span>. Enter
+            the code if odoo.com sends one.
           </li>
           <li>3. Verify the email and set the admin password.</li>
           <li>
@@ -832,10 +836,10 @@ function OdooOnlineSetupPanel({
             // A bookmarklet: React refuses javascript: hrefs as props, so it is set
             // on the DOM node. Clicking it here does nothing; it runs on odoo.com.
             <a
-              ref={(node) => node?.setAttribute('href', trialFillBookmarklet(signup))}
+              ref={(node) => node?.setAttribute('href', trialFillBookmarklet())}
               onClick={(event) => event.preventDefault()}
               className="btn-secondary w-fit cursor-grab"
-              title="Drag to your bookmarks bar (replacing any older one), then click it on odoo.com/trial"
+              title="Drag to your bookmarks bar once, then click it on the odoo.com/trial tab Cartenz opens"
             >
               Fill from Cartenz
             </a>

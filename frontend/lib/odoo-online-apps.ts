@@ -73,6 +73,38 @@ export const ODOO_ONLINE_APPS: readonly OdooOnlineApp[] = [
 /** Where the operator creates the database the project will connect to. */
 export const ODOO_TRIAL_SIGNUP_URL = 'https://www.odoo.com/trial';
 
+/** The signup plan fields the trial link carries for the bookmarklet. */
+export interface OdooTrialSignupPlan {
+  companyName: string;
+  adminEmail: string;
+  subdomain: string;
+  countryCode: string;
+  fullName?: string;
+  phone?: string;
+  lang?: string;
+  companySize?: string;
+  plan?: string;
+}
+
+/** The fragment key under which the trial link carries a project's signup plan. */
+export const TRIAL_FILL_HASH_KEY = 'cartenz';
+
+/** A signup plan keyed by odoo.com/trial's own form field names. */
+export function trialFillValues(signup: OdooTrialSignupPlan): Record<string, string> {
+  const values: Record<string, string> = {
+    username: signup.fullName ?? '',
+    company_name: signup.companyName,
+    email: signup.adminEmail,
+    phone: signup.phone ?? '',
+    lang: signup.lang ?? '',
+    company_size: signup.companySize ?? '',
+    plan: signup.plan ?? '',
+    country: signup.countryCode,
+    db_name: signup.subdomain,
+  };
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim().length > 0));
+}
+
 /**
  * The odoo.com trial link, with the chosen apps pre-ticked.
  *
@@ -82,17 +114,28 @@ export const ODOO_TRIAL_SIGNUP_URL = 'https://www.odoo.com/trial';
  * they do not tick the same boxes twice.
  *
  * `company_name` is read the same way (verified 2026-10-13); the form derives
- * the subdomain from it. Other fields (email, db_name) are not pre-filled.
- * The form cannot be posted from here at all:
- * it is submitted with a `grc3_token` minted by reCAPTCHA v3 in the browser, so
- * only a real browser on odoo.com can complete the signup.
+ * the subdomain from it. odoo.com reads no other field from the URL (verified
+ * 2026-10-15). The form cannot be posted from here at all: it is submitted
+ * with a `grc3_token` minted by reCAPTCHA v3 in the browser, so only a real
+ * browser on odoo.com can complete the signup.
+ *
+ * With a signup plan, the rest of the plan rides in the URL fragment
+ * (`#cartenz=<json>`), which a browser never sends to odoo.com's server. The
+ * one generic "Fill from Cartenz" bookmark reads it there, so the operator
+ * installs the bookmark once instead of once per project.
  */
-export function trialSignupUrl(apps: readonly string[], companyName = ''): string {
+export function trialSignupUrl(
+  apps: readonly string[],
+  companyName = '',
+  signup?: OdooTrialSignupPlan | null,
+): string {
   const query = new URLSearchParams();
   if (apps.length > 0) query.set('selected_app', apps.join(':'));
   if (companyName.trim()) query.set('company_name', companyName.trim());
   const qs = query.toString();
-  return qs ? `${ODOO_TRIAL_SIGNUP_URL}?${qs}` : ODOO_TRIAL_SIGNUP_URL;
+  const base = qs ? `${ODOO_TRIAL_SIGNUP_URL}?${qs}` : ODOO_TRIAL_SIGNUP_URL;
+  if (!signup) return base;
+  return `${base}#${TRIAL_FILL_HASH_KEY}=${encodeURIComponent(JSON.stringify(trialFillValues(signup)))}`;
 }
 
 /** Languages offered on odoo.com/trial (the codes its `lang` select uses, copied 2026-10-13). */
@@ -149,46 +192,29 @@ export const ODOO_ONLINE_PLANS: readonly { code: string; name: string }[] = [
 export const ODOO_ONLINE_SUBDOMAIN = /^[a-z0-9][a-z0-9-]{2,48}[a-z0-9]$/;
 
 /**
- * A bookmarklet that fills the odoo.com/trial form from a signup plan.
+ * The one "Fill from Cartenz" bookmarklet, the same for every project.
  *
  * odoo.com reads only `selected_app` and `company_name` from the URL, and its
  * form cannot be submitted from Cartenz (reCAPTCHA v3 mints `grc3_token` only on
  * odoo.com, and a server-side submit is refused as "Trial Refused" — verified
- * 2026-10-13). So the rest is filled in the operator's own browser: run on the
- * trial page, this sets each field and fires the events odoo.com listens to (its
- * company name drives the suggested domain, its domain field runs the
- * availability check). The operator still presses Start Now.
+ * 2026-10-13). So the rest is filled in the operator's own browser.
  *
- * ponytail: selectors mirror odoo.com's markup as of 2026-10-13; if they rename
- * a field, the bookmarklet names it in an alert for the operator to type.
+ * It carries no project data: it reads the plan from the `#cartenz=` fragment
+ * that `trialSignupUrl` adds (and keeps it in the tab's sessionStorage, so it
+ * still works after odoo.com changes the URL), then drops the fragment from the
+ * address bar. Each field is set with the native value setter and the events
+ * odoo.com listens to (its company name drives the suggested domain, its
+ * domain field runs the availability check), re-applied for ~3 s — only when
+ * a value differs, so odoo.com's handlers do not refire — because the
+ * browser's own autofill can clear or overwrite a field after one write.
+ * Anything still not holding its value is named in an alert, never left
+ * silently empty. The operator still presses Start Now.
+ *
+ * ponytail: selectors mirror odoo.com's markup as of 2026-10-15.
  */
-export function trialFillBookmarklet(signup: {
-  companyName: string;
-  adminEmail: string;
-  subdomain: string;
-  countryCode: string;
-  fullName?: string;
-  phone?: string;
-  lang?: string;
-  companySize?: string;
-  plan?: string;
-}): string {
-  const values = {
-    username: signup.fullName ?? '',
-    company_name: signup.companyName,
-    email: signup.adminEmail,
-    phone: signup.phone ?? '',
-    lang: signup.lang ?? '',
-    company_size: signup.companySize ?? '',
-    plan: signup.plan ?? '',
-    country: signup.countryCode,
-    db_name: signup.subdomain,
-  };
-  // Fields are re-applied for ~3 s (only when a value differs, so odoo.com's
-  // change handlers do not refire) because the browser's own autofill can
-  // clear or overwrite a field after a single write. Anything still not
-  // holding its value at the end is named in an alert, never left silently empty.
-  const script = `(()=>{const v=${JSON.stringify(values)};const f=document.querySelector('.oe_start_trial_form');if(!f){alert('Open odoo.com/trial first, then click Fill from Cartenz.');return}const el=n=>f.querySelector('[name="'+n+'"]');const set=(n,x)=>{const e=el(n);if(!e||!x||e.value===x)return;const d=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(e),'value');if(d&&d.set)d.set.call(e,x);else e.value=x;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));e.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true}))};const c=f.querySelector('select[name="country_id"] option[data-code="'+v.country+'"]');const all=()=>{['username','company_name','email','phone','lang','company_size','plan'].forEach(n=>set(n,v[n]));if(c)set('country_id',c.value)};all();let i=0;const t=setInterval(()=>{all();if(++i>=10)clearInterval(t)},300);setTimeout(()=>{document.querySelector('#edit-db-name')?.click();set('db_name',v.db_name);setTimeout(()=>{all();const miss=['username','company_name','email','phone','db_name'].filter(n=>v[n]&&(!el(n)||el(n).value!==v[n]));if(miss.length)alert('Cartenz could not fill: '+miss.join(', ')+'. Please type these by hand.')},2000)},1500)})()`;
+export function trialFillBookmarklet(): string {
+  const key = TRIAL_FILL_HASH_KEY;
+  const script = `(()=>{const K='${key}';let v=null;try{const m=location.hash.match(/[#&]${key}=([^&]*)/);if(m){v=JSON.parse(decodeURIComponent(m[1]));sessionStorage.setItem(K,JSON.stringify(v));history.replaceState(null,'',location.pathname+location.search)}else{v=JSON.parse(sessionStorage.getItem(K)||'null')}}catch(e){v=null}if(!v){alert('Open odoo.com/trial with the Open odoo.com/trial button on the Cartenz project page, then click Fill from Cartenz.');return}const f=document.querySelector('.oe_start_trial_form');if(!f){alert('This is not the odoo.com/trial form. Use the Open odoo.com/trial button on the Cartenz project page.');return}const el=n=>f.querySelector('[name="'+n+'"]');const set=(n,x)=>{const e=el(n);if(!e||!x||e.value===x)return;const d=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(e),'value');if(d&&d.set)d.set.call(e,x);else e.value=x;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));e.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true}))};const c=v.country?f.querySelector('select[name="country_id"] option[data-code="'+v.country+'"]'):null;const all=()=>{['username','company_name','email','phone','lang','company_size','plan'].forEach(n=>set(n,v[n]));if(c)set('country_id',c.value)};all();let i=0;const t=setInterval(()=>{all();if(++i>=10)clearInterval(t)},300);setTimeout(()=>{if(v.db_name){document.querySelector('#edit-db-name')?.click();set('db_name',v.db_name)}setTimeout(()=>{all();const miss=['username','company_name','email','phone','db_name'].filter(n=>v[n]&&(!el(n)||el(n).value!==v[n]));if(miss.length)alert('Cartenz could not fill: '+miss.join(', ')+'. Please type these by hand.')},2000)},1500)})()`;
   return `javascript:${encodeURIComponent(script)}`;
 }
 
