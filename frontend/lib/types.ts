@@ -69,6 +69,8 @@ export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
   expiresIn: string;
+  /** Set after a sign-in code: this browser keeps it to skip the next one. */
+  deviceToken?: string;
   user: AuthUser;
 }
 

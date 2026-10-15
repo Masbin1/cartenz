@@ -10,14 +10,16 @@ import {
   type ReactNode,
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { api, tokenStore } from './api';
+import { api, deviceTokenStore, tokenStore } from './api';
 import { detachPushSubscription, listenForPush, registerServiceWorker } from './push';
-import type { CurrentUser } from './types';
+import type { AuthTokens, CurrentUser } from './types';
 
 interface AuthState {
   user: CurrentUser | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  /** Resolves a challenge when this browser must type a mailed code first. */
+  signIn: (email: string, password: string) => Promise<{ challenge: string } | void>;
+  verifySignIn: (challenge: string, code: string) => Promise<void>;
   /** Resolves 'pending' when the account waits for its emailed verify link. */
   register: (input: {
     email: string;
@@ -72,14 +74,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return listenForPush();
   }, [user?.id]);
 
-  const signIn = useCallback(
-    async (email: string, password: string) => {
-      const tokens = await api.auth.login({ email, password });
+  const start = useCallback(
+    async (tokens: AuthTokens) => {
       tokenStore.set(tokens);
+      if (tokens.deviceToken) deviceTokenStore.set(tokens.deviceToken);
       await load();
       router.push('/dashboard');
     },
     [load, router],
+  );
+
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      const answer = await api.auth.login({ email, password, deviceToken: deviceTokenStore.get() });
+      if ('otpRequired' in answer) return { challenge: answer.challenge };
+      await start(answer);
+    },
+    [start],
+  );
+
+  const verifySignIn = useCallback(
+    async (challenge: string, code: string) => start(await api.auth.verifyLogin(challenge, code)),
+    [start],
   );
 
   const register = useCallback(
@@ -111,8 +127,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   const value = useMemo<AuthState>(
-    () => ({ user, loading, signIn, register, signOut, refresh: load }),
-    [user, loading, signIn, register, signOut, load],
+    () => ({ user, loading, signIn, verifySignIn, register, signOut, refresh: load }),
+    [user, loading, signIn, verifySignIn, register, signOut, load],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

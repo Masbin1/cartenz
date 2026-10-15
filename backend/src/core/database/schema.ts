@@ -134,9 +134,9 @@ export const userTokens = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    purpose: text('purpose', { enum: ['invite', 'reset', 'verify'] }).notNull(),
+    purpose: text('purpose', { enum: ['invite', 'reset', 'verify', 'login'] }).notNull(),
     tokenHash: text('token_hash').notNull(),
-    /** Verify links only: SHA-256 of the 6-digit code mailed beside the link. */
+    /** Login challenges only: SHA-256 of the 6-digit code mailed at sign-in. */
     codeHash: text('code_hash'),
     /** Wrong code guesses; the fifth spends the token. */
     attempts: integer('attempts').notNull().default(0),
@@ -537,6 +537,29 @@ export const mailSettings = pgTable('mail_settings', {
   }),
   ...timestamps,
 });
+
+/**
+ * Browsers that passed a sign-in code (ADR-072 addendum 4). Only the SHA-256
+ * of the browser's token is stored. Every row of an account goes when its
+ * password changes, so a reset brings the code back everywhere.
+ */
+export const trustedDevices = pgTable(
+  'trusted_devices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tokenHashUnique: uniqueIndex('trusted_devices_hash_unique').on(table.tokenHash),
+    byUser: index('trusted_devices_user_idx').on(table.userId),
+  }),
+);
 
 /**
  * The organisation and the email domains that may hold an account (ADR-072

@@ -98,4 +98,50 @@ describe('domain-restricted registration', () => {
       ForbiddenException,
     );
   });
+
+  describe('sign-in code', () => {
+    async function loginWith(opts: { trusted: boolean; mailEnabled: boolean; mailed?: boolean }) {
+      const hash = await passwords.hash('right-password-123');
+      const account = {
+        id: 'u', email: 'b@linkederp.com', name: 'B', region: 'indonesia', isAdmin: false,
+        isActive: true, passwordHash: hash, emailVerifiedAt: new Date(),
+      };
+      const chain = { from: () => chain, where: () => chain, limit: async () => [account] };
+      const db = {
+        db: {
+          select: () => chain,
+          update: () => ({ set: () => ({ where: () => ({ returning: async () => [account] }) }) }),
+        },
+      } as unknown as DatabaseService;
+      const audited: string[] = [];
+      const audit = { record: async (e: { event: string }) => void audited.push(e.event) } as unknown as AuditService;
+      const links = {
+        isTrusted: async () => opts.trusted,
+        mailEnabled: async () => opts.mailEnabled,
+        startLogin: async () => ({ challenge: 'c', mailed: opts.mailed ?? true }),
+      } as unknown as UserLinksService;
+      const tokens = { issuePair: async () => ({ accessToken: 'a', refreshToken: 'r' }) } as unknown as TokenService;
+      const service = new AuthService(db, passwords, tokens, audit, config, links, org(['linkederp.com']));
+      const answer = await service.login({ email: 'b@linkederp.com', password: 'right-password-123', deviceToken: 'd' }, null);
+      return { answer, audited };
+    }
+
+    it('asks a browser it has not seen for a code, and opens no session', async () => {
+      const { answer } = await loginWith({ trusted: false, mailEnabled: true });
+      expect(answer).toEqual({ otpRequired: true, challenge: 'c' });
+    });
+
+    it('lets a trusted browser straight in', async () => {
+      const { answer } = await loginWith({ trusted: true, mailEnabled: true });
+      expect(answer).toHaveProperty('accessToken', 'a');
+    });
+
+    it('skips the code when mail is off or the send failed, and audits it', async () => {
+      for (const opts of [{ mailEnabled: false }, { mailEnabled: true, mailed: false }]) {
+        const { answer, audited } = await loginWith({ trusted: false, ...opts });
+        expect(answer).toHaveProperty('accessToken', 'a');
+        expect(audited).toContain('user.login_otp_skipped');
+      }
+    });
+  });
 });

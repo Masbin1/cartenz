@@ -31,6 +31,8 @@ export const AUDIT_EVENTS = {
   USER_LINK_REDEEMED: 'user.link_redeemed',
   /** A self-registered account proved its inbox with a verify link (ADR-072). */
   USER_EMAIL_VERIFIED: 'user.email_verified',
+  /** A sign-in went through without a code because mail was unavailable (ADR-072). */
+  USER_LOGIN_OTP_SKIPPED: 'user.login_otp_skipped',
 
   PROJECT_CREATED: 'project.created',
   PROJECT_UPDATED: 'project.updated',

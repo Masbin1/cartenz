@@ -1,4 +1,4 @@
-import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { USER_REGIONS, type UserRegion } from '../../../core/enums';
 
@@ -51,6 +51,38 @@ export class LoginDto {
   @IsString()
   @IsNotEmpty()
   password!: string;
+
+  /** The token a browser got for passing a sign-in code; skips the next one. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  deviceToken?: string;
+}
+
+/** The second step of sign-in: the mailed code for a challenge (ADR-072 addendum 4). */
+export class LoginVerifyDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  challenge!: string;
+
+  @Transform(trim)
+  @Matches(/^\d{6}$/, { message: 'The code is 6 digits' })
+  code!: string;
+}
+
+/** Mailing a fresh code for a sign-in still waiting for one. */
+export class LoginResendDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  challenge!: string;
+}
+
+/** Sign-in answered with a code to type, instead of a session. */
+export interface LoginChallengeResponse {
+  readonly otpRequired: true;
+  readonly challenge: string;
 }
 
 export class RefreshDto {
@@ -98,27 +130,12 @@ export class ForgotPasswordDto {
   email!: string;
 }
 
-/**
- * Setting a password from an invitation, reset or verify link, or from the
- * verify code typed with the address it was mailed to (ADR-072).
- */
+/** Setting a password from an invitation, reset or verify link (ADR-072). */
 export class SetPasswordDto {
-  @ValidateIf((dto: SetPasswordDto) => dto.code === undefined)
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)
-  token?: string;
-
-  @ValidateIf((dto: SetPasswordDto) => dto.token === undefined)
-  @IsEmail({}, { message: 'A valid email address is required' })
-  @MaxLength(320)
-  @Transform(trimLower)
-  email?: string;
-
-  @IsOptional()
-  @Transform(trim)
-  @Matches(/^\d{6}$/, { message: 'The code is 6 digits' })
-  code?: string;
+  token!: string;
 
   @IsString()
   @MinLength(12, { message: 'The password must be at least 12 characters' })
@@ -131,6 +148,8 @@ export interface AuthTokensResponse {
   readonly accessToken: string;
   readonly refreshToken: string;
   readonly expiresIn: string;
+  /** Set when this sign-in passed a code: the browser keeps it to skip the next one. */
+  readonly deviceToken?: string;
   readonly user: {
     readonly id: string;
     readonly email: string;

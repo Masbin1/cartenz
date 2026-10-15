@@ -23,6 +23,7 @@ import { OrganizationService, emailDomain } from '../settings/organization.servi
 import type {
   AuthTokensResponse,
   ChangePasswordDto,
+  LoginChallengeResponse,
   LoginDto,
   RegisterDto,
   ResetPasswordDto,
@@ -170,7 +171,13 @@ export class AuthService {
     return this.buildResponse({ ...created, region: created.region as UserRegion });
   }
 
-  async login(dto: LoginDto, ipAddress: string | null): Promise<AuthTokensResponse> {
+  /**
+   * Sign-in, step one. A correct password from a browser that passed a code in
+   * the last 30 days, with no password change since, opens a session. Any
+   * other browser gets a mailed code to type (ADR-072 addendum 4). With mail
+   * off the code is skipped and audited, so an outage never locks anyone out.
+   */
+  async login(dto: LoginDto, ipAddress: string | null): Promise<AuthTokensResponse | LoginChallengeResponse> {
     const [user] = await this.database.db
       .select({
         id: users.id,
@@ -212,10 +219,44 @@ export class AuthService {
       throw new ForbiddenException('Confirm your email address first: open the link we sent you.');
     }
 
-    await this.database.db
+    if (!(await this.links.isTrusted(user.id, dto.deviceToken))) {
+      if (await this.links.mailEnabled()) {
+        const { challenge, mailed } = await this.links.startLogin(user);
+        if (mailed) return { otpRequired: true, challenge };
+      }
+      await this.audit.record({
+        event: AUDIT_EVENTS.USER_LOGIN_OTP_SKIPPED,
+        userId: user.id,
+        ipAddress,
+        metadata: { reason: 'mail unavailable' },
+      });
+    }
+
+    return this.openSession(user.id, ipAddress);
+  }
+
+  /** Sign-in, step two: the mailed code opens the session and trusts this browser. */
+  async verifyLogin(challenge: string, code: string, ipAddress: string | null): Promise<AuthTokensResponse> {
+    const userId = await this.links.completeLogin(challenge, code);
+    const response = await this.openSession(userId, ipAddress);
+    return { ...response, deviceToken: await this.links.trustDevice(userId) };
+  }
+
+  private async openSession(userId: string, ipAddress: string | null): Promise<AuthTokensResponse> {
+    const [user] = await this.database.db
       .update(users)
       .set({ lastLoginAt: new Date() })
-      .where(eq(users.id, user.id));
+      .where(eq(users.id, userId))
+      .returning({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        region: users.region,
+        isAdmin: users.isAdmin,
+        isActive: users.isActive,
+      });
+    // A deactivation between the password and the code wins.
+    if (!user?.isActive) throw new UnauthorizedException('This account is no longer active.');
 
     await this.audit.record({
       event: AUDIT_EVENTS.USER_LOGGED_IN,
@@ -224,13 +265,7 @@ export class AuthService {
       metadata: { email: user.email },
     });
 
-    return this.buildResponse({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      region: user.region as UserRegion,
-      isAdmin: user.isAdmin,
-    });
+    return this.buildResponse({ ...user, region: user.region as UserRegion });
   }
 
   async refresh(refreshToken: string, ipAddress: string | null): Promise<AuthTokensResponse> {

@@ -225,6 +225,13 @@
       "when": 1789992000015,
       "tag": "0031_verify_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1789992000016,
+      "tag": "0032_login_otp",
+      "breakpoints": true
     }
   ]
 }

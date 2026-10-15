@@ -48,6 +48,18 @@ const BASE = `${API_URL}/api/v1`;
 const ACCESS_TOKEN_KEY = 'linkederp.accessToken';
 const REFRESH_TOKEN_KEY = 'linkederp.refreshToken';
 const EXPIRY_KEY = 'linkederp.sessionExpiry';
+/**
+ * Proof this browser passed a sign-in code (ADR-072 addendum 4). Kept apart
+ * from the session and not cleared on sign-out: it is what lets the next
+ * sign-in skip the code. A password change makes it worthless server-side.
+ */
+const DEVICE_TOKEN_KEY = 'linkederp.deviceToken';
+
+export const deviceTokenStore = {
+  get: (): string | undefined =>
+    typeof window === 'undefined' ? undefined : (window.localStorage.getItem(DEVICE_TOKEN_KEY) ?? undefined),
+  set: (token: string) => window.localStorage.setItem(DEVICE_TOKEN_KEY, token),
+};
 
 /**
  * How long a session survives without being used, in the browser.
@@ -301,8 +313,29 @@ export const api = {
     }) =>
       request<AuthTokens | { pending: true }>('/auth/register', { method: 'POST', body, skipRefresh: true }),
 
-    login: (body: { email: string; password: string }) =>
-      request<AuthTokens>('/auth/login', { method: 'POST', body, skipRefresh: true }),
+    /** Tokens, or a challenge when this browser must type a mailed code first. */
+    login: (body: { email: string; password: string; deviceToken?: string }) =>
+      request<AuthTokens | { otpRequired: true; challenge: string }>('/auth/login', {
+        method: 'POST',
+        body,
+        skipRefresh: true,
+      }),
+
+    /** The second step of sign-in: the 6-digit code mailed for a challenge. */
+    verifyLogin: (challenge: string, code: string) =>
+      request<AuthTokens>('/auth/login/verify', {
+        method: 'POST',
+        body: { challenge, code },
+        skipRefresh: true,
+      }),
+
+    /** Mails a new sign-in code (at most once per two minutes); use the challenge it returns. */
+    resendLogin: (challenge: string) =>
+      request<{ challenge: string }>('/auth/login/resend', {
+        method: 'POST',
+        body: { challenge },
+        skipRefresh: true,
+      }),
 
     logout: (refreshToken: string | null) =>
       request<void>('/auth/logout', {
@@ -319,22 +352,6 @@ export const api = {
     /** Mails a reset link when the address has an account; answers the same either way. */
     forgotPassword: (email: string) =>
       request<{ accepted: true }>('/auth/forgot-password', {
-        method: 'POST',
-        body: { email },
-        skipRefresh: true,
-      }),
-
-    /** Confirms a sign-up with the 6-digit mailed code and sets the password. */
-    verifyCode: (email: string, code: string, newPassword: string) =>
-      request<{ set: true }>('/auth/set-password', {
-        method: 'POST',
-        body: { email, code, newPassword },
-        skipRefresh: true,
-      }),
-
-    /** Mails a fresh sign-up code to an unverified address; answers the same either way. */
-    resendVerification: (email: string) =>
-      request<{ accepted: true }>('/auth/resend-verification', {
         method: 'POST',
         body: { email },
         skipRefresh: true,

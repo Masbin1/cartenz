@@ -75,18 +75,32 @@ Supersedes decision 1 for every account after the first.
 - Still no per-IP limit; it matters more now that sign-up is public. Unverified
   rows are not purged; add a sweep if they pile up.
 
-## Addendum 3 (15 October 2026): HTML mail and sign-up codes
+## Addendum 3 (15 October 2026): HTML mail
 
-- Every mail (verify, invitation, reset, test) is HTML with a plain-text twin,
-  from one `renderMail` in `mail-settings.service.ts`: inline styles, the
-  logo served from the portal URL, one button. No template dependency.
-- A verify mail also carries a 6-digit code, so a person who signs up on a
-  laptop and reads mail on a phone finishes in the tab already open. The code
-  lives on the same `user_tokens` row as the link (`code_hash`, SHA-256 salted
-  with the user id); using either spends both.
-- Six digits are guessable alone. Five wrong codes spend the token, counted in
-  one statement so concurrent guesses cannot race, and a new mail is limited to
-  one per two minutes (`POST /auth/resend-verification`). Refusals read the
-  same whatever the reason, so the form reveals no addresses.
-- Invitations and resets stay link-only: the person has no open tab to type
-  into. Add a code to resets if asked.
+Every mail (verify, invitation, reset, sign-in code, test) is HTML with a
+plain-text twin, from one `renderMail` in `mail-settings.service.ts`: inline
+styles, the logo served from the portal URL, one button or one large code. No
+template dependency. (A sign-up code shipped briefly here was replaced by the
+sign-in code below; sign-up is link-only again.)
+
+## Addendum 4 (16 October 2026): sign-in codes and trusted browsers
+
+- Links do what they did: activation (verify, invitation) and reset.
+- **Sign-in asks for a mailed 6-digit code from any browser that has not
+  passed one** since the account's last password change. A correct password
+  answers `{ otpRequired, challenge }` and opens no session;
+  `POST /auth/login/verify { challenge, code }` does. The challenge is a
+  `user_tokens` row (`login`, 10 minutes) and binds the code to that sign-in,
+  so a code alone opens nothing. Five wrong codes spend it; a new code is
+  limited to one per two minutes (`POST /auth/login/resend`).
+- **Trust is per browser, not per account.** Per account, a stolen password
+  would skip the code on the thief's machine because the owner once signed in.
+  Passing a code gives the browser a token (`trusted_devices`, SHA-256, 30
+  days) that the next sign-in sends. Every password change, by link, by an
+  admin or by the owner, deletes all of an account's trusted browsers through
+  `revokeAllForUser`, so a reset brings the code back everywhere.
+- **With mail off, or a failed send, sign-in skips the code** and records
+  `user.login_otp_skipped`. Decision 5 stands: a mail outage never locks
+  anyone out, admins included.
+- Not built: authenticator apps (TOTP), and a list of trusted browsers to
+  revoke by hand. Add either when asked.

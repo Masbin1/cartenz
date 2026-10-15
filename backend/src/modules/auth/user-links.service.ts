@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
-import { userTokens, users } from '../../core/database/schema';
+import { trustedDevices, userTokens, users } from '../../core/database/schema';
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import { MailSettingsService, renderMail } from '../settings/mail-settings.service';
@@ -10,17 +10,22 @@ import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
 
 export type LinkPurpose = 'invite' | 'reset' | 'verify';
+type TokenPurpose = LinkPurpose | 'login';
 
 /** How long each kind of link stays usable. */
-export const LINK_TTL_MS: Record<LinkPurpose, number> = {
+export const LINK_TTL_MS: Record<TokenPurpose, number> = {
   invite: 72 * 60 * 60 * 1000,
   reset: 60 * 60 * 1000,
   verify: 24 * 60 * 60 * 1000,
+  login: 10 * 60 * 1000,
 };
+
+/** How long a browser that passed a sign-in code skips the next one. */
+export const TRUSTED_DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export const hashLinkToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
-/** Wrong guesses a verify code survives; the next one spends it. */
+/** Wrong guesses a sign-in code survives; the fifth spends it. */
 export const MAX_CODE_ATTEMPTS = 5;
 
 /** The code is hashed with its account, so equal codes for two people never share a hash. */
@@ -64,34 +69,38 @@ export class UserLinksService {
     user: { id: string; email: string; name: string },
     purpose: LinkPurpose,
   ): Promise<{ url: string; mailed: boolean }> {
-    const token = randomBytes(32).toString('base64url');
-    // ponytail: 6 digits are guessable alone; MAX_CODE_ATTEMPTS and the
-    // two-minute resend limit are what make them safe.
-    const code = purpose === 'verify' ? String(randomInt(0, 1_000_000)).padStart(6, '0') : undefined;
+    const token = await this.store(user.id, purpose);
+    const portal = await this.portalUrl();
+    const url = linkUrl(portal, purpose, token);
+    return { url, mailed: await this.send(user, purpose, portal, url) };
+  }
 
+  /**
+   * Stores a new token, spending earlier unused ones of the same purpose so
+   * only the newest works. Returns the raw token; only its hash is kept.
+   */
+  private async store(userId: string, purpose: TokenPurpose, code?: string): Promise<string> {
+    const token = randomBytes(32).toString('base64url');
     await this.database.transaction(async (tx) => {
       await tx
         .update(userTokens)
         .set({ usedAt: new Date() })
         .where(
           and(
-            eq(userTokens.userId, user.id),
+            eq(userTokens.userId, userId),
             eq(userTokens.purpose, purpose),
             isNull(userTokens.usedAt),
           ),
         );
       await tx.insert(userTokens).values({
-        userId: user.id,
+        userId,
         purpose,
         tokenHash: hashLinkToken(token),
-        codeHash: code ? hashCode(user.id, code) : null,
+        codeHash: code ? hashCode(userId, code) : null,
         expiresAt: new Date(Date.now() + LINK_TTL_MS[purpose]),
       });
     });
-
-    const portal = await this.portalUrl();
-    const url = linkUrl(portal, purpose, token);
-    return { url, mailed: await this.send(user, purpose, portal, url, code) };
+    return token;
   }
 
   /**
@@ -115,17 +124,6 @@ export class UserLinksService {
 
     if (!user?.isActive || !(await this.mailEnabled())) return;
     await this.issueUnlessRecent(user, 'reset');
-  }
-
-  /** Re-sends a verify mail to an unverified address; silent for any other. */
-  async resendVerification(email: string): Promise<void> {
-    const [user] = await this.database.db
-      .select({ id: users.id, email: users.email, name: users.name, verified: users.emailVerifiedAt })
-      .from(users)
-      .where(sql`lower(${users.email}) = ${email.toLowerCase()}`)
-      .limit(1);
-    if (!user || user.verified || !(await this.mailEnabled())) return;
-    await this.issueUnlessRecent(user, 'verify');
   }
 
   /**
@@ -180,31 +178,62 @@ export class UserLinksService {
   }
 
   /**
-   * Sets a password from the 6-digit code in a verify mail, typed on the
-   * sign-up page. A wrong code costs one of MAX_CODE_ATTEMPTS; the last one
-   * spends the token, so guessing ends with asking for a new mail. Refusals
-   * read the same whatever the reason, so the form reveals no addresses.
+   * Starts a sign-in challenge after a correct password: mails a 6-digit code
+   * and returns the challenge that binds it to this sign-in, so the code alone
+   * opens nothing. A newer challenge spends any earlier one.
    */
-  async redeemCode(email: string, code: string, newPassword: string, ipAddress: string | null): Promise<void> {
-    const refused = new BadRequestException('That code is wrong or has expired. Check the email, or send a new code.');
-    const [user] = await this.database.db
-      .select({ id: users.id })
-      .from(users)
-      .where(sql`lower(${users.email}) = ${email.toLowerCase()}`)
-      .limit(1);
-    if (!user) throw refused;
+  async startLogin(user: { id: string; email: string; name: string }): Promise<{ challenge: string; mailed: boolean }> {
+    // ponytail: 6 digits are guessable alone; MAX_CODE_ATTEMPTS and the
+    // 10-minute expiry are what make them safe.
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const challenge = await this.store(user.id, 'login', code);
+    return { challenge, mailed: await this.send(user, 'login', await this.mail.portalUrl(), null, code) };
+  }
 
+  /**
+   * Mails a new code for a live challenge, at most once per two minutes, and
+   * returns the challenge to use from now on (the old one is spent).
+   */
+  async resendLogin(challenge: string): Promise<{ challenge: string }> {
+    const [row] = await this.database.db
+      .select({ userId: userTokens.userId, createdAt: userTokens.createdAt, email: users.email, name: users.name })
+      .from(userTokens)
+      .innerJoin(users, eq(users.id, userTokens.userId))
+      .where(
+        and(
+          eq(userTokens.tokenHash, hashLinkToken(challenge)),
+          eq(userTokens.purpose, 'login'),
+          isNull(userTokens.usedAt),
+          gt(userTokens.expiresAt, new Date()),
+        ),
+      )
+      .limit(1);
+    if (!row) throw new BadRequestException('This sign-in has expired. Sign in again.');
+    if (row.createdAt.getTime() > Date.now() - 2 * 60 * 1000) return { challenge };
+    return { challenge: (await this.startLogin({ id: row.userId, email: row.email, name: row.name })).challenge };
+  }
+
+  /**
+   * Checks a sign-in code and returns the account it opens. A wrong code costs
+   * one of MAX_CODE_ATTEMPTS; the last spends the challenge, so guessing ends
+   * with signing in again.
+   */
+  async completeLogin(challenge: string, code: string): Promise<string> {
     const live = and(
-      eq(userTokens.userId, user.id),
-      eq(userTokens.purpose, 'verify'),
+      eq(userTokens.tokenHash, hashLinkToken(challenge)),
+      eq(userTokens.purpose, 'login'),
       isNull(userTokens.usedAt),
       gt(userTokens.expiresAt, new Date()),
     );
+    const refused = new BadRequestException('That code is wrong or has expired. Check the email, or sign in again.');
+    const [row] = await this.database.db.select({ userId: userTokens.userId }).from(userTokens).where(live).limit(1);
+    if (!row) throw refused;
+
     const [consumed] = await this.database.db
       .update(userTokens)
       .set({ usedAt: new Date() })
-      .where(and(live, eq(userTokens.codeHash, hashCode(user.id, code))))
-      .returning({ userId: userTokens.userId, purpose: userTokens.purpose });
+      .where(and(live, eq(userTokens.codeHash, hashCode(row.userId, code))))
+      .returning({ userId: userTokens.userId });
 
     if (!consumed) {
       // One statement, so concurrent wrong guesses cannot each read a low count.
@@ -217,7 +246,35 @@ export class UserLinksService {
         .where(live);
       throw refused;
     }
-    await this.finish(consumed, newPassword, ipAddress);
+    return consumed.userId;
+  }
+
+  /** Remembers this browser for the account; the raw token goes back to it. */
+  async trustDevice(userId: string): Promise<string> {
+    const token = randomBytes(32).toString('base64url');
+    await this.database.db.insert(trustedDevices).values({
+      userId,
+      tokenHash: hashLinkToken(token),
+      expiresAt: new Date(Date.now() + TRUSTED_DEVICE_TTL_MS),
+    });
+    return token;
+  }
+
+  /** True when the browser's token was issued to this account and is still live. */
+  async isTrusted(userId: string, token: string | undefined): Promise<boolean> {
+    if (!token) return false;
+    const [row] = await this.database.db
+      .update(trustedDevices)
+      .set({ lastUsedAt: new Date() })
+      .where(
+        and(
+          eq(trustedDevices.tokenHash, hashLinkToken(token)),
+          eq(trustedDevices.userId, userId),
+          gt(trustedDevices.expiresAt, new Date()),
+        ),
+      )
+      .returning({ id: trustedDevices.id });
+    return Boolean(row);
   }
 
   private async finish(
@@ -256,10 +313,10 @@ export class UserLinksService {
   /** False when mail is off or the send failed; the link itself is still valid. */
   private async send(
     user: { email: string; name: string },
-    purpose: LinkPurpose,
-    portal: string,
-    url: string,
-    code: string | undefined,
+    purpose: TokenPurpose,
+    portal: string | null,
+    url: string | null,
+    code?: string,
   ): Promise<boolean> {
     const transport = await this.mail.transport().catch((error: Error) => {
       this.logger.error(`Mail settings could not be read: ${error.message}`);
@@ -268,7 +325,13 @@ export class UserLinksService {
     if (!transport) return false;
 
     const { subject, intro, button, outro } = MAIL[purpose];
-    const body = renderMail(portal, { name: user.name, intro, button: { label: button, url }, code, outro });
+    const body = renderMail(portal, {
+      name: user.name,
+      intro,
+      ...(url && button ? { button: { label: button, url } } : {}),
+      code,
+      outro,
+    });
 
     try {
       await transport.mailer.sendMail({ from: transport.from, to: user.email, subject, ...body });
@@ -281,7 +344,7 @@ export class UserLinksService {
   }
 }
 
-const MAIL: Record<LinkPurpose, { subject: string; intro: string; button: string; outro: string }> = {
+const MAIL: Record<TokenPurpose, { subject: string; intro: string; button?: string; outro: string }> = {
   invite: {
     subject: 'You are invited to Cartenz',
     intro: 'An account was created for you on Cartenz. Choose a password to start.',
@@ -295,9 +358,14 @@ const MAIL: Record<LinkPurpose, { subject: string; intro: string; button: string
     outro: 'The link works once and expires in 1 hour. If you did not ask, ignore this email; your password stays as it is.',
   },
   verify: {
-    subject: 'Your Cartenz sign-up code',
+    subject: 'Confirm your email for Cartenz',
     intro: 'Somebody signed up to Cartenz with this address. If it was you, confirm it and choose your password.',
     button: 'Confirm and choose password',
-    outro: 'The link and the code work once, together, and expire in 24 hours. If it was not you, ignore this email; no account becomes usable without it.',
+    outro: 'The link works once and expires in 24 hours. If it was not you, ignore this email; no account becomes usable without it.',
+  },
+  login: {
+    subject: 'Your Cartenz sign-in code',
+    intro: 'Somebody signed in to Cartenz with your password from a browser we have not seen. If it was you, enter this code:',
+    outro: 'The code works once and expires in 10 minutes. If it was not you, change your password: somebody knows it.',
   },
 };

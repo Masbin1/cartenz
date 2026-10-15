@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, isNull } from 'drizzle-orm';
 import { DatabaseService } from '../../core/database/database.service';
-import { refreshTokens } from '../../core/database/schema';
+import { refreshTokens, trustedDevices } from '../../core/database/schema';
 import { APP_CONFIG } from '../../core/config/config.module';
 import type { AppConfig } from '../../core/config/configuration';
 import type { UserRegion } from '../../core/enums';
@@ -168,12 +168,17 @@ export class TokenService {
       .where(and(eq(refreshTokens.tokenHash, hashToken(token)), isNull(refreshTokens.revokedAt)));
   }
 
-  /** Revokes every active refresh token for a user. */
+  /**
+   * Revokes every active refresh token for a user, and forgets every browser
+   * that passed a sign-in code. Every password change comes through here, so
+   * the next sign-in after one asks for a code again (ADR-072 addendum 4).
+   */
   async revokeAllForUser(userId: string): Promise<void> {
     await this.database.db
       .update(refreshTokens)
       .set({ revokedAt: new Date() })
       .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+    await this.database.db.delete(trustedDevices).where(eq(trustedDevices.userId, userId));
   }
 
   private refreshExpiry(): Date {

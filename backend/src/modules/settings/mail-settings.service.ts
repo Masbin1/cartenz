@@ -185,7 +185,7 @@ export class MailSettingsService {
         subject: 'Cartenz test email',
         ...renderMail(portal, {
           name: to,
-          intro: 'Mail from Cartenz works. Invitations, sign-up codes and password resets will arrive looking like this one.',
+          intro: 'Mail from Cartenz works. Invitations, sign-in codes and password resets will arrive looking like this one.',
           ...(portal ? { button: { label: 'Open Cartenz', url: portal } } : {}),
           outro: 'You received this because an administrator sent a test from Settings → Email.',
         }),
@@ -204,7 +204,7 @@ export interface MailContent {
   readonly name: string;
   readonly intro: string;
   readonly button?: { label: string; url: string };
-  /** A one-time code shown large, for typing into the tab the person already has open. */
+  /** A one-time code shown large, for typing into the sign-in page. */
   readonly code?: string;
   readonly outro: string;
 }
@@ -234,7 +234,7 @@ export function renderMail(portalUrl: string | null, content: MailContent): { ht
     ? `<tr><td style="padding:8px 0 24px"><a href="${escapeHtml(content.button.url)}" style="display:inline-block;background:#dc1a21;color:#fff;text-decoration:none;font-weight:600;padding:12px 24px;border-radius:8px">${escapeHtml(content.button.label)}</a></td></tr>`
     : '';
   const code = content.code
-    ? `<tr><td style="padding:0 0 24px"><div style="font-size:13px;color:#555;padding-bottom:6px">Or enter this code on the sign-up page:</div><div style="font-family:Menlo,Consolas,monospace;font-size:30px;letter-spacing:8px;font-weight:700;color:#111;background:#f4f4f5;border-radius:8px;padding:12px 16px;display:inline-block">${escapeHtml(content.code)}</div></td></tr>`
+    ? `<tr><td style="padding:0 0 24px"><div style="font-family:Menlo,Consolas,monospace;font-size:30px;letter-spacing:8px;font-weight:700;color:#111;background:#f4f4f5;border-radius:8px;padding:12px 16px;display:inline-block">${escapeHtml(content.code)}</div></td></tr>`
     : '';
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">

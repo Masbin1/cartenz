@@ -6,10 +6,13 @@ import {
   ChangePasswordDto,
   ForgotPasswordDto,
   LoginDto,
+  LoginResendDto,
+  LoginVerifyDto,
   RefreshDto,
   RegisterDto,
   SetPasswordDto,
   type AuthTokensResponse,
+  type LoginChallengeResponse,
 } from './dto/auth.dto';
 import { Public } from '../../core/http/public.decorator';
 import { CurrentUser, clientIp } from '../../core/http/current-user.decorator';
@@ -53,29 +56,13 @@ export class AuthController {
     return { accepted: true };
   }
 
-  /** Sets a password from a link's token, or from a verify code and its address. */
+  /** Sets a password from an invitation, reset or verify link. */
   @Public()
   @Post('set-password')
   @HttpCode(HttpStatus.OK)
   async setPassword(@Body() dto: SetPasswordDto, @Req() request: Request): Promise<{ set: true }> {
-    if (dto.token) {
-      await this.links.redeem(dto.token, dto.newPassword, clientIp(request));
-    } else {
-      await this.links.redeemCode(dto.email!, dto.code!, dto.newPassword, clientIp(request));
-    }
+    await this.links.redeem(dto.token, dto.newPassword, clientIp(request));
     return { set: true };
-  }
-
-  /**
-   * Mails a fresh sign-up code and link to an address still waiting for
-   * verification, at most once per two minutes. Answers the same either way.
-   */
-  @Public()
-  @Post('resend-verification')
-  @HttpCode(HttpStatus.ACCEPTED)
-  async resendVerification(@Body() dto: ForgotPasswordDto): Promise<{ accepted: true }> {
-    await this.links.resendVerification(dto.email);
-    return { accepted: true };
   }
 
   @Public()
@@ -88,8 +75,27 @@ export class AuthController {
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  login(@Body() dto: LoginDto, @Req() request: Request): Promise<AuthTokensResponse> {
+  login(
+    @Body() dto: LoginDto,
+    @Req() request: Request,
+  ): Promise<AuthTokensResponse | LoginChallengeResponse> {
     return this.auth.login(dto, clientIp(request));
+  }
+
+  /** The second step of sign-in: the mailed 6-digit code (ADR-072 addendum 4). */
+  @Public()
+  @Post('login/verify')
+  @HttpCode(HttpStatus.OK)
+  verifyLogin(@Body() dto: LoginVerifyDto, @Req() request: Request): Promise<AuthTokensResponse> {
+    return this.auth.verifyLogin(dto.challenge, dto.code, clientIp(request));
+  }
+
+  /** Mails a new sign-in code, at most once per two minutes; returns the challenge to use. */
+  @Public()
+  @Post('login/resend')
+  @HttpCode(HttpStatus.OK)
+  resendLogin(@Body() dto: LoginResendDto): Promise<{ challenge: string }> {
+    return this.links.resendLogin(dto.challenge);
   }
 
   @Public()
