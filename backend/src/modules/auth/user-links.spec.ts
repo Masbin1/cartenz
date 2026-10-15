@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { UserLinksService, hashLinkToken, linkUrl } from './user-links.service';
+import { MAX_CODE_ATTEMPTS, UserLinksService, hashCode, hashLinkToken, linkUrl } from './user-links.service';
 import { PasswordService } from './password.service';
 import type { DatabaseService } from '../../core/database/database.service';
 import type { AuditService } from '../../core/audit/audit.service';
@@ -87,5 +87,75 @@ describe('user links', () => {
     expect(linkUrl('https://cartenz.test', 'reset', 'a+b')).toBe(
       'https://cartenz.test/set-password?purpose=reset&token=a%2Bb',
     );
+  });
+
+  /**
+   * The verify code. The fake keeps one token row and applies the same two
+   * updates the service sends: consume on a matching code, or count a miss and
+   * spend the token on the last allowed one.
+   */
+  describe('verify code', () => {
+    function buildCode() {
+      const row = { codeHash: hashCode('user-1', '123456'), attempts: 0, used: false };
+      const user = { passwordHash: 'old' };
+      let lastSet: Record<string, unknown> = {};
+      let guessed = '';
+      const db = {
+        db: {
+          select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ id: 'user-1' }] }) }) }),
+          update: () => ({
+            set: (values: Record<string, unknown>) => {
+              lastSet = values;
+              return {
+                where: () => {
+                  if ('passwordHash' in values) {
+                    user.passwordHash = values.passwordHash as string;
+                    return Promise.resolve();
+                  }
+                  if ('attempts' in lastSet) {
+                    if (!row.used) {
+                      row.attempts += 1;
+                      if (row.attempts >= MAX_CODE_ATTEMPTS) row.used = true;
+                    }
+                    return Promise.resolve();
+                  }
+                  return {
+                    returning: async () => {
+                      if (row.used || hashCode('user-1', guessed) !== row.codeHash) return [];
+                      row.used = true;
+                      return [{ userId: 'user-1', purpose: 'verify' }];
+                    },
+                  };
+                },
+              };
+            },
+          }),
+        },
+      } as unknown as DatabaseService;
+      const tokens = { revokeAllForUser: async () => undefined } as unknown as TokenService;
+      const service = new UserLinksService(db, passwords, tokens, noAudit, mail);
+      const redeem = (code: string) => {
+        guessed = code;
+        return service.redeemCode('b@linkederp.com', code, 'new-password-456', null);
+      };
+      return { redeem, row, user };
+    }
+
+    it('sets the password with the right code, once', async () => {
+      const { redeem, user } = buildCode();
+      await redeem('123456');
+      expect(await passwords.verify('new-password-456', user.passwordHash)).toBe(true);
+      await expect(redeem('123456')).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('spends the code after five wrong guesses, even for the right one after', async () => {
+      const { redeem, row, user } = buildCode();
+      for (let i = 0; i < MAX_CODE_ATTEMPTS; i++) {
+        await expect(redeem('000000')).rejects.toBeInstanceOf(BadRequestException);
+      }
+      expect(row.used).toBe(true);
+      await expect(redeem('123456')).rejects.toBeInstanceOf(BadRequestException);
+      expect(user.passwordHash).toBe('old');
+    });
   });
 });

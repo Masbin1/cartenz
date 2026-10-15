@@ -178,15 +178,76 @@ export class MailSettingsService {
       throw new BadRequestException('Mail is off: save an SMTP host here, or set SMTP_URL on the server.');
     }
     try {
+      const portal = await this.portalUrl();
       await transport.mailer.sendMail({
         from: transport.from,
         to,
         subject: 'Cartenz test email',
-        text: 'Mail from Cartenz works. Invitations and password resets will arrive like this one.',
+        ...renderMail(portal, {
+          name: to,
+          intro: 'Mail from Cartenz works. Invitations, sign-up codes and password resets will arrive looking like this one.',
+          ...(portal ? { button: { label: 'Open Cartenz', url: portal } } : {}),
+          outro: 'You received this because an administrator sent a test from Settings → Email.',
+        }),
       });
     } catch (error) {
       throw new BadRequestException(`The SMTP server refused: ${(error as Error).message}`);
     }
     return { sent: true };
   }
+}
+
+const escapeHtml = (value: string) =>
+  value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+export interface MailContent {
+  readonly name: string;
+  readonly intro: string;
+  readonly button?: { label: string; url: string };
+  /** A one-time code shown large, for typing into the tab the person already has open. */
+  readonly code?: string;
+  readonly outro: string;
+}
+
+/**
+ * Every mail Cartenz sends, as HTML with a plain-text twin. Tables and inline
+ * styles only, because that is what mail clients render; the logo is served
+ * from the portal and the alt text stands in when images are blocked.
+ */
+export function renderMail(portalUrl: string | null, content: MailContent): { html: string; text: string } {
+  const text = [
+    `Hello ${content.name},`,
+    '',
+    content.intro,
+    ...(content.code ? ['', `Your code: ${content.code}`] : []),
+    ...(content.button ? ['', content.button.url] : []),
+    '',
+    content.outro,
+    '',
+    'Cartenz by LinkedERP',
+  ].join('\n');
+
+  const logo = portalUrl
+    ? `<img src="${escapeHtml(portalUrl)}/brand/lockup-horizontal-1283x343.png" width="150" height="40" alt="Cartenz" style="display:block;border:0;height:40px;width:150px">`
+    : '<span style="font-size:20px;font-weight:700;color:#111">Cartenz</span>';
+  const button = content.button
+    ? `<tr><td style="padding:8px 0 24px"><a href="${escapeHtml(content.button.url)}" style="display:inline-block;background:#dc1a21;color:#fff;text-decoration:none;font-weight:600;padding:12px 24px;border-radius:8px">${escapeHtml(content.button.label)}</a></td></tr>`
+    : '';
+  const code = content.code
+    ? `<tr><td style="padding:0 0 24px"><div style="font-size:13px;color:#555;padding-bottom:6px">Or enter this code on the sign-up page:</div><div style="font-family:Menlo,Consolas,monospace;font-size:30px;letter-spacing:8px;font-weight:700;color:#111;background:#f4f4f5;border-radius:8px;padding:12px 16px;display:inline-block">${escapeHtml(content.code)}</div></td></tr>`
+    : '';
+
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f4f5;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#fff;border-radius:12px;padding:32px">
+<tr><td style="padding:0 0 28px">${logo}</td></tr>
+<tr><td style="font-size:16px;color:#111;padding:0 0 12px">Hello ${escapeHtml(content.name)},</td></tr>
+<tr><td style="font-size:15px;line-height:22px;color:#333;padding:0 0 20px">${escapeHtml(content.intro)}</td></tr>
+${button}${code}
+<tr><td style="font-size:13px;line-height:19px;color:#666;border-top:1px solid #eee;padding:16px 0 0">${escapeHtml(content.outro)}</td></tr>
+</table>
+<div style="font-size:12px;color:#999;padding-top:16px">Cartenz by LinkedERP</div>
+</td></tr></table></body></html>`;
+
+  return { html, text };
 }

@@ -61,3 +61,27 @@ describe('mail settings', () => {
     expect(() => normalisePortalUrl('javascript:alert(1)')).toThrow(BadRequestException);
   });
 });
+
+describe('mail template', () => {
+  const { renderMail } = jest.requireActual('./mail-settings.service') as typeof import('./mail-settings.service');
+
+  it('escapes what people typed and keeps a plain-text twin', () => {
+    const mail = renderMail('https://cartenz.test', {
+      name: '<script>x</script>',
+      intro: 'Hi',
+      button: { label: 'Go', url: 'https://cartenz.test/a?b=1&c="2"' },
+      code: '012345',
+      outro: 'Bye',
+    });
+    expect(mail.html).not.toContain('<script>');
+    expect(mail.html).toContain('&lt;script&gt;');
+    expect(mail.html).toContain('b=1&amp;c=&quot;2&quot;');
+    expect(mail.html).toContain('012345');
+    expect(mail.text).toContain('Your code: 012345');
+    expect(mail.text).toContain('https://cartenz.test/a?b=1&c="2"');
+  });
+
+  it('falls back to a text logo with no portal URL', () => {
+    expect(renderMail(null, { name: 'A', intro: 'B', outro: 'C' }).html).not.toContain('<img');
+  });
+});

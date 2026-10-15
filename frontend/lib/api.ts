@@ -324,6 +324,22 @@ export const api = {
         skipRefresh: true,
       }),
 
+    /** Confirms a sign-up with the 6-digit mailed code and sets the password. */
+    verifyCode: (email: string, code: string, newPassword: string) =>
+      request<{ set: true }>('/auth/set-password', {
+        method: 'POST',
+        body: { email, code, newPassword },
+        skipRefresh: true,
+      }),
+
+    /** Mails a fresh sign-up code to an unverified address; answers the same either way. */
+    resendVerification: (email: string) =>
+      request<{ accepted: true }>('/auth/resend-verification', {
+        method: 'POST',
+        body: { email },
+        skipRefresh: true,
+      }),
+
     /** Sets a password from an invitation or reset link. */
     setPassword: (token: string, newPassword: string) =>
       request<{ set: true }>('/auth/set-password', {

@@ -74,3 +74,19 @@ Supersedes decision 1 for every account after the first.
   self-registration is closed; invitations still work.
 - Still no per-IP limit; it matters more now that sign-up is public. Unverified
   rows are not purged; add a sweep if they pile up.
+
+## Addendum 3 (15 October 2026): HTML mail and sign-up codes
+
+- Every mail (verify, invitation, reset, test) is HTML with a plain-text twin,
+  from one `renderMail` in `mail-settings.service.ts`: inline styles, the
+  logo served from the portal URL, one button. No template dependency.
+- A verify mail also carries a 6-digit code, so a person who signs up on a
+  laptop and reads mail on a phone finishes in the tab already open. The code
+  lives on the same `user_tokens` row as the link (`code_hash`, SHA-256 salted
+  with the user id); using either spends both.
+- Six digits are guessable alone. Five wrong codes spend the token, counted in
+  one statement so concurrent guesses cannot race, and a new mail is limited to
+  one per two minutes (`POST /auth/resend-verification`). Refusals read the
+  same whatever the reason, so the form reveals no addresses.
+- Invitations and resets stay link-only: the person has no open tab to type
+  into. Add a code to resets if asked.

@@ -53,13 +53,29 @@ export class AuthController {
     return { accepted: true };
   }
 
-  /** Sets a password from an invitation or reset link. */
+  /** Sets a password from a link's token, or from a verify code and its address. */
   @Public()
   @Post('set-password')
   @HttpCode(HttpStatus.OK)
   async setPassword(@Body() dto: SetPasswordDto, @Req() request: Request): Promise<{ set: true }> {
-    await this.links.redeem(dto.token, dto.newPassword, clientIp(request));
+    if (dto.token) {
+      await this.links.redeem(dto.token, dto.newPassword, clientIp(request));
+    } else {
+      await this.links.redeemCode(dto.email!, dto.code!, dto.newPassword, clientIp(request));
+    }
     return { set: true };
+  }
+
+  /**
+   * Mails a fresh sign-up code and link to an address still waiting for
+   * verification, at most once per two minutes. Answers the same either way.
+   */
+  @Public()
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async resendVerification(@Body() dto: ForgotPasswordDto): Promise<{ accepted: true }> {
+    await this.links.resendVerification(dto.email);
+    return { accepted: true };
   }
 
   @Public()

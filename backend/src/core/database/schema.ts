@@ -136,6 +136,10 @@ export const userTokens = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     purpose: text('purpose', { enum: ['invite', 'reset', 'verify'] }).notNull(),
     tokenHash: text('token_hash').notNull(),
+    /** Verify links only: SHA-256 of the 6-digit code mailed beside the link. */
+    codeHash: text('code_hash'),
+    /** Wrong code guesses; the fifth spends the token. */
+    attempts: integer('attempts').notNull().default(0),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     usedAt: timestamp('used_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
