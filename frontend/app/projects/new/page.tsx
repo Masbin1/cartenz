@@ -110,7 +110,7 @@ export default function NewProjectPage() {
 
   return (
     <AppShell>
-      <div className="page-narrow">
+      <div className="page-wide">
         <PageHeader
           back={{ href: '/projects', label: 'Projects' }}
           title="New project"
