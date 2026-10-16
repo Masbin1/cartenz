@@ -226,7 +226,6 @@ export default function ProjectDetailPage() {
         <PageHeader
           back={{ href: '/projects', label: 'Projects' }}
           title={<span className="break-words">{project.name}</span>}
-          description={project.description ?? undefined}
           meta={
             <>
               <StatusDot tone={instance.tone} pulse={instance.pulse} size="small">
@@ -624,6 +623,14 @@ export default function ProjectDetailPage() {
                 denied by default and are not read, transmitted or stored.
               </p>
             </Section>
+
+            {project.description ? (
+              <Section size="small" title="Description">
+                <p className="whitespace-pre-line break-words text-callout text-content-muted">
+                  {project.description}
+                </p>
+              </Section>
+            ) : null}
           </aside>
         </div>
       </div>
@@ -1259,7 +1266,7 @@ function InstanceOperations({
             title="Restart instance"
             description={
               <>
-                Pulls <code className="font-mono">{defaultBranch}</code> (the project's default
+                Pulls <code className="font-mono">{defaultBranch}</code> (the project&apos;s default
                 branch, changeable in Settings), upgrades every installed module, then bounces
                 the service. The instance is briefly stopped while the upgrade runs.
               </>
