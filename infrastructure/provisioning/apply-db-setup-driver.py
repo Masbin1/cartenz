@@ -319,5 +319,15 @@ def main():
     if applied:
         ENV.cr.commit()
 
+    # The running Odoo server keeps its own ormcache (user groups, menus,
+    # views). A settings toggle changes group membership, but this shell
+    # process is not the server: without signalling, the server keeps
+    # serving pre-setup menus and hides every group-gated screen until it
+    # restarts. Signal through orm_signaling_* tables, exactly as the server
+    # does after its own RPC calls. Done even when nothing was applied, so a
+    # re-run also repairs an instance left with stale caches.
+    ENV.registry.clear_all_caches()
+    ENV.registry.signal_changes()
+
 
 main()
