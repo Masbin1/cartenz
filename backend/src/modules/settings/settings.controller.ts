@@ -206,7 +206,11 @@ export class SettingsController {
       ],
       schema: RECOMMENDATION_SCHEMA,
       schemaName: 'ModuleRecommendation',
-      maxTokens: 1024,
+      // Raised alongside the brief length cap (ADR-073 addendum, project brief
+      // upload): a longer brief costs more input tokens to read but the
+      // module list itself is still short, so this stays well under the
+      // setup-plan call's budget below.
+      maxTokens: 2048,
     });
     return { modules: keepCatalogued(result.value.modules, catalogue) };
   }
@@ -245,10 +249,10 @@ export class SettingsController {
       ],
       schema: SETUP_PLAN_SCHEMA,
       schemaName: 'SetupPlan',
-      // Larger than module recommendation's 1024: configuration + gaps is a
+      // Larger than module recommendation's 2048: configuration + gaps is a
       // materially bigger response than a module list alone (ADR-073
-      // Consequences).
-      maxTokens: 3072,
+      // Consequences), and the brief itself can now run to 12,000 characters.
+      maxTokens: 4096,
     });
     return {
       configuration: keepCataloguedConfiguration(result.value.configuration, catalog),

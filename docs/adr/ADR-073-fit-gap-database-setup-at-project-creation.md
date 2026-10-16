@@ -338,6 +338,65 @@ correctly — not a change to task creation itself.
    configuration as context, so the agent's generated module is written
    against a database state it can already observe.
 
+## Addendum (phase 1 operational findings + brief upload)
+
+Three bugs found and fixed while verifying phase 1 end-to-end against a real
+project (`jokowi`, wood-production brief):
+
+1. **`apply-db-setup.sh` wrote the plan file in the wrong order.** It chowned
+   the `mktemp`'d plan file to the `odoo` user, then wrote the plan into it as
+   root. With `fs.protected_regular` set (this host's kernel default), root
+   cannot open a file in sticky `/tmp` for writing once it is owned by another
+   user — `Permission denied`. Fixed by writing first, then chowning.
+2. **`mrp.workcenter`'s natural key was too strict.** The driver demanded
+   `code`, but `code` is an optional `fields.Char` in Odoo, not required — a
+   plan that named a work centre by `name` alone (the common case) was
+   refused outright rather than created. Fixed to match on `code` when the
+   plan gives one, otherwise on `name`.
+3. **The running Odoo server's cache was never invalidated.** The applier
+   runs in its own `odoo-bin shell` process, separate from the server a person
+   is looking at in the browser. A settings toggle changes `res.groups`
+   membership in the database, but the server keeps its own `ormcache` (menus,
+   views, group membership) and does not know anything changed until it is
+   told. The settings/records were committed correctly the whole time — `Run
+   setup again` reporting every item `skipped` on a second run proved that —
+   but the UI showed nothing different because the server never got the
+   signal. Fixed by calling `registry.clear_all_caches()` and
+   `registry.signal_changes()` after commit, the same two calls the server
+   makes itself after handling an ordinary request.
+
+Verified on `jokowi` (Odoo 19) after fixes 1 and 2: a plan with 20 entries
+applies (17 applied, 3 failed before fix 2; 3 applied after), and a further
+run reports all 20 `skipped` (idempotent). Fix 3 is verified only as far as
+the driver running cleanly with the signalling calls in place; that the
+running instance's UI then shows the changes without a restart still needs
+confirming in the browser.
+
+### Brief input: upload + length
+
+Phase 1 shipped with a 4,000-character brief, the limit `RecommendModulesDto`
+already used. A brief is routinely longer than that once it comes from a real
+requirements document rather than a paragraph typed by hand, so two things
+changed together:
+
+- **Length.** The limit is `PROJECT_BRIEF_MAX_CHARS` (12,000), one constant
+  shared by `CreateAiProjectDto.description`, `RecommendModulesDto.brief`,
+  `RecommendSetupPlanDto.brief` and the portal's textarea
+  (`backend/src/modules/projects/project-brief.ts`,
+  `frontend/lib/types.ts`). `generateStructured`'s `maxTokens` rose alongside
+  it (modules: 1024 → 2048; setup plan: 3072 → 4096) since a longer brief also
+  tends to produce a longer configuration/gap list.
+- **Upload.** `POST /projects/brief/extract` (multipart, field `file`) reads a
+  DOCX, PDF, Markdown or plain-text file and returns its text, cut to the
+  12,000-character limit at a paragraph boundary when the source document ran
+  longer. Nothing is stored and no project is required — the same
+  text-only-in-memory posture as the ADR-030 document upload, whose
+  `extractDocumentText` this reuses rather than duplicating the PDF/DOCX
+  readers. The portal's create form drops the extracted text into the brief
+  textarea, which the person still reviews and edits before Create — an
+  uploaded document is a fit-gap *input*, not a bypass of the review screen
+  this ADR already requires.
+
 ## Verification
 
 - Unit: `keepCataloguedSettings`/`keepCataloguedRecords` drop a field or model

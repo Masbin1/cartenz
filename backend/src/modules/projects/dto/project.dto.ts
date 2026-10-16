@@ -37,6 +37,7 @@ import {
   type ProjectType,
   type UserRegion,
 } from '../../../core/enums';
+import { PROJECT_BRIEF_MAX_CHARS } from '../project-brief';
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -87,7 +88,7 @@ export class CreateProjectDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(4000)
+  @MaxLength(PROJECT_BRIEF_MAX_CHARS)
   @Transform(trim)
   description?: string;
 
@@ -352,7 +353,7 @@ export class CreateAiProjectDto {
 
   @IsString()
   @IsNotEmpty({ message: 'A project description is required' })
-  @MaxLength(4000)
+  @MaxLength(PROJECT_BRIEF_MAX_CHARS)
   @Transform(trim)
   description!: string;
 
@@ -436,7 +437,7 @@ export class UpdateProjectDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(4000)
+  @MaxLength(PROJECT_BRIEF_MAX_CHARS)
   @Transform(trim)
   description?: string;
 

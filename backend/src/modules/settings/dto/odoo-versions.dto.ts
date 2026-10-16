@@ -1,5 +1,6 @@
 import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { ODOO_EDITIONS, ODOO_VERSIONS, type OdooEdition, type OdooVersion } from '../../../core/enums';
+import { PROJECT_BRIEF_MAX_CHARS } from '../../projects/project-brief';
 
 /**
  * Registering a full Odoo source checkout for one version (ADR-045).
@@ -55,7 +56,7 @@ export class UpdateOdooVersionRepositoryDto {
 export class RecommendModulesDto {
   @IsString()
   @IsNotEmpty({ message: 'A project brief is required' })
-  @MaxLength(4000)
+  @MaxLength(PROJECT_BRIEF_MAX_CHARS)
   brief!: string;
 
   @IsIn(ODOO_EDITIONS, { message: `edition must be one of: ${ODOO_EDITIONS.join(', ')}` })
@@ -72,7 +73,7 @@ export class RecommendModulesDto {
 export class RecommendSetupPlanDto {
   @IsString()
   @IsNotEmpty({ message: 'A project brief is required' })
-  @MaxLength(4000)
+  @MaxLength(PROJECT_BRIEF_MAX_CHARS)
   brief!: string;
 
   @IsIn(ODOO_EDITIONS, { message: `edition must be one of: ${ODOO_EDITIONS.join(', ')}` })

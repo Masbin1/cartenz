@@ -27,6 +27,12 @@ export type UserRegion = 'indonesia' | 'south_africa' | 'india';
 
 export const USER_REGIONS: readonly UserRegion[] = ['indonesia', 'south_africa', 'india'];
 
+/**
+ * The longest project brief the API accepts. Mirrors PROJECT_BRIEF_MAX_CHARS
+ * in backend/src/modules/projects/project-brief.ts; the backend is the guard.
+ */
+export const PROJECT_BRIEF_MAX_CHARS = 12000;
+
 export const USER_REGION_LABELS: Record<UserRegion, string> = {
   indonesia: 'Indonesia',
   south_africa: 'South Africa',

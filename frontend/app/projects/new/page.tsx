@@ -26,6 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
 import {
+  PROJECT_BRIEF_MAX_CHARS,
   USER_REGIONS,
   USER_REGION_LABELS,
   type GitCredential,
@@ -40,6 +41,7 @@ import {
 } from '@/components/projects/environment-editor';
 import { ModulePicker } from '@/components/projects/module-picker';
 import { SetupReview } from '@/components/projects/setup-review';
+import { BriefUploader } from '@/components/projects/brief-uploader';
 import {
   ODOO_ONLINE_COUNTRIES,
   ODOO_ONLINE_COMPANY_SIZES,
@@ -1470,20 +1472,37 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
         title="What it must do"
         description="One brief the agent works from: the purpose, then whatever it must handle."
       >
-        <div>
-          <label htmlFor="ai-description" className="field-label">
-            Project brief
-          </label>
-          <textarea
-            id="ai-description"
-            required
-            rows={8}
-            maxLength={4000}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            className="field-input resize-y"
-            placeholder={'Manage employee equipment: issue, track and return company assets.\n\n- Register equipment against an employee\n- Record returns with a condition note'}
+        <div className="space-y-3">
+          <BriefUploader
+            onExtracted={setDescription}
+            hasExistingText={description.trim().length > 0}
           />
+          <div>
+            <div className="flex items-baseline justify-between">
+              <label htmlFor="ai-description" className="field-label">
+                Project brief
+              </label>
+              <span
+                className={`text-meta ${
+                  description.length >= PROJECT_BRIEF_MAX_CHARS
+                    ? 'text-state-failure'
+                    : 'text-content-subtle'
+                }`}
+              >
+                {description.length.toLocaleString()} / {PROJECT_BRIEF_MAX_CHARS.toLocaleString()}
+              </span>
+            </div>
+            <textarea
+              id="ai-description"
+              required
+              rows={12}
+              maxLength={PROJECT_BRIEF_MAX_CHARS}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              className="field-input resize-y"
+              placeholder={'Manage employee equipment: issue, track and return company assets.\n\n- Register equipment against an employee\n- Record returns with a condition note'}
+            />
+          </div>
         </div>
       </Section>
 

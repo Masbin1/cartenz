@@ -620,6 +620,18 @@ export const api = {
     get: (projectId: string) => request<ProjectDetail>(`/projects/${projectId}`),
 
     /**
+     * Reads a project brief out of a DOCX, PDF or Markdown/text file, for the
+     * create form. Stores nothing; the text is returned for review.
+     */
+    extractBrief: (file: File) =>
+      uploadRequest<{
+        text: string;
+        originalLength: number;
+        truncated: boolean;
+        filename: string;
+      }>('/projects/brief/extract', file),
+
+    /**
      * Reveals the Odoo master password for a provisioned instance (ADR-040).
      * admin/owner only, enforced by the API - a 403 from this call means the
      * viewer's role, not a client bug.
