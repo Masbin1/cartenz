@@ -151,16 +151,23 @@ PLAN_FILE="$(mktemp /tmp/linkederp-db-setup-XXXXXXXX.json)"
 cleanup() { rm -f "$PLAN_FILE"; }
 trap cleanup EXIT
 
+# Write first, hand over second. /tmp is sticky and world-writable, and with
+# fs.protected_regular set the kernel refuses even root an O_CREAT open of a
+# file there owned by another user, so chown-then-write fails with
+# "Permission denied". mktemp already made the file 0600 root-only, so it is
+# never readable by anyone else while it holds the plan.
+printf '%s' "$PLAN" > "$PLAN_FILE"
 chmod 600 "$PLAN_FILE"
 chown "$ODOO_USER" "$PLAN_FILE"
-printf '%s' "$PLAN" > "$PLAN_FILE"
 
 # Run as the "odoo" user, the same user restart-project.sh upgrades modules
 # as: the driver needs the same database/filestore access `-u all` already
 # has, and running as root here would leave anything it writes owned by root
 # for an instance everything else treats as odoo:odoo.
+# The log stays root-owned: the redirect below is opened by this (root) shell
+# before sudo drops to odoo, and odoo-bin only writes through the inherited
+# descriptor. Chowning it first would trip fs.protected_regular as above.
 LOG_FILE="$(mktemp "/tmp/cartenz-db-setup-${PROJECT_NAME}-XXXXXXXX.log")"
-chown "$ODOO_USER" "$LOG_FILE"
 set +e
 sudo -u "$ODOO_USER" DB_SETUP_PLAN_FILE="$PLAN_FILE" "$VENV_PYTHON" "$ODOO_BIN" shell \
     -c "$CONFIG_FILE" -d "$DB_NAME" --no-http --shell-interface=python \

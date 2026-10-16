@@ -49,7 +49,9 @@ RECORD_MODELS = {
         'mode': 'create',
     },
     'mrp.workcenter': {
-        'key': 'code',
+        # code is optional in Odoo (fields.Char, not required): match on it
+        # when the plan gives one, otherwise on name.
+        'key': ('code', 'name'),
         'fields': {'name', 'code', 'costs_hour'},
         'mode': 'create',
     },
@@ -199,9 +201,10 @@ def apply_record(entry):
         warehouse.write(changes)
         return 'applied', ', '.join('%s=%s' % kv for kv in sorted(changes.items()))
 
-    key = spec['key']
-    if key not in values:
-        raise ValueError('%s requires %s' % (model_name, key))
+    keys = spec['key'] if isinstance(spec['key'], tuple) else (spec['key'],)
+    key = next((k for k in keys if values.get(k)), None)
+    if key is None:
+        raise ValueError('%s requires %s' % (model_name, ' or '.join(keys)))
     existing = Model.search([(key, '=', values[key])], limit=1)
     if existing:
         if 'active' in Model._fields and not existing.active:
