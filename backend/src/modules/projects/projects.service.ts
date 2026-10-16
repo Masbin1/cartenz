@@ -37,6 +37,7 @@ import {
   type CredentialKind,
   type GitTransport,
   type OdooEdition,
+  type OdooVersion,
   type ProjectProvisioningStatus,
   type ProjectType,
   type UserRegion,
@@ -62,6 +63,11 @@ import {
 } from './project-environments.service';
 import { OdooSettingsService } from '../settings/odoo-settings.service';
 import { OdooVersionsService } from '../settings/odoo-versions.service';
+import {
+  SETUP_PLAN_ITEM_SCHEMA,
+  keepCataloguedConfiguration,
+  type ConfigurationItem,
+} from '../settings/odoo-setup-plan';
 import { GitCredentialsService } from '../settings/git-credentials.service';
 import { ProjectProvisioningService } from './project-provisioning.service';
 import { ProjectProvisioningQueue } from './project-provisioning.queue';
@@ -73,6 +79,7 @@ import { ProjectDeploymentService, technicalNameFromOnPremisePath, projectsDirFo
 import { ProjectMergeService } from './project-merge.service';
 import { ProjectCheckoutService } from './project-checkout.service';
 import { ProjectTeardownService } from './project-teardown.service';
+import { ProjectDbSetupService } from './project-db-setup.service';
 import {
   GitHubRepositoryService,
   type GitHubConnectionResult,
@@ -181,6 +188,7 @@ export class ProjectsService {
     private readonly checkouts: ProjectCheckoutService,
     private readonly github: GitHubClient,
     private readonly teardown: ProjectTeardownService,
+    private readonly dbSetup: ProjectDbSetupService,
   ) {}
   /**
    * Brings a project's provisioned instance up to date with its repository
@@ -322,6 +330,66 @@ export class ProjectsService {
   /** Whether this deployment can restart at all, for the portal to hide the action. */
   get restartAvailable(): boolean {
     return this.deployment.restartAvailable;
+  }
+
+  /**
+   * ADR-073 §5: re-applies the configuration plan accepted at creation.
+   *
+   * Safe to repeat: the applier skips what already exists (search before
+   * create, settings compared before execute). Admin-gated like restart —
+   * it writes to the customer's instance. Runs in the background and returns
+   * at once; the portal polls `dbSetup.status`, which is set to 'pending'
+   * before this returns so the first poll never sees the previous outcome.
+   */
+  async runDbSetupAgain(user: AuthenticatedUser, projectId: string) {
+    await this.authz.requireProjectAccess(user, projectId, { requireAdmin: true });
+
+    const [project] = await this.database.db
+      .select({
+        environmentConfig: projects.environmentConfig,
+        provisioningStatus: projects.provisioningStatus,
+        dbSetupPlan: projects.dbSetupPlan,
+        dbSetupStatus: projects.dbSetupStatus,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+
+    if (!project) throw new NotFoundException('Project not found.');
+
+    if (!this.dbSetup.available) {
+      throw new BadRequestException(
+        'Database setup is not configured on this deployment. PROJECT_DB_SETUP_SCRIPT is ' +
+          'empty, or PROJECT_PROVISIONING_ENABLED is false.',
+      );
+    }
+    if (!Array.isArray(project.dbSetupPlan) || project.dbSetupPlan.length === 0) {
+      throw new BadRequestException('This project has no setup plan to apply.');
+    }
+    if (project.dbSetupStatus === 'pending') {
+      throw new BadRequestException('A setup run is already in progress for this project.');
+    }
+
+    const technicalName = technicalNameFromOnPremisePath(project.environmentConfig, [
+      this.config.provisioning.projectsDir,
+      this.config.provisioning.projectsDir20,
+    ]);
+    if (!technicalName || project.provisioningStatus !== 'provisioned') {
+      throw new BadRequestException(
+        'This project has no provisioned instance on this host to apply a setup to.',
+      );
+    }
+
+    await this.database.db
+      .update(projects)
+      .set({ dbSetupStatus: 'pending', dbSetupError: null })
+      .where(eq(projects.id, projectId));
+
+    void this.dbSetup.applyStoredPlan(projectId, technicalName).catch((error: Error) =>
+      this.logger.error(`Database setup of "${technicalName}" threw unexpectedly: ${error.message}`),
+    );
+
+    return { queued: true, technicalName };
   }
 
   /**
@@ -1173,12 +1241,30 @@ export class ProjectsService {
       await this.odooVersions.modulesFor(dto.odooVersion, odooEdition),
     );
 
+    /**
+     * ADR-073. The client's accepted configuration is re-filtered against this
+     * project's own live setup catalog — the same discipline `resolvedModules`
+     * above applies to module names: a field or model outside the catalog for
+     * this version/edition/module-selection is dropped silently, never
+     * trusted because it arrived from a request.
+     */
+    const setupConfiguration = await this.sanitiseSetupConfiguration(
+      dto.odooVersion,
+      odooEdition,
+      resolvedModules,
+      dto.setupConfiguration,
+    );
+
     const specification = buildProjectSpecification({
       projectName: dto.name,
       odooVersion: dto.odooVersion,
       description: dto.description,
       requirements: dto.requirements,
       modules: resolvedModules,
+      // ADR-073 §6: every accepted gap becomes a configuration_gap
+      // requirement, the same way the brief's stated requirements do, so a
+      // gap shows up in the specification an operator already reviews.
+      setupGaps: dto.setupGaps,
     });
 
     // A staging and a development line by default (ADR-038): the AI flow declares
@@ -1257,6 +1343,10 @@ export class ProjectsService {
             provisioningMasterPasswordRef: scaffolded.provisioning?.masterPasswordRef ?? null,
             httpsStatus: scaffolded.provisioning?.https.status ?? 'none',
             httpsError: scaffolded.provisioning?.https.error ?? null,
+            // ADR-073. Kept on the row (not only applied) so "Run setup
+            // again" re-sends exactly what was accepted at creation.
+            dbSetupPlan: setupConfiguration as unknown as Record<string, unknown>[],
+            dbSetupGaps: (dto.setupGaps ?? []) as unknown as Record<string, unknown>[],
           })
           .returning();
 
@@ -1367,6 +1457,21 @@ export class ProjectsService {
         specification: result.spec.specification,
         github: null,
       };
+    }
+
+    /**
+     * ADR-073. The synchronous path (a full install, no module selection)
+     * reaches a running instance here; apply the accepted setup now, with the
+     * same never-fatal posture as the queued path.
+     */
+    if (scaffolded.provisioning?.status === 'provisioned' && setupConfiguration.length > 0) {
+      await this.dbSetup
+        .applyStoredPlan(result.project.id, scaffolded.technicalName)
+        .catch((error: Error) =>
+          this.logger.error(
+            `Database setup of "${scaffolded.technicalName}" threw unexpectedly: ${error.message}`,
+          ),
+        );
     }
 
     /**
@@ -3009,6 +3114,19 @@ export class ProjectsService {
     );
 
     /**
+     * ADR-073. A step after the project is already usable: setup is a
+     * convenience on top of a real, running instance, so a failure here is
+     * recorded on the project (status 'partial' or 'failed') and never undoes
+     * what came before. Resolved from the same addonsPath-adjacent location:
+     * the technical name is what the applier needs, not the project id.
+     */
+    await this.dbSetup.applyStoredPlan(data.projectId, data.technicalName).catch((error) => {
+      this.logger.error(
+        `Database setup of "${data.technicalName}" threw unexpectedly: ${(error as Error).message}`,
+      );
+    });
+
+    /**
      * The GitHub repository (ADR-041), last and never fatal — the same ordering
      * the synchronous path uses, for the same reason: the project is real by
      * this point and an unreachable GitHub must not undo that.
@@ -3034,6 +3152,37 @@ export class ProjectsService {
       .from(projects)
       .where(eq(projects.id, projectId));
     return row?.userId ?? '';
+  }
+
+  /**
+   * ADR-073. Re-filters the accepted configuration against the setup catalog
+   * for this project's own version, edition and module selection before it is
+   * ever stored — the request's own copy of the catalog is never trusted, the
+   * same discipline `resolveSelectionOrThrow` applies to module names.
+   * `undefined` (no selection made, or no module catalog on this deployment)
+   * resolves to an empty module list for this purpose: with nothing in
+   * scope, only the always-available `res.company` kind can match, which is
+   * the safe, narrow default an empty selection should produce.
+   */
+  private async sanitiseSetupConfiguration(
+    odooVersion: OdooVersion,
+    odooEdition: OdooEdition,
+    resolvedModules: readonly string[] | undefined,
+    requested: readonly Record<string, unknown>[] | undefined,
+  ): Promise<ConfigurationItem[]> {
+    if (!requested || requested.length === 0) return [];
+
+    const parsed = requested.filter(
+      (item): item is ConfigurationItem => SETUP_PLAN_ITEM_SCHEMA.safeParse(item).success,
+    );
+    if (parsed.length === 0) return [];
+
+    const { catalog } = await this.odooVersions.setupCatalogFor(
+      odooVersion,
+      odooEdition,
+      resolvedModules ?? [],
+    );
+    return keepCataloguedConfiguration(parsed, catalog);
   }
 
   /** Writes a selective provisioning outcome onto the project row. */
@@ -3148,6 +3297,10 @@ export class ProjectsService {
     projectUrl?: string | null;
     projectDatabase?: string | null;
     isOdoosh?: boolean;
+    dbSetupStatus?: string;
+    dbSetupReport?: Record<string, unknown>[] | null;
+    dbSetupError?: string | null;
+    dbSetupAt?: Date | null;
   }) {
     return {
       id: project.id,
@@ -3198,6 +3351,18 @@ export class ProjectsService {
         commit: project.restartCommit ?? null,
         branch: project.restartBranch ?? null,
         restartedAt: project.restartedAt ?? null,
+      },
+      /**
+       * ADR-073 §5: the outcome of applying the fit-gap configuration plan
+       * accepted at creation. 'none' means there was no plan, or nothing to
+       * apply; 'partial' is a real, expected state worth a person's look, not
+       * an error state.
+       */
+      dbSetup: {
+        status: project.dbSetupStatus ?? 'none',
+        report: project.dbSetupReport ?? [],
+        error: project.dbSetupError ?? null,
+        appliedAt: project.dbSetupAt ?? null,
       },
       /**
        * A restored copy of this connected project's odoo.sh instance (ADR-067):

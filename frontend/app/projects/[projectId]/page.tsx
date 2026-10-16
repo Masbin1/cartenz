@@ -31,6 +31,7 @@ import type {
   ProjectDetail,
   ProjectProvisioningInfo,
   ProjectRestartInfo,
+  ProjectDbSetupInfo,
   RestoredInstanceInfo,
   ConnectedInstanceInfo,
   OdooOnlineSignup,
@@ -346,6 +347,7 @@ export default function ProjectDetailPage() {
                 provisioning={project.provisioning}
                 connectedInstanceReady={project.connectedInstance?.status === 'ready'}
                 restart={project.restart}
+                dbSetup={project.dbSetup}
                 repositoryUrl={project.repositoryUrl}
                 defaultBranch={project.defaultBranch}
                 isAdmin={user.isAdmin}
@@ -1063,6 +1065,7 @@ function InstanceOperations({
   provisioning,
   connectedInstanceReady,
   restart,
+  dbSetup,
   repositoryUrl,
   defaultBranch,
   isAdmin,
@@ -1071,6 +1074,7 @@ function InstanceOperations({
   provisioning: ProjectProvisioningInfo;
   connectedInstanceReady: boolean;
   restart: ProjectRestartInfo;
+  dbSetup?: ProjectDbSetupInfo;
   repositoryUrl: string | null;
   defaultBranch: string;
   isAdmin: boolean;
@@ -1079,6 +1083,32 @@ function InstanceOperations({
   const [revealed, setRevealed] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
+
+  /**
+   * Re-run database setup (ADR-073 §5): re-applies the fit-gap configuration
+   * accepted at creation. Idempotent; the applier skips what already exists.
+   * Shown only when there is a plan to re-apply — `dbSetup.status` is 'none'
+   * on a project created before this, or one with no configuration accepted.
+   */
+  const [rerunningDbSetup, setRerunningDbSetup] = useState(false);
+  const [dbSetupQueued, setDbSetupQueued] = useState(false);
+  const [dbSetupTriggerError, setDbSetupTriggerError] = useState<string | null>(null);
+
+  const rerunDbSetup = useCallback(async () => {
+    setRerunningDbSetup(true);
+    setDbSetupTriggerError(null);
+    setDbSetupQueued(false);
+    try {
+      await api.projects.runDbSetupAgain(projectId);
+      setDbSetupQueued(true);
+    } catch (caught) {
+      setDbSetupTriggerError(
+        caught instanceof ApiError ? caught.message : 'The setup run could not be queued.',
+      );
+    } finally {
+      setRerunningDbSetup(false);
+    }
+  }, [projectId]);
 
   const reveal = useCallback(async () => {
     setRevealing(true);
@@ -1284,6 +1314,58 @@ function InstanceOperations({
               <Outcome tone="success">Restart queued onto {defaultBranch}.</Outcome>
             ) : null}
             {restartInstanceError ? <Outcome tone="failure">{restartInstanceError}</Outcome> : null}
+          </OperationRow>
+        ) : null}
+
+        {canReveal && provisioned && dbSetup && dbSetup.status !== 'none' ? (
+          <OperationRow
+            title="Database setup"
+            description="Applies the configuration accepted when the project was created (settings, units, attributes, warehouses, work centres, company). Safe to repeat: anything already in place is skipped."
+            action={
+              <button
+                type="button"
+                onClick={() => void rerunDbSetup()}
+                disabled={rerunningDbSetup || dbSetup.status === 'pending'}
+                className="btn-secondary"
+              >
+                {rerunningDbSetup || dbSetup.status === 'pending' ? (
+                  <Spinner className="h-3.5 w-3.5" />
+                ) : null}
+                {rerunningDbSetup
+                  ? 'Queuing…'
+                  : dbSetup.status === 'pending'
+                    ? 'Applying…'
+                    : 'Run setup again'}
+              </button>
+            }
+          >
+            <Outcome
+              tone={
+                dbSetup.status === 'applied'
+                  ? 'success'
+                  : dbSetup.status === 'failed'
+                    ? 'failure'
+                    : 'neutral'
+              }
+            >
+              Last setup: {humanise(dbSetup.status)}
+              {dbSetup.report.length > 0
+                ? ` — ${dbSetup.report.filter((entry) => entry.status === 'applied').length} applied, ${
+                    dbSetup.report.filter((entry) => entry.status === 'skipped').length
+                  } skipped, ${dbSetup.report.filter((entry) => entry.status === 'failed').length} failed`
+                : ''}
+              {dbSetup.appliedAt ? ` (${relativeTime(dbSetup.appliedAt)})` : ''}.
+            </Outcome>
+            {dbSetup.error ? <Outcome tone="failure">{dbSetup.error}</Outcome> : null}
+            {dbSetup.report
+              .filter((entry) => entry.status === 'failed')
+              .map((entry) => (
+                <Outcome key={entry.item} tone="failure">
+                  {entry.label}: {entry.detail}
+                </Outcome>
+              ))}
+            {dbSetupQueued ? <Outcome tone="success">Setup queued.</Outcome> : null}
+            {dbSetupTriggerError ? <Outcome tone="failure">{dbSetupTriggerError}</Outcome> : null}
           </OperationRow>
         ) : null}
 

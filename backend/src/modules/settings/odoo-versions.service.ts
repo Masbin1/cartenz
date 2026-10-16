@@ -10,7 +10,12 @@ import {
 import { AuditService } from '../../core/audit/audit.service';
 import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import type { OdooEdition } from '../../core/enums';
-import { enumerateModules, type CatalogModule } from './odoo-module-catalog';
+import {
+  enumerateModules,
+  resolveDependencyClosure,
+  type CatalogModule,
+} from './odoo-module-catalog';
+import { buildSetupCatalog, type OdooSetupCatalog } from './odoo-setup-catalog';
 import { OdooSettingsService } from './odoo-settings.service';
 import type {
   CreateOdooVersionRepositoryDto,
@@ -238,6 +243,31 @@ export class OdooVersionsService {
       (await this.sourcePathsFor(version, edition)) ??
       (await this.odooSettings.sourcePathsFor(edition));
     return enumerateModules(paths);
+  }
+
+  /**
+   * The setup menu (ADR-073) for a project of this version/edition with the
+   * given module selection: settings toggles read from source for every
+   * module in the selection's dependency closure (selecting
+   * `sale_management` also offers `product`'s and `uom`'s toggles, because
+   * those modules will be installed too), plus the fixed record menu
+   * filtered to the modules in scope.
+   *
+   * Uses the same resolved addon paths as `modulesFor`, so the two can never
+   * disagree about where this version's modules live.
+   */
+  async setupCatalogFor(
+    version: string,
+    edition: OdooEdition,
+    selectedModules: readonly string[],
+  ): Promise<{ catalog: OdooSetupCatalog; catalogue: CatalogModule[] }> {
+    const paths =
+      (await this.sourcePathsFor(version, edition)) ??
+      (await this.odooSettings.sourcePathsFor(edition));
+    const catalogue = await enumerateModules(paths);
+    const { resolved } = resolveDependencyClosure(selectedModules, catalogue);
+    const catalog = await buildSetupCatalog(paths, resolved, catalogue);
+    return { catalog, catalogue };
   }
 
   private async findById(rowId: string) {

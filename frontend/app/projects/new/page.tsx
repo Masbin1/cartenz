@@ -25,13 +25,21 @@ import { Disclosure } from '@/components/ui/disclosure';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { Alert } from '@/components/ui/alert';
-import { USER_REGIONS, USER_REGION_LABELS, type GitCredential, type UserRegion } from '@/lib/types';
+import {
+  USER_REGIONS,
+  USER_REGION_LABELS,
+  type GitCredential,
+  type SetupConfigurationItem,
+  type SetupGap,
+  type UserRegion,
+} from '@/lib/types';
 import {
   defaultEnvironments,
   EnvironmentEditor,
   type EnvironmentDraft,
 } from '@/components/projects/environment-editor';
 import { ModulePicker } from '@/components/projects/module-picker';
+import { SetupReview } from '@/components/projects/setup-review';
 import {
   ODOO_ONLINE_COUNTRIES,
   ODOO_ONLINE_COMPANY_SIZES,
@@ -1177,6 +1185,9 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
    */
   const [installMode, setInstallMode] = useState<'all' | 'choose'>('all');
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
+  /** ADR-073: the fit-gap setup accepted on review, sent only when installMode is 'choose'. */
+  const [setupConfiguration, setSetupConfiguration] = useState<SetupConfigurationItem[]>([]);
+  const [setupGaps, setSetupGaps] = useState<SetupGap[]>([]);
   /**
    * Where the project runs. `on_host` is the original behaviour and the default:
    * Cartenz provisions an instance here. `odoo_online` records the project and a
@@ -1258,7 +1269,13 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
         odooEdition: hosting === 'on_host' ? odooEdition : 'enterprise',
         description,
         ...(hosting === 'on_host'
-          ? { modules: installMode === 'choose' ? selectedModules : undefined }
+          ? {
+              modules: installMode === 'choose' ? selectedModules : undefined,
+              setupConfiguration: installMode === 'choose' && setupConfiguration.length > 0
+                ? setupConfiguration
+                : undefined,
+              setupGaps: installMode === 'choose' && setupGaps.length > 0 ? setupGaps : undefined,
+            }
           : hosting === 'odoo_sh'
             ? {
                 hosting: 'odoo_sh' as const,
@@ -1502,13 +1519,23 @@ function CreateWithAiForm({ region, isAdmin }: { region: UserRegion; isAdmin: bo
           </fieldset>
 
           {installMode === 'choose' ? (
-            <div className="mt-6 animate-rise-in">
+            <div className="mt-6 animate-rise-in space-y-6">
               <ModulePicker
                 version={odooVersion}
                 edition={odooEdition}
                 brief={description}
                 value={selectedModules}
                 onChange={setSelectedModules}
+              />
+              <SetupReview
+                version={odooVersion}
+                edition={odooEdition}
+                brief={description}
+                modules={selectedModules}
+                configuration={setupConfiguration}
+                onConfigurationChange={setSetupConfiguration}
+                gaps={setupGaps}
+                onGapsChange={setSetupGaps}
               />
             </div>
           ) : null}

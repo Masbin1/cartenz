@@ -321,4 +321,17 @@ export class ProjectsController {
   ) {
     return this.projects.restart(user, projectId, dto.branch);
   }
+
+  /**
+   * Re-applies the fit-gap configuration accepted at creation (ADR-073 §5).
+   * Idempotent; runs in the background, the portal polls `dbSetup.status`.
+   */
+  @Post(':projectId/db-setup')
+  @HttpCode(HttpStatus.ACCEPTED)
+  runDbSetupAgain(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ) {
+    return this.projects.runDbSetupAgain(user, projectId);
+  }
 }

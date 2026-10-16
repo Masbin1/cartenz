@@ -29,6 +29,7 @@ import {
   CreateOdooVersionRepositoryDto,
   UpdateOdooVersionRepositoryDto,
   RecommendModulesDto,
+  RecommendSetupPlanDto,
 } from './dto/odoo-versions.dto';
 import { ModelProviderResolver } from '../../agent/model/model-provider-resolver';
 import {
@@ -37,6 +38,12 @@ import {
   catalogueForPrompt,
   keepCatalogued,
 } from './odoo-module-recommendation';
+import {
+  SETUP_PLAN_SCHEMA,
+  SETUP_PLAN_SYSTEM,
+  keepCataloguedConfiguration,
+} from './odoo-setup-plan';
+import { setupCatalogForPrompt } from './odoo-setup-catalog';
 import { GitService } from '../../agent/git/git.service';
 import { GitCredentialsService } from './git-credentials.service';
 import {
@@ -202,6 +209,52 @@ export class SettingsController {
       maxTokens: 1024,
     });
     return { modules: keepCatalogued(result.value.modules, catalogue) };
+  }
+
+  /**
+   * Suggests a fit-gap setup plan for a project brief and its already-chosen
+   * modules (ADR-073). A suggestion only, the same posture as module
+   * recommendation above: configuration items are filtered to the setup
+   * catalog built for exactly this version/edition/module selection, and the
+   * person reviews every item before anything is applied. Gaps are returned
+   * verbatim (filtered to non-empty titles only): they carry no model or
+   * field, so there is nothing to check them against.
+   */
+  @Post('odoo-versions/:version/setup/recommend')
+  @HttpCode(HttpStatus.OK)
+  async recommendOdooVersionSetup(
+    @Param('version') version: string,
+    @Body() dto: RecommendSetupPlanDto,
+  ) {
+    const { catalog } = await this.odooVersions.setupCatalogFor(
+      version,
+      dto.edition,
+      dto.modules,
+    );
+    const provider = await this.providers.forProject();
+    if (!provider.callsExternalService) {
+      throw new BadRequestException(
+        'No model provider is configured, so a setup plan cannot be recommended.',
+      );
+    }
+    const result = await provider.generateStructured({
+      system: SETUP_PLAN_SYSTEM,
+      parts: [
+        { label: 'Project brief', content: dto.brief, untrusted: true },
+        { label: 'Setup menu', content: setupCatalogForPrompt(catalog) },
+      ],
+      schema: SETUP_PLAN_SCHEMA,
+      schemaName: 'SetupPlan',
+      // Larger than module recommendation's 1024: configuration + gaps is a
+      // materially bigger response than a module list alone (ADR-073
+      // Consequences).
+      maxTokens: 3072,
+    });
+    return {
+      configuration: keepCataloguedConfiguration(result.value.configuration, catalog),
+      gaps: result.value.gaps.filter((gap) => gap.title.trim().length > 0),
+      catalog,
+    };
   }
 
   @Post('odoo-versions')

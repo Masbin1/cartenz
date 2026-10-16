@@ -61,3 +61,24 @@ export class RecommendModulesDto {
   @IsIn(ODOO_EDITIONS, { message: `edition must be one of: ${ODOO_EDITIONS.join(', ')}` })
   edition!: OdooEdition;
 }
+
+/**
+ * A project brief plus the module selection already made, to recommend a
+ * fit-gap setup plan for (ADR-073). The module selection is required because
+ * the setup catalog (what settings/records are even offered) depends on which
+ * modules are in scope — asking before modules are chosen would mean asking
+ * against a catalog that does not yet reflect the real selection.
+ */
+export class RecommendSetupPlanDto {
+  @IsString()
+  @IsNotEmpty({ message: 'A project brief is required' })
+  @MaxLength(4000)
+  brief!: string;
+
+  @IsIn(ODOO_EDITIONS, { message: `edition must be one of: ${ODOO_EDITIONS.join(', ')}` })
+  edition!: OdooEdition;
+
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  modules!: string[];
+}
