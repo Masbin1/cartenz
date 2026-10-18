@@ -55,13 +55,77 @@ export interface OdooSetupCatalog {
   readonly languageInstallAvailable: boolean;
 }
 
-/** Matches a `group_xxx = fields.Boolean("Label", ...)` declaration. */
-const GROUP_BOOLEAN = /^\s*(group_\w+)\s*=\s*fields\.Boolean\(\s*(['"])((?:(?!\2).)*)\2/gm;
+/** The start of a `group_xxx = fields.Boolean(` declaration. */
+const GROUP_BOOLEAN_START = /^[ \t]*(group_\w+)[ \t]*=[ \t]*fields\.Boolean\(/gm;
+
+/**
+ * Where a module declares its `res.config.settings` extension. Odoo has no
+ * single convention: `models/` is the common case, but `sale` keeps its
+ * settings in `wizard/`, `payment` and `account_payment` in `wizards/`, and a
+ * few Enterprise modules in `model/` (all verified on this host's 19.0 source
+ * and Enterprise checkout).
+ */
+const SETTINGS_FILE_DIRS = ['models', 'wizard', 'wizards', 'model'] as const;
+
+/**
+ * Every `group_*` Boolean declared in one settings file, with its label.
+ *
+ * Declarations are scanned with paren balancing rather than one regex,
+ * because the label is written several ways across the Odoo source — inline
+ * (`fields.Boolean("Variants", implied_group=...)`), on the next line
+ * (`fields.Boolean(\n    "Quotation Templates", ...)`), or as a keyword
+ * (`fields.Boolean(string='Multi-Currencies', ...)`). A single-line regex
+ * caught 27 of the 38 toggles in this host's Community source; this catches
+ * all 38. A declaration with no label falls back to its field name rather
+ * than being dropped: the field is still a real, settable toggle.
+ */
+export function parseGroupToggles(source: string): { field: string; label: string }[] {
+  const toggles: { field: string; label: string }[] = [];
+
+  for (const match of source.matchAll(GROUP_BOOLEAN_START)) {
+    const field = match[1];
+    const open = (match.index ?? 0) + match[0].length - 1;
+    const body = argumentsOf(source, open);
+    if (body === null) continue; // Unbalanced: not a declaration we can read.
+    toggles.push({ field, label: labelOf(body) ?? field });
+  }
+
+  return toggles;
+}
+
+/** The text between the paren at `open` and its match, skipping string literals. */
+function argumentsOf(source: string, open: number): string | null {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = open; i < source.length; i += 1) {
+    const char = source[i];
+    if (quote) {
+      if (char === '\\') i += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+    else if (char === '(') depth += 1;
+    else if (char === ')') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, i);
+    }
+  }
+  return null;
+}
+
+/** A positional first-argument label, else a `string=` keyword label. */
+function labelOf(body: string): string | null {
+  const positional = /^\s*(['"])((?:\\.|(?!\1)[^\\])*)\1/.exec(body);
+  if (positional) return positional[2];
+  const keyword = /\bstring\s*=\s*(['"])((?:\\.|(?!\1)[^\\])*)\1/.exec(body);
+  return keyword ? keyword[2] : null;
+}
 
 /**
  * Reads the settings-toggle menu for the given selected modules, from each
- * module's own `models/res_config_settings.py` where one exists. A module
- * with no such file (most of them) simply contributes nothing — not an error.
+ * module's own settings file(s) where they exist. A module with no such file
+ * (most of them) simply contributes nothing — not an error.
  */
 async function settingsToggleMenu(
   addonPaths: readonly string[],
@@ -71,25 +135,41 @@ async function settingsToggleMenu(
   const seen = new Set<string>();
 
   for (const moduleName of selectedModules) {
-    let source: string | null = null;
-    for (const addonPath of addonPaths) {
-      source = await readFile(
-        join(addonPath, moduleName, 'models', 'res_config_settings.py'),
-        'utf8',
-      ).catch(() => null);
-      if (source !== null) break;
-    }
-    if (source === null) continue;
-
-    for (const match of source.matchAll(GROUP_BOOLEAN)) {
-      const [, field, , label] = match;
-      if (seen.has(field)) continue; // Already offered by an earlier module.
-      seen.add(field);
-      toggles.push({ field, label, module: moduleName });
+    for (const source of await settingsSources(addonPaths, moduleName)) {
+      for (const { field, label } of parseGroupToggles(source)) {
+        if (seen.has(field)) continue; // Already offered by an earlier module.
+        seen.add(field);
+        toggles.push({ field, label, module: moduleName });
+      }
     }
   }
 
   return toggles;
+}
+
+/**
+ * The settings files of one module, from the first addon path that holds the
+ * module at all — the same first-match-wins rule Odoo applies to addons_path.
+ */
+async function settingsSources(
+  addonPaths: readonly string[],
+  moduleName: string,
+): Promise<string[]> {
+  for (const addonPath of addonPaths) {
+    const moduleDir = join(addonPath, moduleName);
+    const manifest = await readFile(join(moduleDir, '__manifest__.py'), 'utf8').catch(() => null);
+    if (manifest === null) continue;
+
+    const sources: string[] = [];
+    for (const dir of SETTINGS_FILE_DIRS) {
+      const source = await readFile(join(moduleDir, dir, 'res_config_settings.py'), 'utf8').catch(
+        () => null,
+      );
+      if (source !== null) sources.push(source);
+    }
+    return sources;
+  }
+  return [];
 }
 
 /**
