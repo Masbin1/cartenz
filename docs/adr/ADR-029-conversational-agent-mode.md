@@ -1,6 +1,9 @@
-# ADR-029 — Conversational agent mode with inline write approval
+# ADR-029: Conversational agent mode with inline write approval
 
-**Status:** Accepted · **Date:** 4 September 2026 · **Milestone:** Post-Phase-5 UX · **Amends:** ADR-018 (adds one transition), ADR-021 (reuses the approval gate for a new action)
+- Status: Accepted
+- Date: 4 September 2026
+- Milestone: Post-Phase-5 UX
+- Amends: ADR-018 (adds one transition), ADR-021 (reuses the approval gate for a new action)
 
 ## Context
 

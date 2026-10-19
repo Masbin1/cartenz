@@ -1,7 +1,7 @@
 # ADR-035: A scaffolded project runs as a local dev server, without Docker
 
 - Status: Accepted
-- Date: 08 September 2026
+- Date: 8 September 2026
 - Milestone: Phase 5 (Odoo-aware development)
 
 Amends ADR-032 (scaffolding) and ADR-033 (project layout). Complements ADR-034

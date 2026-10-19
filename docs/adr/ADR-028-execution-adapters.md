@@ -1,6 +1,9 @@
-# ADR-028 — Three execution modes behind separate adapters
+# ADR-028: Three execution modes behind separate adapters
 
-**Status:** Accepted · **Date:** 1 September 2026 · **Milestone:** Phase 5 · **Amends:** ADR-019, ADR-021, ADR-026
+- Status: Accepted
+- Date: 1 September 2026
+- Milestone: Phase 5
+- Amends: ADR-019, ADR-021, ADR-026
 
 ## Context
 

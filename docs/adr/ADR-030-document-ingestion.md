@@ -1,7 +1,7 @@
 # ADR-030: Document ingestion — read a project's PRD and execute tasks from it
 
 - Status: Accepted
-- Date: 05 September 2026
+- Date: 5 September 2026
 - Milestone: Phase 5 (agentic chat + document-driven tasks)
 
 ## Context

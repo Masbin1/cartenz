@@ -1,7 +1,7 @@
-# ADR-026 — On-premise deployment
+# ADR-026: On-premise deployment
 
-**Status:** Accepted
-**Date:** 2026-08-29
+- Status: Accepted
+- Date: 29 August 2026
 
 ## Context
 

@@ -1,7 +1,7 @@
-# ADR-024 — Project removal
+# ADR-024: Project removal
 
-**Status:** Accepted
-**Date:** 2026-08-28
+- Status: Accepted
+- Date: 28 August 2026
 
 ## Context
 

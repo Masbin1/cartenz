@@ -1,6 +1,8 @@
-# ADR-016 — Location of agent code
+# ADR-016: Location of agent code
 
-**Status:** Accepted · **Date:** 27 August 2026 · **Milestone:** Phase 1
+- Status: Accepted
+- Date: 27 August 2026
+- Milestone: Phase 1
 
 ## Context
 

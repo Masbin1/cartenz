@@ -1,7 +1,7 @@
 # ADR-031: Odoo source as a read-only reference on every Odoo project
 
 - Status: Accepted
-- Date: 05 September 2026
+- Date: 5 September 2026
 - Milestone: Phase 5 (Odoo-aware development)
 
 ## Context

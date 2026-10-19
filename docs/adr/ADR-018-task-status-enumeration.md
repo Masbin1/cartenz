@@ -1,6 +1,8 @@
-# ADR-018 — Task status enumeration
+# ADR-018: Task status enumeration
 
-**Status:** Accepted · **Date:** 27 August 2026 · **Milestone:** Phase 1
+- Status: Accepted
+- Date: 27 August 2026
+- Milestone: Phase 1
 
 ## Context
 

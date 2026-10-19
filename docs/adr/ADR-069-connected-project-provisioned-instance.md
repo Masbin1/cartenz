@@ -1,10 +1,8 @@
 # ADR-069: A connected odoo.sh project can provision its own instance
 
-Status: Accepted (2026-09-29)
-
-Relates to: ADR-039 (a created project is a running instance), ADR-040 (HTTPS
-and the sealed master password), ADR-050 (repository-backed connected
-projects), ADR-067 (restored copy loaded from an odoo.sh backup).
+- Status: Accepted
+- Date: 29 September 2026
+- Relates to: ADR-039 (a created project is a running instance), ADR-040 (HTTPS and the sealed master password), ADR-050 (repository-backed connected projects), ADR-067 (restored copy loaded from an odoo.sh backup).
 
 ## Context
 

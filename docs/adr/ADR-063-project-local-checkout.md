@@ -1,8 +1,6 @@
 # ADR-063: A Connected Project Keeps One Local Clone, and Tasks Work From It
 
-## Status
-
-Accepted
+- Status: Accepted
 
 ## Context
 

@@ -1,7 +1,7 @@
 # ADR-036: A Create-with-AI project is scaffolded locally and runs on-premise
 
 - Status: Accepted
-- Date: 08 September 2026
+- Date: 8 September 2026
 - Milestone: Phase 5 (Odoo-aware development)
 
 Amends ADR-017 (`ai_project` type), ADR-028 (execution modes) and ADR-032/033

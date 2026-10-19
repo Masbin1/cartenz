@@ -1,6 +1,8 @@
-# ADR-014 — Secrets provider abstraction, with Vault deferred
+# ADR-014: Secrets provider abstraction, with Vault deferred
 
-**Status:** Accepted · **Date:** 27 August 2026 · **Milestone:** Phase 1
+- Status: Accepted
+- Date: 27 August 2026
+- Milestone: Phase 1
 
 ## Context
 

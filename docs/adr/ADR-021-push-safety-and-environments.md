@@ -1,6 +1,8 @@
-# ADR-021 — Push safety, target environments, and SSH remotes
+# ADR-021: Push safety, target environments, and SSH remotes
 
-**Status:** Accepted · **Date:** 28 August 2026 · **Milestone:** Pre-Phase 5 safety work
+- Status: Accepted
+- Date: 28 August 2026
+- Milestone: Pre-Phase 5 safety work
 
 ## Context
 

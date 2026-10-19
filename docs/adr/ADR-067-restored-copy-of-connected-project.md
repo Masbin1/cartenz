@@ -1,9 +1,8 @@
 # ADR-067: Restored copy of a connected odoo.sh project
 
-Status: Accepted (2026-09-27)
-
-Relates to: ADR-050 (repository-backed connected projects), ADR-052 (ephemeral
-preview), ADR-054 (per-client backups), ADR-057 (restart onto a branch).
+- Status: Accepted
+- Date: 27 September 2026
+- Relates to: ADR-050 (repository-backed connected projects), ADR-052 (ephemeral preview), ADR-054 (per-client backups), ADR-057 (restart onto a branch).
 
 ## Context
 

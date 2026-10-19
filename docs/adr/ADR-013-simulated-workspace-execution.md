@@ -1,6 +1,8 @@
-# ADR-013 — Simulated workspace execution
+# ADR-013: Simulated workspace execution
 
-**Status:** Accepted · **Date:** 27 August 2026 · **Milestone:** Phase 1
+- Status: Accepted
+- Date: 27 August 2026
+- Milestone: Phase 1
 
 ## Context
 

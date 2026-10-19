@@ -1,8 +1,9 @@
-# ADR-027 — Running Odoo for validation
+# ADR-027: Running Odoo for validation
 
-**Status:** Accepted (built and wired; not yet exercised against a live Odoo run)
-**Date:** 2026-08-29
-**Amends:** ADR-013 (isolation boundary), ADR-019 (process chokepoint)
+- Status: Accepted
+- Date: 29 August 2026
+- Note: built and wired; not yet exercised against a live Odoo run
+- Amends: ADR-013 (isolation boundary), ADR-019 (process chokepoint)
 
 ## Context
 

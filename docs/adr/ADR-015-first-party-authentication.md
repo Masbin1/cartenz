@@ -1,6 +1,8 @@
-# ADR-015 — First-party JWT authentication
+# ADR-015: First-party JWT authentication
 
-**Status:** Accepted · **Date:** 27 August 2026 · **Milestone:** Phase 1
+- Status: Accepted
+- Date: 27 August 2026
+- Milestone: Phase 1
 
 ## Context
 

@@ -1,7 +1,7 @@
 # ADR-032: Scaffolding a custom addon when an Odoo project is created
 
 - Status: Accepted
-- Date: 06 September 2026
+- Date: 6 September 2026
 - Milestone: Phase 5 (Odoo-aware development)
 
 ## Context

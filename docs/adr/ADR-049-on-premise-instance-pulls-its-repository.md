@@ -1,7 +1,7 @@
-# ADR-049 — An instance pulls its own repository
+# ADR-049: An instance pulls its own repository
 
-**Status:** Accepted
-**Date:** 2026-09-16
+- Status: Accepted
+- Date: 16 September 2026
 
 ## Context
 
