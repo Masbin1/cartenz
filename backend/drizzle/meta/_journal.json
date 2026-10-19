@@ -232,6 +232,13 @@
       "when": 1789992000016,
       "tag": "0032_login_otp",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1789992001016,
+      "tag": "0033_db_setup",
+      "breakpoints": true
     }
   ]
 }

@@ -37,6 +37,7 @@ import {
   type ProjectType,
   type UserRegion,
 } from '../../../core/enums';
+import { PROJECT_BRIEF_MAX_CHARS } from '../project-brief';
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -87,7 +88,7 @@ export class CreateProjectDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(4000)
+  @MaxLength(PROJECT_BRIEF_MAX_CHARS)
   @Transform(trim)
   description?: string;
 
@@ -306,6 +307,24 @@ export class OdooShSignupDto {
 }
 
 /**
+ * A configuration gap accepted on the fit-gap review screen (ADR-073): what
+ * the brief needs that no module or configuration covers.
+ */
+export class SetupGapDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(300)
+  @Transform(trim)
+  title!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  @Transform(trim)
+  detail?: string;
+}
+
+/**
  * Create a new project with AI. Collects the name, Odoo version and one project
  * brief (`description`) and produces a structured
  * specification, so that project context is persisted rather than left to be
@@ -334,7 +353,7 @@ export class CreateAiProjectDto {
 
   @IsString()
   @IsNotEmpty({ message: 'A project description is required' })
-  @MaxLength(4000)
+  @MaxLength(PROJECT_BRIEF_MAX_CHARS)
   @Transform(trim)
   description!: string;
 
@@ -354,6 +373,28 @@ export class CreateAiProjectDto {
   @ArrayMaxSize(50)
   @IsString({ each: true })
   modules?: string[];
+
+  /**
+   * ADR-073. The configuration items accepted on the fit-gap review screen.
+   * Shape-checked here only loosely (an array of plain objects, bounded): the
+   * service re-filters every item against the live setup catalog for this
+   * project's version, edition and modules before storing it, the same way
+   * `modules` is re-filtered against the module catalog — the client's copy of
+   * the menu is never trusted.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsObject({ each: true })
+  setupConfiguration?: Record<string, unknown>[];
+
+  /** ADR-073. Gaps accepted on the review screen; become requirements. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => SetupGapDto)
+  setupGaps?: SetupGapDto[];
 
   /**
    * Where the project runs. Omitted means `on_host`, the behaviour before this
@@ -396,7 +437,7 @@ export class UpdateProjectDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(4000)
+  @MaxLength(PROJECT_BRIEF_MAX_CHARS)
   @Transform(trim)
   description?: string;
 

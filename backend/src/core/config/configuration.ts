@@ -315,6 +315,20 @@ const environmentSchema = z.object({
     .default('/opt/cartenz/infrastructure/provisioning/list-installed-modules.sh'),
 
   /**
+   * Absolute path to the database-setup applier (ADR-073).
+   *
+   * Applies a reviewed fit-gap configuration plan to a provisioned project's
+   * database, as a step after module install. Same posture as
+   * PROJECT_MODULES_LIST_SCRIPT: defaulted, and empty disables the feature on
+   * a deployment that has not installed the script's sudoers entry — a
+   * project then creates and provisions exactly as before ADR-073, with no
+   * setup step offered.
+   */
+  PROJECT_DB_SETUP_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/apply-db-setup.sh'),
+
+  /**
    * Absolute path to the project-restart script (ADR-057).
    *
    * Same posture as PROJECT_PULL_SCRIPT and PROJECT_BACKUP_SCRIPT: defaulted,
@@ -745,6 +759,13 @@ export interface AppConfig {
      * whose every read is refused by the guard.
      */
     readonly modulesListScript: string | null;
+    /**
+     * The database-setup applier (ADR-073), or null when the deployment has
+     * not configured one. Null disables the setup step end to end: the guard
+     * refuses the invocation and the portal does not offer the setup review
+     * screen.
+     */
+    readonly dbSetupScript: string | null;
     /**
      * The project-restart script (ADR-057), or null when the deployment has
      * not configured one. Null disables the restart action end to end: the
@@ -1188,6 +1209,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       pullScript: emptyToUndefined(env.PROJECT_PULL_SCRIPT) ?? null,
       backupScript: emptyToUndefined(env.PROJECT_BACKUP_SCRIPT) ?? null,
       modulesListScript: emptyToUndefined(env.PROJECT_MODULES_LIST_SCRIPT) ?? null,
+      dbSetupScript: emptyToUndefined(env.PROJECT_DB_SETUP_SCRIPT) ?? null,
       restartScript: emptyToUndefined(env.PROJECT_RESTART_SCRIPT) ?? null,
       restoreScript: emptyToUndefined(env.PROJECT_RESTORE_SCRIPT) ?? null,
       teardownScript: emptyToUndefined(env.PROJECT_TEARDOWN_SCRIPT) ?? null,

@@ -12,6 +12,7 @@ import { ProjectBackupService } from './project-backup.service';
 import { ProjectBackupController } from './project-backup.controller';
 import { ProjectTeardownService } from './project-teardown.service';
 import { ProjectModulesService } from './project-modules.service';
+import { ProjectDbSetupService } from './project-db-setup.service';
 import { ProjectModulesController } from './project-modules.controller';
 import { ProjectRestoreService } from './project-restore.service';
 import { ProjectRestoreController } from './project-restore.controller';
@@ -54,6 +55,7 @@ import { ProjectsService } from './projects.service';
     ProjectBackupService,
     ProjectTeardownService,
     ProjectModulesService,
+    ProjectDbSetupService,
     ProjectCheckoutService,
     ProjectRestoreService,
     ProjectConnectedInstanceService,

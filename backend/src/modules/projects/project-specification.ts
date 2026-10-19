@@ -24,6 +24,14 @@ export interface ProjectSpecificationRequirement {
   readonly id: string;
   readonly title: string;
   readonly detail?: string;
+  /**
+   * ADR-073 §6: 'configuration_gap' marks a requirement that came from the
+   * fit-gap setup review rather than the brief itself — what no module or
+   * configuration could express. Absent means the ordinary case (a
+   * requirement read straight from the brief), kept backward-compatible with
+   * every specification written before ADR-073.
+   */
+  readonly kind?: 'configuration_gap';
 }
 
 export interface BuildSpecificationInput {
@@ -32,6 +40,8 @@ export interface BuildSpecificationInput {
   readonly description: string;
   readonly requirements?: readonly { title: string; detail?: string }[];
   readonly modules?: readonly string[];
+  /** ADR-073 §6: gaps accepted on the setup review screen. */
+  readonly setupGaps?: readonly { title: string; detail?: string }[];
 }
 
 /**
@@ -53,17 +63,34 @@ export function buildProjectSpecification(
     throw new Error(`Unsupported Odoo version: ${input.odooVersion}`);
   }
 
+  // ADR-073 §6: requirements from the brief are numbered first, then the
+  // setup gaps continue the same REQ-NNN sequence — one list, one source of
+  // truth, with `kind` the only thing distinguishing where an item came from.
+  type Draft = { title: string; detail?: string; kind?: 'configuration_gap' };
+  const fromBrief: Draft[] = (input.requirements ?? []).map((requirement) => ({
+    title: requirement.title,
+    detail: requirement.detail,
+  }));
+  const fromGaps: Draft[] = (input.setupGaps ?? []).map((gap) => ({
+    title: gap.title,
+    detail: gap.detail,
+    kind: 'configuration_gap',
+  }));
+
   return {
     project_name: input.projectName,
     framework: 'Odoo',
     odoo_version: input.odooVersion.replace(/[.]0$/, ''),
     description: input.description,
     modules: [...(input.modules ?? [])],
-    requirements: (input.requirements ?? []).map((requirement, index) => ({
-      id: `REQ-${String(index + 1).padStart(3, '0')}`,
-      title: requirement.title,
-      ...(requirement.detail ? { detail: requirement.detail } : {}),
-    })),
+    requirements: [...fromBrief, ...fromGaps].map(
+      (requirement, index): ProjectSpecificationRequirement => ({
+        id: `REQ-${String(index + 1).padStart(3, '0')}`,
+        title: requirement.title,
+        ...(requirement.detail ? { detail: requirement.detail } : {}),
+        ...(requirement.kind ? { kind: requirement.kind } : {}),
+      }),
+    ),
     deployment: { environment: 'development' },
   };
 }

@@ -10,6 +10,9 @@ import type {
   AuthTokens,
   CurrentUser,
   EnvironmentKind,
+  SetupConfigurationItem,
+  SetupGap,
+  SetupPlanRecommendation,
   GitCredential,
   GitCredentialList,
   GitTransport,
@@ -458,6 +461,18 @@ export const api = {
         { method: 'POST', body: { edition, brief } },
       ),
 
+    /** ADR-073: a fit-gap setup suggestion for a brief and its chosen modules. */
+    recommendOdooSetup: (
+      version: string,
+      edition: string,
+      brief: string,
+      modules: string[],
+    ) =>
+      request<SetupPlanRecommendation>(
+        `/settings/odoo-versions/${encodeURIComponent(version)}/setup/recommend`,
+        { method: 'POST', body: { edition, brief, modules } },
+      ),
+
     addOdooVersion: (body: {
       version: string;
       basePath: string;
@@ -605,6 +620,18 @@ export const api = {
     get: (projectId: string) => request<ProjectDetail>(`/projects/${projectId}`),
 
     /**
+     * Reads a project brief out of a DOCX, PDF or Markdown/text file, for the
+     * create form. Stores nothing; the text is returned for review.
+     */
+    extractBrief: (file: File) =>
+      uploadRequest<{
+        text: string;
+        originalLength: number;
+        truncated: boolean;
+        filename: string;
+      }>('/projects/brief/extract', file),
+
+    /**
      * Reveals the Odoo master password for a provisioned instance (ADR-040).
      * admin/owner only, enforced by the API - a 403 from this call means the
      * viewer's role, not a client bug.
@@ -641,6 +668,10 @@ export const api = {
       odooEdition?: string;
       description: string;
       modules?: string[];
+      /** ADR-073: the configuration accepted on the fit-gap review. */
+      setupConfiguration?: SetupConfigurationItem[];
+      /** ADR-073: gaps accepted on review; they become REQ-NNN requirements. */
+      setupGaps?: SetupGap[];
       /**
        * Where the project runs. Omitted means on this host (Cartenz provisions
        * it); `odoo_online` records the project and its signup plan for a
@@ -731,6 +762,13 @@ export const api = {
       request<{ queued: boolean; technicalName: string; branch: string }>(
         `/projects/${projectId}/restart`,
         { method: 'POST', body: { branch } },
+      ),
+
+    /** ADR-073 §5: re-apply the accepted setup plan; idempotent. */
+    runDbSetupAgain: (projectId: string) =>
+      request<{ queued: boolean; technicalName: string }>(
+        `/projects/${projectId}/db-setup`,
+        { method: 'POST' },
       ),
 
     /**

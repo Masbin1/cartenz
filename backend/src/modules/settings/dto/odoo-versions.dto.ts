@@ -1,5 +1,6 @@
 import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { ODOO_EDITIONS, ODOO_VERSIONS, type OdooEdition, type OdooVersion } from '../../../core/enums';
+import { PROJECT_BRIEF_MAX_CHARS } from '../../projects/project-brief';
 
 /**
  * Registering a full Odoo source checkout for one version (ADR-045).
@@ -55,9 +56,30 @@ export class UpdateOdooVersionRepositoryDto {
 export class RecommendModulesDto {
   @IsString()
   @IsNotEmpty({ message: 'A project brief is required' })
-  @MaxLength(4000)
+  @MaxLength(PROJECT_BRIEF_MAX_CHARS)
   brief!: string;
 
   @IsIn(ODOO_EDITIONS, { message: `edition must be one of: ${ODOO_EDITIONS.join(', ')}` })
   edition!: OdooEdition;
+}
+
+/**
+ * A project brief plus the module selection already made, to recommend a
+ * fit-gap setup plan for (ADR-073). The module selection is required because
+ * the setup catalog (what settings/records are even offered) depends on which
+ * modules are in scope — asking before modules are chosen would mean asking
+ * against a catalog that does not yet reflect the real selection.
+ */
+export class RecommendSetupPlanDto {
+  @IsString()
+  @IsNotEmpty({ message: 'A project brief is required' })
+  @MaxLength(PROJECT_BRIEF_MAX_CHARS)
+  brief!: string;
+
+  @IsIn(ODOO_EDITIONS, { message: `edition must be one of: ${ODOO_EDITIONS.join(', ')}` })
+  edition!: OdooEdition;
+
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  modules!: string[];
 }

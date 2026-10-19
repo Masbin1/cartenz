@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -10,7 +11,13 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { DOCUMENT_MAX_FILE_BYTES } from '../documents/document-extraction';
+import { BriefExtractionError, extractBrief } from './project-brief';
 import { ProjectsService } from './projects.service';
 import {
   CreateAiProjectDto,
@@ -57,6 +64,35 @@ export class ProjectsController {
   @HttpCode(HttpStatus.CREATED)
   createAiProject(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateAiProjectDto) {
     return this.projects.createAiProject(user, dto);
+  }
+
+  /**
+   * Reads a project brief out of an uploaded DOCX, PDF or Markdown file, for
+   * the create form to drop into its brief field. Nothing is stored and no
+   * project is needed yet: the person reviews and edits the text, and it only
+   * becomes the project's description when they submit the form. Held in
+   * memory only, as document uploads are (ADR-030).
+   */
+  @Post('brief/extract')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: DOCUMENT_MAX_FILE_BYTES },
+    }),
+  )
+  async extractBrief(@UploadedFile() file: Express.Multer.File | undefined) {
+    if (!file) {
+      throw new BadRequestException('A file is required in the "file" field.');
+    }
+    try {
+      return await extractBrief(file.originalname, file.mimetype, file.buffer);
+    } catch (error) {
+      if (error instanceof BriefExtractionError) {
+        throw new BadRequestException(error.message);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -320,5 +356,18 @@ export class ProjectsController {
     @Body() dto: RestartProjectDto,
   ) {
     return this.projects.restart(user, projectId, dto.branch);
+  }
+
+  /**
+   * Re-applies the fit-gap configuration accepted at creation (ADR-073 §5).
+   * Idempotent; runs in the background, the portal polls `dbSetup.status`.
+   */
+  @Post(':projectId/db-setup')
+  @HttpCode(HttpStatus.ACCEPTED)
+  runDbSetupAgain(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+  ) {
+    return this.projects.runDbSetupAgain(user, projectId);
   }
 }

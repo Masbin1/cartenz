@@ -186,6 +186,8 @@ export class CommandRunner {
   private readonly backupScript: string;
   /** The installed-modules read script sudo may be asked to run (ADR-056). */
   private readonly modulesListScript: string;
+  /** The fit-gap database-setup applier sudo may be asked to run (ADR-073). */
+  private readonly dbSetupScript: string;
   /** The project-restart script sudo may be asked to run (ADR-057). */
   private readonly restartScript: string;
   /** The restored-copy script sudo may be asked to run (ADR-067). */
@@ -240,6 +242,12 @@ export class CommandRunner {
     // provisioning is on.
     this.modulesListScript = config.provisioning?.enabled
       ? (config.provisioning.modulesListScript ?? '')
+      : '';
+    // ADR-073. Same posture as the pull, preview, backup and modules-list
+    // scripts: empty PROJECT_DB_SETUP_SCRIPT is the off switch, and it must
+    // hold even when provisioning is on.
+    this.dbSetupScript = config.provisioning?.enabled
+      ? (config.provisioning.dbSetupScript ?? '')
       : '';
     // ADR-057. Same posture as the pull, preview, backup and modules-list
     // scripts: empty PROJECT_RESTART_SCRIPT is the off switch, and it must hold
@@ -359,6 +367,7 @@ export class CommandRunner {
         this.restartScript || null,
         this.restoreScript || null,
         this.teardownScript || null,
+        this.dbSetupScript || null,
       );
     }
 
@@ -670,6 +679,7 @@ export function assertProvisioningInvocation(
   restartScript: string | null = null,
   restoreScript: string | null = null,
   teardownScript: string | null = null,
+  dbSetupScript: string | null = null,
 ): void {
   if (args[0] !== '-n') {
     throw new CommandArgumentError(
@@ -691,6 +701,7 @@ export function assertProvisioningInvocation(
   const isPreview = previewScript !== null && script === previewScript;
   const isBackup = backupScript !== null && script === backupScript;
   const isModulesList = modulesListScript !== null && script === modulesListScript;
+  const isDbSetup = dbSetupScript !== null && script === dbSetupScript;
   const isRestart = restartScript !== null && script === restartScript;
   const isRestore = restoreScript !== null && script === restoreScript;
   const isTeardown = teardownScript !== null && script === teardownScript;
@@ -703,6 +714,7 @@ export function assertProvisioningInvocation(
     !isPreview &&
     !isBackup &&
     !isModulesList &&
+    !isDbSetup &&
     !isRestart &&
     !isRestore &&
     !isTeardown
@@ -715,6 +727,7 @@ export function assertProvisioningInvocation(
       ...(previewScript ? [previewScript] : []),
       ...(backupScript ? [backupScript] : []),
       ...(modulesListScript ? [modulesListScript] : []),
+      ...(dbSetupScript ? [dbSetupScript] : []),
       ...(restartScript ? [restartScript] : []),
       ...(restoreScript ? [restoreScript] : []),
       ...(teardownScript ? [teardownScript] : []),
@@ -802,6 +815,20 @@ export function assertProvisioningInvocation(
     if (args.length !== 3) {
       throw new CommandArgumentError(
         `The installed-modules script takes exactly "-n <script> <project-name>"; got ` +
+          `${args.length} arguments.`,
+      );
+    }
+    return;
+  }
+
+  // ADR-073. Same shape as the grant, backup, installed-modules and teardown
+  // scripts - one project name and nothing else. The plan itself travels on
+  // stdin, never in the argument vector; CommandRunner.run's own `stdin`
+  // option is the only channel that reaches it.
+  if (isDbSetup) {
+    if (args.length !== 3) {
+      throw new CommandArgumentError(
+        `The database-setup script takes exactly "-n <script> <project-name>"; got ` +
           `${args.length} arguments.`,
       );
     }

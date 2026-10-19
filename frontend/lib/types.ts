@@ -27,6 +27,12 @@ export type UserRegion = 'indonesia' | 'south_africa' | 'india';
 
 export const USER_REGIONS: readonly UserRegion[] = ['indonesia', 'south_africa', 'india'];
 
+/**
+ * The longest project brief the API accepts. Mirrors PROJECT_BRIEF_MAX_CHARS
+ * in backend/src/modules/projects/project-brief.ts; the backend is the guard.
+ */
+export const PROJECT_BRIEF_MAX_CHARS = 12000;
+
 export const USER_REGION_LABELS: Record<UserRegion, string> = {
   indonesia: 'Indonesia',
   south_africa: 'South Africa',
@@ -213,6 +219,45 @@ export interface ProjectDetail {
    * only a repository - so a restore can be aimed at the right instance.
    */
   link: ProjectLink;
+  /** ADR-073; absent on a backend build that predates it. */
+  dbSetup?: ProjectDbSetupInfo;
+}
+
+/** One configuration entry of a fit-gap setup plan (ADR-073). */
+export interface SetupConfigurationItem {
+  kind: 'setting' | 'record' | 'company' | 'language';
+  settingField?: string;
+  model?: string;
+  values?: Record<string, string | number | boolean>;
+  attributeValues?: string[];
+  languageCode?: string;
+  reason: string;
+}
+
+/** What the brief needs that no module or configuration covers (ADR-073). */
+export interface SetupGap {
+  title: string;
+  detail?: string;
+}
+
+/** The suggestion `POST .../setup/recommend` returns, before review. */
+export interface SetupPlanRecommendation {
+  configuration: SetupConfigurationItem[];
+  gaps: SetupGap[];
+}
+
+/** The applier's per-entry outcome and the run's overall state (ADR-073 §5). */
+export interface ProjectDbSetupInfo {
+  status: 'none' | 'pending' | 'applied' | 'partial' | 'failed';
+  error: string | null;
+  appliedAt: string | null;
+  report: {
+    item: number;
+    kind: string;
+    label: string;
+    status: 'applied' | 'skipped' | 'failed';
+    detail: string;
+  }[];
 }
 
 /**

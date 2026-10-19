@@ -316,6 +316,36 @@ export const projects = pgTable(
     /** The last error message from a failed HTTPS issuance, for the portal to show. */
     httpsError: text('https_error'),
     /**
+     * ADR-073: the fit-gap configuration plan accepted on the review screen at
+     * creation — data, never code. Applied by the fixed root-run applier
+     * (`apply-db-setup.sh`) after modules install. Kept on the row so "Run
+     * setup again" re-sends exactly what was accepted. Null on every project
+     * created before ADR-073, or created without a plan.
+     */
+    dbSetupPlan: jsonb('db_setup_plan').$type<Record<string, unknown>[]>(),
+    /**
+     * ADR-073 §5: outcome of applying `dbSetupPlan`. Separate from
+     * `provisioningStatus` on purpose — a setup failure never fails the
+     * project. 'partial' is a real, expected state (some entries applied,
+     * some failed or skipped).
+     */
+    dbSetupStatus: text('db_setup_status', {
+      enum: ['none', 'pending', 'applied', 'partial', 'failed'],
+    })
+      .notNull()
+      .default('none'),
+    /** The applier's own per-entry report, kept verbatim. */
+    dbSetupReport: jsonb('db_setup_report').$type<Record<string, unknown>[]>(),
+    /** Set only when the applier itself could not run (script refused, DB missing). */
+    dbSetupError: text('db_setup_error'),
+    /**
+     * ADR-073 §6: gaps accepted on the review screen — what no module or
+     * configuration covers. Turned into `configuration_gap` requirements in
+     * the project specification; kept here verbatim for the record.
+     */
+    dbSetupGaps: jsonb('db_setup_gaps').$type<Record<string, unknown>[]>(),
+    dbSetupAt: timestamp('db_setup_at', { withTimezone: true }),
+    /**
      * Agent permissions per chapter 11. Held per project and independent of
      * user roles. Defaults are applied by the application, not the column, so
      * that the data-blind posture is expressed in one place in code.

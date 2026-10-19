@@ -977,6 +977,64 @@ describe('assertProvisioningInvocation - installed-modules read (ADR-056)', () =
 });
 
 /**
+ * ADR-073. The database-setup applier takes one project name and nothing else;
+ * the plan travels on stdin. It sits in the last configured-script slot so the
+ * existing positional callers above are untouched.
+ */
+describe('assertProvisioningInvocation - database setup (ADR-073)', () => {
+  const createScripts = ['/opt/odoo/scripts/create_project'];
+  const modulesListScript = '/opt/cartenz/infrastructure/provisioning/list-installed-modules.sh';
+  const dbSetupScript = '/opt/cartenz/infrastructure/provisioning/apply-db-setup.sh';
+
+  const check = (args: string[]) =>
+    assertProvisioningInvocation(
+      args,
+      createScripts,
+      null,
+      null,
+      null,
+      null,
+      null,
+      modulesListScript,
+      null,
+      null,
+      null,
+      dbSetupScript,
+    );
+
+  it('permits a well-formed setup invocation', () => {
+    expect(() => check(['-n', dbSetupScript, 'dodolbintangmas'])).not.toThrow();
+  });
+
+  it('refuses an invalid project name', () => {
+    for (const bad of ['', '-x', 'UPPER', '../escape', 'x'.repeat(40), 'a;rm -rf /']) {
+      expect(() => check(['-n', dbSetupScript, bad])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses a plan or anything else in the argument vector', () => {
+    expect(() => check(['-n', dbSetupScript])).toThrow(CommandArgumentError);
+    expect(() => check(['-n', dbSetupScript, 'name', '{"configuration":[]}'])).toThrow(
+      CommandArgumentError,
+    );
+  });
+
+  it('is not fooled by a path that merely starts with the configured script', () => {
+    expect(() => check(['-n', `${dbSetupScript}-evil`, 'name'])).toThrow(CommandArgumentError);
+  });
+
+  it('refuses the setup shape when no such script is configured', () => {
+    expect(() =>
+      assertProvisioningInvocation(['-n', dbSetupScript, 'name'], createScripts, null),
+    ).toThrow(/not a configured provisioning script/);
+  });
+
+  it('keeps the modules-read shape working beside it', () => {
+    expect(() => check(['-n', modulesListScript, 'name'])).not.toThrow();
+  });
+});
+
+/**
  * ADR-057. The restart script accepts exactly the pull shape - project name,
  * repository URL, branch - and is reachable through a sixth configured-script
  * slot rather than through the pull one, so a caller cannot point a pull
