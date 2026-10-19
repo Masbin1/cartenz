@@ -630,6 +630,18 @@ export class DeleteProjectDto {
   @IsNotEmpty({ message: 'confirmName is required: type the project name to confirm' })
   @MaxLength(200)
   confirmName!: string;
+
+  /**
+   * Leave the GitHub repository in place (ADR-076).
+   *
+   * Omitted means deleted, because a project this platform created owns the
+   * repository it made — leaving repositories behind is the behaviour this
+   * field exists to opt out of, not the default. A repository this platform did
+   * not create is never deleted, whatever this says.
+   */
+  @IsOptional()
+  @IsBoolean()
+  keepRepository?: boolean;
 }
 
 /**

@@ -70,6 +70,21 @@ export interface GitHubConnectionResult {
   readonly reason: string | null;
 }
 
+/**
+ * What became of the repository when its project was deleted (ADR-076).
+ *
+ * `skipped` is the safe answer and covers three cases a caller must not treat
+ * alike in the portal copy, hence the message: no repository is recorded, the
+ * recorded repository is not one this platform created, or the caller asked to
+ * keep it. `failed` is a refusal: the repository is still there and the project
+ * must not be deleted as though it were not.
+ */
+export interface GitHubRepositoryRemoval {
+  readonly status: 'deleted' | 'absent' | 'skipped' | 'failed';
+  readonly repository: string | null;
+  readonly message: string;
+}
+
 @Injectable()
 export class GitHubRepositoryService {
   private readonly logger = new Logger(GitHubRepositoryService.name);
@@ -161,6 +176,150 @@ export class GitHubRepositoryService {
       url: repository.htmlUrl,
       pushed,
       reason: null,
+    };
+  }
+
+  /**
+   * Deletes the GitHub repository this project was given (ADR-076).
+   *
+   * The boundary is provenance and ownership: only a repository recorded on the
+   * project's own `github` connection, attached by this platform, and owned by
+   * `GITHUB_OWNER` is deleted. A project can hold a connection to a repository
+   * the operator brought — an Odoo.sh repository, a customer's own GitHub — and
+   * deleting that because their project here was deleted would be destroying
+   * something this platform never made.
+   *
+   * Returns a result rather than throwing so the caller can decide: a `failed`
+   * result means the repository is still there, and the caller refuses the
+   * project deletion rather than dropping the only record that points at it.
+   */
+  async removeForProject(
+    projectId: string,
+    options: { readonly keep?: boolean } = {},
+  ): Promise<GitHubRepositoryRemoval> {
+    const connections = await this.database.db
+      .select({ metadata: projectConnections.metadata })
+      .from(projectConnections)
+      .where(
+        and(
+          eq(projectConnections.projectId, projectId),
+          eq(projectConnections.connectionType, 'github'),
+        ),
+      );
+
+    // `metadata.repository` is `owner/name`, recorded when the connection was
+    // made — never inferred from a URL, which may be a remote someone brought.
+    //
+    // Provenance is read alongside it. `managedBy: 'cartenz'` is written by
+    // `recordConnection` for a repository this platform created; `odoo-sh` is
+    // written when Odoo.sh created it (ADR-071). A legacy connection — recorded
+    // before the marker existed — is the platform's own unless it carries
+    // `repositoryUrl`, which only the Odoo.sh path records, so an existing
+    // project's repository is still deleted and an existing Odoo.sh repository
+    // is still left alone.
+    const recorded = connections
+      .map((connection) => {
+        const repository = connection.metadata?.repository;
+        if (typeof repository !== 'string' || repository.length === 0) return null;
+        const marker = connection.metadata?.managedBy;
+        const legacyPlatform =
+          marker === undefined && !('repositoryUrl' in connection.metadata);
+        return { repository, managed: marker === 'cartenz' || legacyPlatform };
+      })
+      .filter((entry): entry is { repository: string; managed: boolean } => entry !== null);
+
+    if (recorded.length === 0) {
+      return {
+        status: 'skipped',
+        repository: null,
+        message:
+          'No GitHub repository is recorded for this project, so nothing was deleted on GitHub.',
+      };
+    }
+
+    const configuredOwner = this.config.github.owner?.trim().toLowerCase() || null;
+    const owned: { fullName: string; owner: string; name: string }[] = [];
+    const foreign: string[] = [];
+
+    for (const { repository: fullName, managed } of recorded) {
+      const [repoOwner, name, ...rest] = fullName.split('/');
+      if (
+        managed &&
+        configuredOwner &&
+        rest.length === 0 &&
+        Boolean(repoOwner) &&
+        Boolean(name) &&
+        repoOwner.toLowerCase() === configuredOwner
+      ) {
+        owned.push({ fullName, owner: repoOwner, name });
+      } else {
+        foreign.push(fullName);
+      }
+    }
+
+    if (owned.length === 0) {
+      return {
+        status: 'skipped',
+        repository: foreign.join(', '),
+        message:
+          `The recorded repository (${foreign.join(', ')}) is not one this platform created ` +
+          'under GITHUB_OWNER, so it is left in place.',
+      };
+    }
+
+    // Reported before any token check: keeping the repository is a decision, not
+    // a failure, and must work on a deployment whose token has been rotated away.
+    if (options.keep) {
+      return {
+        status: 'skipped',
+        repository: owned.map((entry) => entry.fullName).join(', '),
+        message:
+          `Kept GitHub repository ${owned.map((entry) => entry.fullName).join(', ')} at the ` +
+          "caller's request.",
+      };
+    }
+
+    const token = this.config.github.token;
+    if (!token) {
+      return {
+        status: 'failed',
+        repository: owned.map((entry) => entry.fullName).join(', '),
+        message:
+          'GITHUB_TOKEN is not configured, so the repository this project created could not ' +
+          'be deleted.',
+      };
+    }
+
+    let removed = 0;
+    for (const repository of owned) {
+      try {
+        // 404 is `false` rather than an error: a deletion retried after a partial
+        // failure must not fail on the repository the earlier attempt removed.
+        if (await this.github.deleteRepository(repository.owner, repository.name)) {
+          removed += 1;
+          this.logger.log(`Deleted GitHub repository ${repository.fullName} (ADR-076)`);
+        } else {
+          this.logger.log(`GitHub repository ${repository.fullName} was already absent`);
+        }
+      } catch (error) {
+        return {
+          status: 'failed',
+          repository: repository.fullName,
+          message:
+            `GitHub repository "${repository.fullName}" could not be deleted: ` +
+            `${(error as Error).message}`,
+        };
+      }
+    }
+
+    const names = owned.map((entry) => entry.fullName).join(', ');
+    return {
+      status: removed > 0 ? 'deleted' : 'absent',
+      repository: names,
+      message:
+        removed > 0
+          ? `Deleted GitHub repository ${names}.`
+          : `GitHub repository ${names} was already absent.`,
     };
   }
 
@@ -274,6 +433,9 @@ export class GitHubRepositoryService {
         url: htmlUrl,
         cloneUrl,
         branch: input.defaultBranch,
+        // Provenance for deletion (ADR-076): this repository is this project's,
+        // and this platform is what attached it.
+        managedBy: 'cartenz',
       }),
       lastCheckedAt: new Date(),
     });

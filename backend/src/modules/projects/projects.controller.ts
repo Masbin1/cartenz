@@ -195,7 +195,9 @@ export class ProjectsController {
     @Param('projectId', ParseUUIDPipe) projectId: string,
     @Body() dto: DeleteProjectDto,
   ) {
-    return this.projects.destroy(user, projectId, dto.confirmName);
+    return this.projects.destroy(user, projectId, dto.confirmName, {
+      keepRepository: dto.keepRepository,
+    });
   }
 
   @Patch(':projectId/agent-permissions')

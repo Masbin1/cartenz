@@ -160,6 +160,48 @@ describe('GitHubClient', () => {
     expect(new GitHubClient(config({ repositoryEnabled: false })).available).toBe(false);
   });
 
+  describe('deleteRepository (ADR-076)', () => {
+    it('deletes with a DELETE and reports the repository removed', async () => {
+      fetchMock.mockResolvedValueOnce(json({}, 204));
+
+      const removed = await new GitHubClient(config()).deleteRepository('linkederp', 'omaga');
+
+      expect(removed).toBe(true);
+      const { url, init } = calls()[0];
+      expect(url).toBe('https://api.github.com/repos/linkederp/omaga');
+      expect(init.method).toBe('DELETE');
+      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer ghp_test_token');
+    });
+
+    it('treats an already-absent repository as nothing to remove, not an error', async () => {
+      fetchMock.mockResolvedValueOnce(json({ message: 'Not Found' }, 404));
+
+      // A deletion retried after a partial failure: the earlier attempt already
+      // removed it, and the retry must complete rather than fail.
+      await expect(
+        new GitHubClient(config()).deleteRepository('linkederp', 'omaga'),
+      ).resolves.toBe(false);
+    });
+
+    it('surfaces a token that may not administer the repository', async () => {
+      fetchMock.mockResolvedValueOnce(
+        json({ message: 'Resource not accessible by personal access token' }, 403),
+      );
+
+      await expect(
+        new GitHubClient(config()).deleteRepository('linkederp', 'omaga'),
+      ).rejects.toThrow(/Resource not accessible by personal access token/);
+    });
+
+    it('refuses a name GitHub would not accept, without calling the API', async () => {
+      await expect(
+        new GitHubClient(config()).deleteRepository('linkederp', '-not-a-repo'),
+      ).rejects.toBeInstanceOf(GitHubApiError);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe('with an explicit token (Odoo.sh connect, ADR-071)', () => {
     const client = () => new GitHubClient(config({ token: null, owner: null }));
 

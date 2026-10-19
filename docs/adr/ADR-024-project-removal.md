@@ -83,10 +83,13 @@ be deleted again rather than a secret nothing points at.
 
 ### 5. The portal states what a delete does not touch
 
-The repository is not touched. Nothing this platform does can reach it — pushing is refused at the
-process layer (ADR-021) — and deleting a project here changes nothing on GitHub or Odoo.sh. Said
-in the confirmation and again in the notice afterwards, because "delete project" is exactly the
-phrase someone would fear meant otherwise.
+**Superseded by ADR-076 for the GitHub repository.** At the time of this ADR the
+repository was not touched: nothing this platform did could reach it — pushing
+was refused at the process layer (ADR-021) — so deleting a project here changed
+nothing on GitHub or Odoo.sh. ADR-041 later made the platform create and push to
+repositories, and ADR-076 now deletes the repository the platform created, while
+still leaving a repository it did not create alone. The rest of this section
+stands for everything else the delete does not reach.
 
 ## Consequences
 

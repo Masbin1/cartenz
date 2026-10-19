@@ -982,15 +982,27 @@ export const api = {
     /**
      * Deletes a project and everything it owns, permanently. `confirmName` must be
      * the project's exact name; the server refuses anything else.
+     *
+     * The GitHub repository this platform created is deleted with it (ADR-076)
+     * unless `keepRepository` is true. A repository this platform did not create
+     * is never deleted.
      */
-    destroy: (projectId: string, confirmName: string) =>
+    destroy: (projectId: string, confirmName: string, keepRepository = false) =>
       request<{
         deleted: boolean;
         projectName: string;
         tasksDeleted: number;
         secretsDestroyed: number;
         workspacesDiscarded: number;
-      }>(`/projects/${projectId}/permanent`, { method: 'DELETE', body: { confirmName } }),
+        githubRepository?: {
+          deletion: 'deleted' | 'absent' | 'skipped' | 'failed';
+          repository: string | null;
+          message: string;
+        };
+      }>(`/projects/${projectId}/permanent`, {
+        method: 'DELETE',
+        body: { confirmName, ...(keepRepository ? { keepRepository: true } : {}) },
+      }),
   },
 
   /** Per-project access: who may open a project, and requests to (ADR-043). */

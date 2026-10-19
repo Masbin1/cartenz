@@ -236,6 +236,38 @@ export class GitHubClient {
     return true;
   }
 
+  /**
+   * Deletes the repository `owner/name` (ADR-076).
+   *
+   * True when this call removed it, false when it was already gone — a project
+   * whose deletion is retried after a partial failure must not fail on the
+   * repository the earlier attempt already deleted, exactly as creation adopts
+   * rather than conflicts.
+   *
+   * Callers are expected to have established that this platform owns the
+   * repository before calling: the endpoint takes any repository the token can
+   * administer, so a wrong argument here is destructive in a way a wrong `GET`
+   * never is.
+   */
+  async deleteRepository(owner: string, name: string): Promise<boolean> {
+    const token = this.requireToken();
+    if (!REPOSITORY_NAME.test(name)) {
+      throw new GitHubApiError(
+        0,
+        `"${name}" is not a usable GitHub repository name.`,
+        'Deleting the repository',
+      );
+    }
+
+    const removed = await this.request<unknown>(
+      token,
+      'DELETE',
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+      { notFoundIsNull: true },
+    );
+    return removed !== null;
+  }
+
   /** `Organization` or `User`, so the caller knows which create endpoint applies. */
   private async accountType(token: string, owner: string): Promise<'Organization' | 'User'> {
     const account = await this.request<{ type?: string }>(
@@ -286,19 +318,19 @@ export class GitHubClient {
    */
   private async request<T>(
     token: string,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     options: { readonly body?: Record<string, unknown>; readonly notFoundIsNull: true },
   ): Promise<T | null>;
   private async request<T>(
     token: string,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     options?: { readonly body?: Record<string, unknown> },
   ): Promise<T>;
   private async request<T>(
     token: string,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     options: { readonly body?: Record<string, unknown>; readonly notFoundIsNull?: boolean } = {},
   ): Promise<T | null> {

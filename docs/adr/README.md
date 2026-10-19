@@ -69,3 +69,4 @@ with the condition under which it is retired.
 | [ADR-070](ADR-070-odoo-online-assisted-creation.md) | Creating an Odoo Online database is assisted, not automated | Accepted |
 | [ADR-073](ADR-073-fit-gap-database-setup-at-project-creation.md) | Fit-gap database setup at project creation | Proposed |
 | [ADR-074](ADR-074-conversation-remembers-earlier-turns.md) | A conversation remembers its earlier turns | Accepted |
+| [ADR-076](ADR-076-delete-project-deletes-github-repository.md) | Deleting a project deletes the GitHub repository it created | Accepted |

@@ -109,9 +109,23 @@ export default function ProjectSettingsPage() {
    * this only ever offers the environments that can hold it.
    */
   const [confirmName, setConfirmName] = useState('');
+  const [keepRepository, setKeepRepository] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const isOwner = user?.isAdmin ?? false;
+
+  /**
+   * The GitHub repository this project records, when it has one (ADR-076).
+   *
+   * Only the `github` connection carries it. A project whose code lives in a
+   * repository connected from elsewhere has no such value, and the deletion copy
+   * says nothing changes on GitHub — which stays true.
+   */
+  const githubRepository = project?.connections.find(
+    (connection) =>
+      connection.connectionType === 'github' &&
+      typeof connection.metadata.repository === 'string',
+  )?.metadata.repository as string | undefined;
 
   /** Archive, restore and delete share their reporting, so they share a wrapper. */
   const run = async (
@@ -151,7 +165,7 @@ export default function ProjectSettingsPage() {
    */
   const destroy = () =>
     run(async () => {
-      const result = await api.projects.destroy(projectId, confirmName);
+      const result = await api.projects.destroy(projectId, confirmName, keepRepository);
       router.replace(
         `/projects?deleted=${encodeURIComponent(result.projectName)}` +
           `&tasks=${result.tasksDeleted}`,
@@ -1127,12 +1141,30 @@ export default function ProjectSettingsPage() {
                   This cannot be undone.
                 </p>
                 <p className="mt-2 max-w-xl text-meta text-content-subtle">
-                  The repository itself is untouched — this platform never pushes to it, and
-                  deleting a project here changes nothing on GitHub or Odoo.sh.
+                  {githubRepository
+                    ? `The GitHub repository ${githubRepository} is deleted with it. A repository ` +
+                      'this platform did not create is left untouched.'
+                    : 'No GitHub repository is recorded for this project, so nothing changes on GitHub.'}
                 </p>
 
                 {isOwner ? (
                   <div className="mt-5 max-w-md">
+                    {githubRepository ? (
+                      <label className="mb-5 flex items-start gap-3 text-callout text-content-muted">
+                        <input
+                          type="checkbox"
+                          checked={keepRepository}
+                          onChange={(event) => setKeepRepository(event.target.checked)}
+                          disabled={busy}
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+                        />
+                        <span>
+                          Keep the GitHub repository instead — the code is meant to outlive this
+                          project.
+                        </span>
+                      </label>
+                    ) : null}
+
                     <label htmlFor="confirmName" className="field-label">
                       Type <span className="font-mono text-meta">{project.name}</span> to confirm
                     </label>

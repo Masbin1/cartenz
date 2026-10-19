@@ -2008,8 +2008,19 @@ export class ProjectsService {
    *    is no project to describe. `audit_logs.project_id` is ON DELETE SET NULL
    *    precisely so the record of a deletion survives the deletion, and the name
    *    is copied into the metadata so the row still means something.
+   *
+   * The GitHub repository the platform created is deleted too (ADR-076). It is
+   * the one thing here that lives outside this host and outside the database, so
+   * it is also the one whose failure refuses the deletion rather than being
+   * reported afterwards: once the row is gone, nothing records which repository
+   * belonged to this project. `keepRepository` opts out deliberately.
    */
-  async destroy(user: AuthenticatedUser, projectId: string, confirmation: string) {
+  async destroy(
+    user: AuthenticatedUser,
+    projectId: string,
+    confirmation: string,
+    options: { readonly keepRepository?: boolean } = {},
+  ) {
     // Archived included: putting a project away and then deleting it is the
     // obvious order, and refusing it would leave archived projects undeletable.
     await this.authz.requireProjectAccess(user, projectId, {
@@ -2061,6 +2072,28 @@ export class ProjectsService {
       .where(eq(agentTasks.projectId, projectId));
     const taskCount = Number(taskTally?.value ?? 0);
 
+    /**
+     * The repository comes first (ADR-076), for the mirror of the reason the
+     * teardown comes last: it is the one artifact the database cannot delete, and
+     * the only record of which repository belongs to this project is the
+     * connection row that is about to cascade away. A failure here therefore
+     * refuses the whole deletion — the project stays deletable, with its
+     * connection intact, instead of leaving a repository nothing points at.
+     * `keepRepository` is the explicit way out when the repository is meant to
+     * outlive the project.
+     */
+    const githubRemoval = await this.githubRepositories.removeForProject(projectId, {
+      keep: options.keepRepository,
+    });
+
+    if (githubRemoval.status === 'failed') {
+      throw new ConflictException(
+        `${githubRemoval.message} The project was not deleted, so the connection that names ` +
+          'the repository is still here. Retry once GitHub is reachable, or send ' +
+          'keepRepository: true to delete the project and leave the repository in place.',
+      );
+    }
+
     // Recorded first: after the delete there is no project to describe, and this
     // row is the only remaining evidence that it existed.
     await this.audit.record({
@@ -2074,6 +2107,8 @@ export class ProjectsService {
         odooVersion: project.odooVersion,
         taskCount,
         wasArchived: project.archivedAt !== null,
+        githubRepository: githubRemoval.repository,
+        githubRepositoryDeletion: githubRemoval.status,
       },
     });
 
@@ -2141,6 +2176,11 @@ export class ProjectsService {
       workspacesDiscarded: workspaces,
       instanceTornDown: teardownResult.ok,
       instanceTeardownMessage: teardownResult.message,
+      githubRepository: {
+        deletion: githubRemoval.status,
+        repository: githubRemoval.repository,
+        message: githubRemoval.message,
+      },
     };
   }
 
@@ -2429,6 +2469,9 @@ export class ProjectsService {
         repositoryUrl: repository.cloneUrl,
         cloneUrl: repository.cloneUrl,
         branch: repository.defaultBranch,
+        // Odoo.sh made this repository, not this platform (ADR-071). Recorded
+        // explicitly so deleting the project never deletes it (ADR-076).
+        managedBy: 'odoo-sh',
       },
     } as CreateConnectionDto);
 
