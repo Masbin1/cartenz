@@ -17,6 +17,7 @@ export const AGENT_PERMISSIONS = [
   'database_metadata_read',
   'database_record_read',
   'database_record_write',
+  'project_history_read',
   'odoo_customize',
   'restart_odoo',
   'production_deploy',
@@ -50,6 +51,10 @@ export const DEFAULT_AGENT_PERMISSIONS: Readonly<Record<AgentPermission, boolean
   database_metadata_read: true,
   database_record_read: false,
   database_record_write: false,
+  // Reading the project's own conversation history (ADR-080). It is the record
+  // the portal already shows to anyone who can open the project, so it is
+  // granted by default rather than being a capability a person has to discover.
+  project_history_read: true,
   odoo_customize: true,
   restart_odoo: false,
   production_deploy: false,

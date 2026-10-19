@@ -4,6 +4,7 @@ import { RealRepositoryTools } from './real/repository.tools';
 import { RealGitTools } from './real/git.tools';
 import { RealOdooTools } from './real/odoo.tools';
 import { OdooOnlineTools } from './real/odoo-online.tools';
+import { ProjectHistoryTools } from './real/project-history.tools';
 import { VALIDATION_TOOLS } from './simulated/validation.tools';
 
 /**
@@ -32,12 +33,14 @@ export class ToolRegistry {
     gitTools: RealGitTools,
     odooTools: RealOdooTools,
     odooOnlineTools: OdooOnlineTools,
+    projectHistoryTools: ProjectHistoryTools,
   ) {
     this.registerAll([
       ...repositoryTools.definitions,
       ...gitTools.definitions,
       ...odooTools.definitions,
       ...odooOnlineTools.definitions,
+      ...projectHistoryTools.definitions,
       ...VALIDATION_TOOLS,
     ]);
 

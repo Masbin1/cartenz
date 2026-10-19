@@ -37,6 +37,7 @@ const PERMISSION_NOTES: Record<string, string> = {
   database_metadata_read: 'Read model and field names. Carries no customer data.',
   database_record_read: 'Read customer records. Denied by default.',
   database_record_write: 'Write customer records. Denied by default; requires approval.',
+  project_history_read: 'Read this project\'s earlier conversations, so a new request can see what was already discussed and tried.',
   restart_odoo: 'Restart the Odoo service. Requires approval.',
   production_deploy: 'Deploy to production. Out of scope for the MVP.',
 };

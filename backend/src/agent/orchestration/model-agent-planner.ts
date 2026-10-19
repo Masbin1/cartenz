@@ -51,6 +51,11 @@ export interface ModelPlanningInput {
    * so "now build what we discussed" plans against the discussion.
    */
   readonly conversationContext?: readonly PromptPart[];
+  /**
+   * The project's earlier requests across every conversation (ADR-080). A change
+   * request is often the execution of a design agreed in another conversation.
+   */
+  readonly projectHistory?: readonly PromptPart[];
 }
 
 /**
@@ -92,6 +97,8 @@ export interface OdooOnlinePlanningInput {
   readonly documents?: readonly AttachedDocument[];
   /** Earlier turns of this conversation (ADR-074). */
   readonly conversationContext?: readonly PromptPart[];
+  /** The project's earlier requests across every conversation (ADR-080). */
+  readonly projectHistory?: readonly PromptPart[];
 }
 
 export interface PlanningOutcome {
@@ -194,6 +201,7 @@ export class ModelAgentPlanner {
     const parts: PromptPart[] = [
       { label: 'Development request', content: input.prompt, untrusted: false },
       ...(input.conversationContext ?? []),
+      ...(input.projectHistory ?? []),
       {
         label: 'The Odoo Online instance',
         content: JSON.stringify(
@@ -324,6 +332,7 @@ export class ModelAgentPlanner {
     const parts: PromptPart[] = [
       { label: 'Development request', content: input.prompt, untrusted: false },
       ...(input.conversationContext ?? []),
+      ...(input.projectHistory ?? []),
       { label: 'Repository analysis', content: JSON.stringify(facts, null, 2), untrusted: false },
     ];
 
@@ -388,6 +397,11 @@ const PLANNING_INSTRUCTION = [
   '  `al3_sales_modifier`). Do not name it arbitrarily.',
   '- Always reply in Indonesian or English only, matching whichever the user used.',
   '  If the request is in neither, default to Indonesian.',
+  '- Earlier requests in this project - including requests made in other',
+  '  conversations - are listed under "Earlier conversations in this project". When',
+  '  the request refers to earlier work ("build what we discussed", "fix the thing',
+  '  from yesterday"), plan against that record rather than the current message',
+  '  alone. A detail the record leaves out belongs in the risks, not in a guess.',
   '- Base the plan on the files you have been shown. If the request needs a file you',
   '  have not seen, say so in the risks rather than guessing at its contents.',
   '- Follow the conventions of the Odoo version stated above.',
@@ -416,6 +430,11 @@ const ODOO_ONLINE_PLANNING_INSTRUCTION = [
   '(e.g. if the user wrote in Indonesian, write the plan in Indonesian; if English,',
   'in English). If the request is in neither, default to Indonesian rather than',
   'drifting into a third language.',
+  '',
+  'Earlier requests in this project, including requests made in other',
+  'conversations, are listed under "Earlier conversations in this project". Read',
+  'them before planning: a request that refers to earlier work is planned against',
+  'that record, not against the current message alone.',
   '',
   'What you will be able to do when the plan is approved:',
   '- odoo_create_field: create a custom field on a model. Odoo prefixes it with "x_".',

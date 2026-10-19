@@ -33,12 +33,17 @@ describe('the odoo_online execution mode', () => {
       .map((tool) => tool.name)
       .sort();
 
-  it('permits only the Odoo tools, and every one of them', () => {
+  it('permits only the Odoo read tools and the project history, nothing else', () => {
+    // read_project_history is not mode-gated (ADR-080): a project on this mode
+    // still has conversations, and "what did we discuss" must be answerable
+    // here. It reads the platform's own task record, so it reaches no
+    // filesystem and no instance.
     expect(permittedIn('odoo_online')).toEqual([
       'odoo_add_field_to_view',
       'odoo_create_field',
       'odoo_list_fields',
       'odoo_list_models',
+      'read_project_history',
     ]);
   });
 

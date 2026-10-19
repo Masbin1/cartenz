@@ -1,10 +1,11 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
-import { and, asc, eq, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, lt, ne, sql } from 'drizzle-orm';
 import { DatabaseService } from '../core/database/database.service';
 import { withSequenceRetry } from '../core/database/task-sequence';
 import {
   agentActions,
+  agentSessions,
   agentTasks,
   approvals,
   projectEnvironments,
@@ -25,6 +26,7 @@ import type { ImplementationPlan, ModifiedFile, TaskTestResults } from './orches
 import { GitCredentialsService } from '../modules/settings/git-credentials.service';
 import { resolveProjectGitAccess } from './git/project-git-access';
 import type { ConversationTurn } from './orchestration/conversation-context';
+import type { ProjectHistory, ProjectHistoryTask } from './orchestration/project-history';
 
 /** Everything a workflow step needs about a task, read in one query. */
 export interface TaskExecutionSnapshot {
@@ -601,6 +603,116 @@ export class TaskRepository {
             .filter((path) => path.length > 0)
         : [],
     }));
+  }
+
+  /**
+   * The project's requests across every conversation (ADR-080), newest first,
+   * optionally narrowed to one conversation or one request.
+   *
+   * This is the read side of project-wide memory: a request typed into a new
+   * conversation can see what was discussed and attempted in the project before
+   * it, which the session grouping never carried to the model (ADR-074 covers
+   * only the same conversation).
+   */
+  async loadProjectHistory(
+    projectId: string,
+    options: {
+      readonly excludeTaskId?: string;
+      readonly sessionId?: string;
+      readonly reference?: string;
+      readonly limit: number;
+    },
+  ): Promise<ProjectHistoryTask[]> {
+    const filters = [eq(agentTasks.projectId, projectId)];
+
+    if (options.excludeTaskId) filters.push(ne(agentTasks.id, options.excludeTaskId));
+    if (options.sessionId) filters.push(eq(agentTasks.sessionId, options.sessionId));
+    if (options.reference) filters.push(eq(agentTasks.reference, options.reference));
+
+    const rows = await this.database.db
+      .select({
+        reference: agentTasks.reference,
+        kind: agentTasks.kind,
+        status: agentTasks.status,
+        sessionId: agentTasks.sessionId,
+        sessionTitle: agentSessions.title,
+        createdAt: agentTasks.createdAt,
+        prompt: agentTasks.prompt,
+        answer: agentTasks.answer,
+        failureReason: agentTasks.failureReason,
+        plan: agentTasks.plan,
+        modifiedFiles: agentTasks.modifiedFiles,
+        commitHash: agentTasks.commitHash,
+      })
+      .from(agentTasks)
+      .leftJoin(agentSessions, eq(agentSessions.id, agentTasks.sessionId))
+      .where(and(...filters))
+      .orderBy(desc(agentTasks.createdAt))
+      .limit(options.limit);
+
+    return rows.map((row) => ({
+      reference: row.reference,
+      kind: row.kind as 'change' | 'chat',
+      status: row.status,
+      sessionId: row.sessionId ?? null,
+      sessionTitle: row.sessionTitle ?? null,
+      createdAt: row.createdAt.toISOString(),
+      prompt: row.prompt,
+      answer: row.answer,
+      failureReason: row.failureReason,
+      planSummary:
+        row.plan && typeof row.plan === 'object' && 'summary' in row.plan
+          ? String((row.plan as { summary?: unknown }).summary ?? '') || null
+          : null,
+      modifiedPaths: Array.isArray(row.modifiedFiles)
+        ? row.modifiedFiles
+            .map((file) =>
+              file && typeof file === 'object' && 'path' in file
+                ? String((file as { path?: unknown }).path ?? '')
+                : '',
+            )
+            .filter((path) => path.length > 0)
+        : [],
+      commitHash: row.commitHash ?? null,
+    }));
+  }
+
+  /**
+   * How much history the project holds, so the prompt index can say what it is
+   * leaving out rather than reading as the whole record.
+   */
+  async countProjectHistory(projectId: string): Promise<{ tasks: number; conversations: number }> {
+    const [row] = await this.database.db
+      .select({
+        tasks: sql<number>`count(*)::int`,
+        conversations: sql<number>`count(distinct ${agentTasks.sessionId})::int`,
+      })
+      .from(agentTasks)
+      .where(eq(agentTasks.projectId, projectId));
+
+    return { tasks: row?.tasks ?? 0, conversations: row?.conversations ?? 0 };
+  }
+
+  /**
+   * The index a prompt carries: the project's most recent requests plus the
+   * totals needed to say what the index leaves out (ADR-080).
+   */
+  async projectHistoryForPrompt(
+    projectId: string,
+    excludeTaskId: string,
+    maxTasks: number,
+  ): Promise<ProjectHistory> {
+    const [tasks, counts] = await Promise.all([
+      this.loadProjectHistory(projectId, { excludeTaskId, limit: maxTasks }),
+      this.countProjectHistory(projectId),
+    ]);
+
+    return {
+      tasks,
+      // The current request is counted by the totals but never listed.
+      totalTasks: Math.max(0, counts.tasks - 1),
+      conversationCount: counts.conversations,
+    };
   }
 
   /** Only pending tasks may be listed for cancellation and resumption. */

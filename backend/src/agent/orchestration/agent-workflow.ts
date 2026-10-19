@@ -9,6 +9,7 @@ import { ModelAgentPlanner } from './model-agent-planner';
 import { ModelImplementationLoop, type LoopToolResult } from './model-implementation-loop';
 import { ChatLoop } from './model-chat-loop';
 import { buildConversationContext, DEFAULT_CONVERSATION_BUDGET } from './conversation-context';
+import { buildProjectHistory, DEFAULT_PROJECT_HISTORY_BUDGET } from './project-history';
 import { ModelCallRecorder } from '../model/model-call-recorder.service';
 import { ModelProviderError, type PromptPart } from '../model/model-provider.interface';
 import { AiBoundaryRefusalError } from '../../core/ai-boundary/boundary-types';
@@ -122,6 +123,31 @@ export class AgentWorkflow {
     } catch (error) {
       this.logger.warn(
         `Conversation history for ${snapshot.reference} could not be read; answering without it: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * The project's earlier requests across every conversation, rendered as one
+   * prompt part (ADR-080). Empty when the project has none besides this task.
+   *
+   * Same failure rule as the conversation context: history is context, not a
+   * precondition, so a read error is logged and the task proceeds without it.
+   */
+  private async projectHistory(snapshot: TaskExecutionSnapshot): Promise<PromptPart[]> {
+    try {
+      const history = await this.tasks.projectHistoryForPrompt(
+        snapshot.projectId,
+        snapshot.taskId,
+        DEFAULT_PROJECT_HISTORY_BUDGET.maxTasks,
+      );
+      return buildProjectHistory(history);
+    } catch (error) {
+      this.logger.warn(
+        `Project history for ${snapshot.reference} could not be read; proceeding without it: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -510,6 +536,8 @@ export class AgentWorkflow {
         grantedTools: this.grantedToolNames(snapshot),
         documents: await this.attachedDocuments(snapshot),
         conversationContext: await this.conversationContext(snapshot),
+        // ADR-080: what this project has already discussed, across conversations.
+        projectHistory: await this.projectHistory(snapshot),
       });
     } catch (error) {
       return this.failOnModelError(snapshot, 'planning', 'planning', error);
@@ -750,6 +778,8 @@ export class AgentWorkflow {
         documents: await this.attachedDocuments(snapshot),
         // ADR-074: a change request planned after a discussion plans against it.
         conversationContext: await this.conversationContext(snapshot),
+        // ADR-080: what this project has already discussed, across conversations.
+        projectHistory: await this.projectHistory(snapshot),
         odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
       });
     } catch (error) {
@@ -1026,6 +1056,8 @@ export class AgentWorkflow {
         // ADR-074: the earlier turns of this conversation, so a follow-up such
         // as "explain your previous answer" reaches a model that has seen it.
         conversationContext: await this.conversationContext(snapshot),
+        // ADR-080: what this project has already discussed, across conversations.
+        projectHistory: await this.projectHistory(snapshot),
         odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
         run: async (call) => {
           const result = await this.callTool(snapshot, workspace, call.name, call.input);

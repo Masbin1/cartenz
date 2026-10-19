@@ -3,9 +3,11 @@ import { RealRepositoryTools } from './real/repository.tools';
 import { RealGitTools } from './real/git.tools';
 import { RealOdooTools } from './real/odoo.tools';
 import { OdooOnlineTools } from './real/odoo-online.tools';
+import { ProjectHistoryTools } from './real/project-history.tools';
 import { OdooOnlineClient } from '../odoo-online/odoo-online-client';
 import type { AppConfig } from '../../core/config/configuration';
 import type { GitService } from '../git/git.service';
+import type { TaskRepository } from '../task-repository';
 import type { OdooProjectAnalyser } from '../analysis/odoo-project-analyser';
 import type { SecretsProvider } from '../../core/secrets/secrets.provider';
 import type { DatabaseService } from '../../core/database/database.service';
@@ -57,10 +59,16 @@ export function buildTestToolRegistry(): ToolRegistry {
     db: { select: refuse('DatabaseService.select') },
   } as unknown as DatabaseService;
 
+  const tasks = {
+    loadProjectHistory: refuse('TaskRepository.loadProjectHistory'),
+    countProjectHistory: refuse('TaskRepository.countProjectHistory'),
+  } as unknown as TaskRepository;
+
   return new ToolRegistry(
     new RealRepositoryTools(config),
     new RealGitTools(git, secrets),
     new RealOdooTools(analyser),
     new OdooOnlineTools(new OdooOnlineClient(), database, secrets),
+    new ProjectHistoryTools(tasks),
   );
 }

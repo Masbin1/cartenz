@@ -62,6 +62,12 @@ export interface ChatLoopInput {
    */
   readonly conversationContext?: readonly PromptPart[];
   /**
+   * The project's earlier requests across every conversation (ADR-080). An index,
+   * not a transcript: enough to know what was discussed and how it ended, with
+   * `read_project_history` for the full text.
+   */
+  readonly projectHistory?: readonly PromptPart[];
+  /**
    * Documents attached to the task (ADR-030). Each is rendered as a prompt part
    * labelled with its filename and marked untrusted so the boundary redacts it.
    * An image attachment (ADR-042) additionally carries its bytes so a multimodal
@@ -250,6 +256,10 @@ export class ChatLoop {
       parts.push(part);
     }
 
+    for (const part of input.projectHistory ?? []) {
+      parts.push(part);
+    }
+
     for (const document of input.documents ?? []) {
       parts.push({
         label: document.image ? `Attached image: ${document.name}` : `Attached document: ${document.name}`,
@@ -292,6 +302,11 @@ const CHAT_INSTRUCTION = [
   '  `al3_sales_modifier`, `<project>_inventory_modifier`). Do not invent arbitrary module names.',
   '',
   'How to work:',
+  '- Earlier requests in this project - including requests made in other',
+  '  conversations - are listed in the prompt under "Earlier conversations in this',
+  '  project". Read that index before answering anything that refers to previous',
+  '  work, and call read_project_history when you need a request or a whole',
+  '  conversation in full. Never say a topic has not come up before checking it.',
   '- Read whatever you need with read_file, search_code, list_directory and',
   '  list_modules. Reading never requires approval.',
   '- If the answer needs a file changed, prefer to describe what you WOULD change',
@@ -336,6 +351,9 @@ const ODOO_ONLINE_CHAT_INSTRUCTION = [
   '- odoo_update_records: change existing records, by id.',
   '',
   'How to answer a data request:',
+  '- Earlier requests in this project, including requests made in other',
+  '  conversations, are listed under "Earlier conversations in this project". Use',
+  '  them before answering, and call read_project_history for the full text of one.',
   '- If asked to create sample or demo data, actually do it. Look at the model\'s',
   '  fields first with odoo_list_fields and use only fields that exist, so a required',
   '  field is not left empty. Then create. A sample product needs at least a name;',

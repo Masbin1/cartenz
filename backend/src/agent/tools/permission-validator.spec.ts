@@ -318,6 +318,7 @@ describe('tool registry', () => {
       'odoo_search_records',
       'odoo_update_records',
       'read_file',
+      'read_project_history',
       'search_code',
       'update_file',
     ]);
