@@ -43,9 +43,12 @@ A scaffolded project is placed under the organisation's **projects root**:
 - `projects_root` is set in the portal (organisation settings) or by
   `ON_PREMISE_ROOT` on the server. On the current dev box:
   `/home/masbintang/linkederp/projects`.
-- `<technical_name>` is derived from the project name: lowercased, with spaces
-  and punctuation collapsed to underscores. Example: "PT Angin Ribut" →
-  `pt_angin_ribut`.
+- `<technical_name>` is derived from the project name: lowercased, accents
+  stripped, and every other character (spaces, punctuation, underscores)
+  collapsed to a single hyphen. Example: "PT Angin Ribut" → `pt-angin-ribut`,
+  "Toko Roti Budi" → `toko-roti-budi`. A provisioned project is served at
+  `https://<technical_name>.<PROJECT_BASE_DOMAIN>`, so the same name is also the
+  database and the systemd unit.
 
 Important: a project is **not** stored inside the Cartenz repository
 (`cartenz_project`). It lives separately under the projects root. To open it from

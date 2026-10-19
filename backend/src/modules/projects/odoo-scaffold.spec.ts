@@ -5,27 +5,33 @@ import {
 } from './odoo-scaffold';
 
 /**
- * ADR-032 as amended by ADR-033. The directory sits on an Odoo addons path and
- * its children are Python packages, so the derivation is a constraint rather
+ * ADR-032 as amended by ADR-033. The name is the project directory, the
+ * PostgreSQL database and the instance's subdomain
+ * (`<name>.<PROJECT_BASE_DOMAIN>`), so the derivation is a constraint rather
  * than a formatting preference.
  */
 describe('deriveDirectoryName', () => {
-  it('lowercases and joins words with underscores', () => {
-    expect(deriveDirectoryName('PT Angin Ribut')).toBe('pt_angin_ribut');
-    expect(deriveDirectoryName('Vania Sales')).toBe('vania_sales');
+  it('lowercases and joins words with hyphens', () => {
+    expect(deriveDirectoryName('PT Angin Ribut')).toBe('pt-angin-ribut');
+    expect(deriveDirectoryName('Vania Sales')).toBe('vania-sales');
   });
 
-  it('collapses punctuation rather than carrying it into a path', () => {
-    expect(deriveDirectoryName('Sales — Incentive (2026)')).toBe('sales_incentive_2026');
-    expect(deriveDirectoryName('a//b__c')).toBe('a_b_c');
+  it('turns a plain project name into the subdomain the portal advertises', () => {
+    expect(deriveDirectoryName('Toko Roti Budi')).toBe('toko-roti-budi');
+  });
+
+  it('collapses every other character into a single hyphen', () => {
+    expect(deriveDirectoryName('Sales — Incentive (2026)')).toBe('sales-incentive-2026');
+    expect(deriveDirectoryName('a//b__c')).toBe('a-b-c');
+    expect(deriveDirectoryName('Toko & Roti, Budi!')).toBe('toko-roti-budi');
   });
 
   it('strips accents instead of dropping the letter', () => {
-    expect(deriveDirectoryName('Café Manager')).toBe('cafe_manager');
+    expect(deriveDirectoryName('Café Manager')).toBe('cafe-manager');
   });
 
-  it('prefixes a leading digit, which cannot start an identifier', () => {
-    expect(deriveDirectoryName('2026 Roadmap')).toBe('m_2026_roadmap');
+  it('keeps a leading digit, which is valid in a hostname and a database name', () => {
+    expect(deriveDirectoryName('2026 Roadmap')).toBe('2026-roadmap');
   });
 
   it('returns null when nothing usable survives', () => {
@@ -33,16 +39,17 @@ describe('deriveDirectoryName', () => {
     expect(deriveDirectoryName('   ')).toBeNull();
   });
 
-  it('bounds the length', () => {
+  it('bounds the length to what the provisioning scripts accept', () => {
     const name = deriveDirectoryName('word '.repeat(40));
-    expect(name!.length).toBeLessThanOrEqual(63);
-    expect(name!.endsWith('_')).toBe(false);
+    expect(name!.length).toBeLessThanOrEqual(31);
+    expect(name!.endsWith('-')).toBe(false);
   });
 });
 
 describe('isValidDirectoryName', () => {
-  it('accepts a lowercase identifier', () => {
+  it('accepts a lowercase identifier, with hyphens or underscores', () => {
     expect(isValidDirectoryName('pt_angin_ribut')).toBe(true);
+    expect(isValidDirectoryName('pt-angin-ribut')).toBe(true);
     expect(isValidDirectoryName('a1')).toBe(true);
   });
 
@@ -60,12 +67,12 @@ describe('isValidDirectoryName', () => {
     expect(isValidDirectoryName('..')).toBe(false);
   });
 
-  it('refuses names Odoo or Python would not accept', () => {
+  it('refuses names the hostname or the scripts would not accept', () => {
     expect(isValidDirectoryName('Vania')).toBe(false); // uppercase
-    expect(isValidDirectoryName('1abc')).toBe(false); // leading digit
     expect(isValidDirectoryName('_leading')).toBe(false);
     expect(isValidDirectoryName('trailing_')).toBe(false);
-    expect(isValidDirectoryName('with-dash')).toBe(false);
+    expect(isValidDirectoryName('trailing-')).toBe(false); // invalid hostname label
+    expect(isValidDirectoryName('-leading')).toBe(false);
     expect(isValidDirectoryName('')).toBe(false);
     expect(isValidDirectoryName('a'.repeat(64))).toBe(false);
   });

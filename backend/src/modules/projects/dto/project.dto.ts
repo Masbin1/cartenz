@@ -144,8 +144,8 @@ export class CreateProjectDto {
 
   /**
    * The Odoo module name to create, when `scaffold` is set. Derived from the
-   * project name when omitted. Lowercase identifier: it is a Python package
-   * name and a directory name, not a label.
+   * project name when omitted. Lowercase identifier: letters, digits and
+   * hyphens, and also the instance's subdomain when the project is provisioned.
    */
   @IsOptional()
   @IsString()

@@ -36,10 +36,13 @@ configured on-premise root:
 ```
 
 1. **The technical name is derived from the project name.** "Vania Sales" becomes
-   `vania_sales`: lowercased, non-alphanumerics collapsed to `_`, leading digits
-   prefixed, truncated to 63 characters. An Odoo module name is a Python package
-   name, so the derivation is a constraint rather than a formatting preference. A
-   caller may override it with `technicalName`.
+   `vania-sales`: lowercased, accents stripped, every other character collapsed
+   to a single `-`, truncated to 31 characters. The name is not a formatting
+   preference: it is the project directory, the PostgreSQL database, the systemd
+   unit and — for a provisioned project — the instance's subdomain
+   (`vania-sales.masbintang.space`), and the operator's provisioning scripts
+   accept exactly `[a-z0-9][a-z0-9_-]*`. A caller may override it with
+   `technicalName`.
 
 2. **Refuse rather than overwrite.** If the directory already exists, creation
    fails with a message naming it. Silently reusing a directory would put a new

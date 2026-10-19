@@ -54,10 +54,12 @@ export interface RunnableConfig {
 /**
  * Derives a directory name from a project name.
  *
- * "PT Angin Ribut" -> pt_angin_ribut. The addons directory sits on an Odoo
- * addons path and its children are Python packages, so the same lowercase
- * identifier rules are applied here: a directory the operator has to rename
- * before Odoo will load anything from it is not a working default.
+ * "PT Angin Ribut" -> pt-angin-ribut. The name is used verbatim as the Odoo
+ * project directory, the PostgreSQL database and the subdomain
+ * (`<name>.<PROJECT_BASE_DOMAIN>`), so it has to survive all three: lowercase
+ * letters and digits, with every other character — spaces, punctuation,
+ * underscores, accents' leftovers — collapsed to a single hyphen. That is also
+ * exactly the pattern the provisioning scripts accept (`[a-z0-9][a-z0-9_-]*`).
  *
  * Returns null when nothing usable survives, which the caller reports rather
  * than inventing a name.
@@ -69,18 +71,18 @@ export function deriveDirectoryName(projectName: string): string | null {
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
 
-  const collapsed = ascii
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
+  const slug = ascii
+    // Every other character becomes a hyphen, which keeps the result a valid
+    // DNS label and a valid database name at once.
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 
-  if (collapsed.length === 0) return null;
+  if (slug.length === 0) return null;
 
-  // A leading digit cannot start a Python identifier, and modules created inside
-  // this directory are imported by name.
-  const prefixed = /^[0-9]/.test(collapsed) ? `m_${collapsed}` : collapsed;
-
-  return prefixed.slice(0, 63).replace(/_+$/g, '');
+  // The provisioning scripts cap the name at 31 characters (and the hostname
+  // label and PostgreSQL identifier both live inside that): truncating here
+  // keeps a long project name deployable instead of failing in the script.
+  return slug.slice(0, 31).replace(/-+$/g, '');
 }
 
 /**
@@ -89,9 +91,16 @@ export function deriveDirectoryName(projectName: string): string | null {
  * Rejects anything containing a separator, a leading dot or traversal, so the
  * name alone cannot escape the intended directory. The service checks the
  * resolved path as well: this is the first of two gates, not the only one.
+ *
+ * Hyphens are allowed because the same string is the instance's subdomain;
+ * the provisioning scripts accept hyphens for that reason. A trailing hyphen
+ * is refused: it is invalid in a hostname label.
  */
 export function isValidDirectoryName(name: string): boolean {
-  return /^[a-z][a-z0-9_]{0,62}$/.test(name) && !name.endsWith('_');
+  // Underscores are kept for names that already exist on the host and for an
+  // explicit `technicalName`; the derivation itself never produces one, because
+  // the same string is a hostname label when the project is provisioned.
+  return /^[a-z0-9][a-z0-9_-]{0,62}$/.test(name) && !/[-_]$/.test(name);
 }
 
 /**

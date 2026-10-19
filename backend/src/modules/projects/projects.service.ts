@@ -2724,7 +2724,8 @@ export class ProjectsService {
     if (!isValidDirectoryName(directoryName)) {
       throw new BadRequestException(
         `"${directoryName || input.projectName}" does not give a usable directory name. ` +
-          'Supply technicalName: lowercase letters, digits and underscores, starting with a letter.',
+          'Supply technicalName: lowercase letters, digits and hyphens, starting with a ' +
+          'letter or digit and not ending with a hyphen.',
       );
     }
 
@@ -2852,8 +2853,8 @@ export class ProjectsService {
     if (!isValidDirectoryName(directoryName)) {
       throw new BadRequestException(
         `"${directoryName || input.projectName}" does not give a usable directory name for ` +
-          'provisioning. Rename the project so it starts with a letter and contains only ' +
-          'lowercase letters, digits and underscores.',
+          'provisioning. Rename the project so it contains at least one letter or digit; ' +
+          'every other character becomes a hyphen in the instance address.',
       );
     }
 
