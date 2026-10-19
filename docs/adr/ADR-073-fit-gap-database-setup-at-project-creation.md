@@ -397,6 +397,35 @@ changed together:
   uploaded document is a fit-gap *input*, not a bypass of the review screen
   this ADR already requires.
 
+## Addendum (phase 3: one-click task from a configuration gap)
+
+Built ahead of phase 2, because a gap the review surfaces is only useful once
+someone can act on it; BoM skeletons and tax records only apply to some
+projects, a gap applies to every one that has any.
+
+- **No new API.** `POST /projects/:id/tasks` already takes a `prompt`; the
+  phase is entirely in the portal. No auto-dispatch: the task is drafted, and
+  the person sends it, exactly as §6 required.
+- **Project page.** Each `configuration_gap` requirement in the
+  Specification's Requirements list carries a "Configuration gap" badge and an
+  "Open as task" link to `/projects/:id/agent?requirement=REQ-00N`.
+- **The link carries the id, never the text.** The workspace resolves the id
+  against the specification it already loads (`findGapRequirement`,
+  `frontend/lib/gap-task.ts`), refusing a malformed id, an unknown id, or an
+  ordinary (non-gap) requirement. A shared or hand-edited URL therefore
+  cannot put arbitrary text into the composer, and the URL stays short.
+- **The drafted prompt** (`gapTaskPrompt`) is the requirement id and title, the
+  brief's own words for it, a line saying it is a gap (needs a custom module),
+  then context: Odoo version, the specification's modules, and the db-setup
+  report entries that are actually in place (`applied`, and `skipped` = was
+  already so). `failed` entries are left out — they are not the database's
+  state, and telling the agent otherwise would have it build on something
+  that is not there.
+- **New conversation, drafted once.** Arriving with `?requirement=` opens a
+  new conversation rather than the most recent one (gap work is new work);
+  the prompt is drafted once when the project loads, then the parameter is
+  dropped from the address bar so a reload never redrafts over an edit.
+
 ## Verification
 
 - Unit: `keepCataloguedSettings`/`keepCataloguedRecords` drop a field or model

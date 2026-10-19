@@ -158,7 +158,17 @@ export interface ProjectSpecification {
   odoo_version: string;
   description: string;
   modules: string[];
-  requirements: { id: string; title: string; detail?: string }[];
+  requirements: {
+    id: string;
+    title: string;
+    detail?: string;
+    /**
+     * ADR-073 §6 / Phase 3: 'configuration_gap' marks a requirement that came
+     * from the fit-gap setup review, not the brief itself — something no
+     * module or configuration could express. Absent means the ordinary case.
+     */
+    kind?: 'configuration_gap';
+  }[];
   deployment: { environment: string };
 }
 

@@ -19,6 +19,7 @@ import {
 import { useRequireAuth } from '@/lib/auth';
 import { ApiError, api } from '@/lib/api';
 import { useTaskStream } from '@/lib/use-task-stream';
+import { findGapRequirement, gapTaskPrompt } from '@/lib/gap-task';
 import { AppShell } from '@/components/ui/app-shell';
 import { PageLoading, Spinner } from '@/components/ui/spinner';
 import { StatusBadge } from '@/components/ui/status-badge';
@@ -83,6 +84,15 @@ export default function AgentWorkspacePage() {
   /** The requests of the open conversation, oldest first — the thread. */
   const [thread, setThread] = useState<TaskSummary[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(searchParams.get('session'));
+  /**
+   * `?requirement=REQ-00N`: a configuration gap to draft a task from (ADR-073
+   * Phase 3). Read once at mount into a ref: the parameter is cleared from the
+   * address bar after drafting, and that must not re-run the project load and
+   * reopen the latest conversation over the new one.
+   */
+  const requirementRef = useRef<string | null>(searchParams.get('requirement'));
+  /** The gap prompt is drafted once per visit, never over what the person typed. */
+  const gapDraftedRef = useRef(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
     searchParams.get('task'),
   );
@@ -147,7 +157,12 @@ export default function AgentWorkspacePage() {
 
       // Open the most recent conversation by default, so arriving at the
       // workspace shows where the work was left rather than an empty pane.
-      setSessionId((current) => current ?? sessionList[0]?.id ?? null);
+      // Arriving from a configuration gap (ADR-073 Phase 3) is the exception:
+      // that is new work, so it starts a new conversation instead of being
+      // appended to whatever was discussed last.
+      setSessionId(
+        (current) => current ?? (requirementRef.current ? null : (sessionList[0]?.id ?? null)),
+      );
 
       // Production environments are listed but never selectable: the server
       // refuses them, and offering one would only produce a refusal.
@@ -213,6 +228,27 @@ export default function AgentWorkspacePage() {
   useEffect(() => {
     void loadProject();
   }, [loadProject]);
+
+  /**
+   * Drafts the prompt from a `?requirement=` gap once the project (and so the
+   * specification) has loaded. Runs once per visit — it must not keep
+   * overwriting what the person goes on to type — and clears the query
+   * parameter afterwards so a reload does not redraft over an edited prompt.
+   */
+  useEffect(() => {
+    const requirementId = requirementRef.current;
+    if (!project || !requirementId || gapDraftedRef.current) return;
+    gapDraftedRef.current = true;
+    const requirement = findGapRequirement(project.specification, requirementId);
+    if (requirement) {
+      setPrompt(gapTaskPrompt(requirement, project));
+      promptRef.current?.focus();
+    }
+    syncUrl(sessionId, selectedTaskId);
+    // Keyed on the project only: this drafts once, when the specification
+    // first becomes available, and must not re-run as the session changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project]);
 
   useEffect(() => {
     void loadThread(sessionId);

@@ -18,6 +18,7 @@ import { Disclosure } from '@/components/ui/disclosure';
 import { DetailItem, DetailList } from '@/components/ui/detail-list';
 import { Skeleton, SkeletonRows, SkeletonText } from '@/components/ui/skeleton';
 import { PROJECT_TYPE_LABELS, humanise, relativeTime } from '@/lib/format';
+import { gapTaskHref, isConfigurationGap } from '@/lib/gap-task';
 import {
   appLabel,
   odooOnlineInstanceUrl,
@@ -499,19 +500,37 @@ export default function ProjectDetailPage() {
                       hint={project.specification.requirements.length}
                     >
                       <ul className="space-y-3">
-                        {project.specification.requirements.map((requirement) => (
-                          <li key={requirement.id} className="flex gap-3">
-                            <span className="mt-0.5 w-14 shrink-0 font-mono text-caption text-content-subtle">
-                              {requirement.id}
-                            </span>
-                            <span className="min-w-0 text-callout text-content">
-                              {requirement.title}
-                              {requirement.detail ? (
-                                <span className="block text-content-muted">{requirement.detail}</span>
-                              ) : null}
-                            </span>
-                          </li>
-                        ))}
+                        {project.specification.requirements.map((requirement) => {
+                          const isGap = isConfigurationGap(requirement);
+                          return (
+                            <li key={requirement.id} className="flex gap-3">
+                              <span className="mt-0.5 w-14 shrink-0 font-mono text-caption text-content-subtle">
+                                {requirement.id}
+                              </span>
+                              <span className="min-w-0 flex-1 text-callout text-content">
+                                <span className="flex flex-wrap items-baseline gap-2">
+                                  <span>{requirement.title}</span>
+                                  {isGap ? (
+                                    <span className="rounded-full bg-surface-overlay px-2 py-0.5 text-caption font-medium text-content-subtle">
+                                      Configuration gap
+                                    </span>
+                                  ) : null}
+                                </span>
+                                {requirement.detail ? (
+                                  <span className="block text-content-muted">{requirement.detail}</span>
+                                ) : null}
+                                {isGap ? (
+                                  <Link
+                                    href={gapTaskHref(project.id, requirement.id)}
+                                    className="link-quiet mt-1 inline-block text-caption"
+                                  >
+                                    Open as task
+                                  </Link>
+                                ) : null}
+                              </span>
+                            </li>
+                          );
+                        })}
                       </ul>
                     </Disclosure>
                   ) : null}
