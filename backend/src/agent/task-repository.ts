@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, lt, sql } from 'drizzle-orm';
 import { DatabaseService } from '../core/database/database.service';
 import { withSequenceRetry } from '../core/database/task-sequence';
 import {
@@ -24,12 +24,15 @@ import { executionModeFor, type ExecutionMode } from './executors/execution-mode
 import type { ImplementationPlan, ModifiedFile, TaskTestResults } from './orchestration/agent-plan';
 import { GitCredentialsService } from '../modules/settings/git-credentials.service';
 import { resolveProjectGitAccess } from './git/project-git-access';
+import type { ConversationTurn } from './orchestration/conversation-context';
 
 /** Everything a workflow step needs about a task, read in one query. */
 export interface TaskExecutionSnapshot {
   readonly taskId: string;
   readonly reference: string;
   readonly projectId: string;
+  /** The conversation this task belongs to (ADR-047), when it belongs to one. */
+  readonly sessionId: string | null;
   readonly projectName: string;
   /** The latest specification's brief (`description`), when the project has one. */
   readonly projectBrief: string | null;
@@ -145,6 +148,8 @@ export class TaskRepository {
         taskId: agentTasks.id,
         reference: agentTasks.reference,
         projectId: agentTasks.projectId,
+        sessionId: agentTasks.sessionId,
+        createdAt: agentTasks.createdAt,
         projectName: projects.name,
         projectBrief: sql<string | null>`(
           select specification->>'description' from project_specifications
@@ -244,6 +249,7 @@ export class TaskRepository {
       taskId: row.taskId,
       reference: row.reference,
       projectId: row.projectId,
+      sessionId: row.sessionId ?? null,
       projectName: row.projectName,
       projectBrief: row.projectBrief,
       projectType: row.projectType as ProjectType,
@@ -527,6 +533,74 @@ export class TaskRepository {
         }),
       'agent_actions_task_sequence_unique',
     );
+  }
+
+  /**
+   * Earlier turns of the conversation `taskId` belongs to (ADR-074), oldest
+   * first, excluding `taskId` itself.
+   *
+   * Null for a task with no session - there is nothing to read - and never
+   * reads another project's tasks, since a session is scoped to one project at
+   * creation and never reassigned.
+   */
+  async loadConversationTurns(
+    taskId: string,
+    sessionId: string | null,
+    maxTurns: number,
+  ): Promise<ConversationTurn[]> {
+    if (!sessionId) return [];
+
+    const [current] = await this.database.db
+      .select({ createdAt: agentTasks.createdAt })
+      .from(agentTasks)
+      .where(eq(agentTasks.id, taskId))
+      .limit(1);
+
+    if (!current) return [];
+
+    const rows = await this.database.db
+      .select({
+        reference: agentTasks.reference,
+        kind: agentTasks.kind,
+        status: agentTasks.status,
+        prompt: agentTasks.prompt,
+        answer: agentTasks.answer,
+        failureReason: agentTasks.failureReason,
+        plan: agentTasks.plan,
+        modifiedFiles: agentTasks.modifiedFiles,
+        createdAt: agentTasks.createdAt,
+      })
+      .from(agentTasks)
+      .where(
+        and(
+          eq(agentTasks.sessionId, sessionId),
+          lt(agentTasks.createdAt, current.createdAt),
+        ),
+      )
+      .orderBy(asc(agentTasks.createdAt))
+      .limit(maxTurns);
+
+    return rows.map((row) => ({
+      reference: row.reference,
+      kind: row.kind as 'change' | 'chat',
+      status: row.status,
+      prompt: row.prompt,
+      answer: row.answer,
+      failureReason: row.failureReason,
+      planSummary:
+        row.plan && typeof row.plan === 'object' && 'summary' in row.plan
+          ? String((row.plan as { summary?: unknown }).summary ?? '') || null
+          : null,
+      modifiedPaths: Array.isArray(row.modifiedFiles)
+        ? row.modifiedFiles
+            .map((file) =>
+              file && typeof file === 'object' && 'path' in file
+                ? String((file as { path?: unknown }).path ?? '')
+                : '',
+            )
+            .filter((path) => path.length > 0)
+        : [],
+    }));
   }
 
   /** Only pending tasks may be listed for cancellation and resumption. */

@@ -8,8 +8,9 @@ import { searchTermsFor } from './odoo-target';
 import { ModelAgentPlanner } from './model-agent-planner';
 import { ModelImplementationLoop, type LoopToolResult } from './model-implementation-loop';
 import { ChatLoop } from './model-chat-loop';
+import { buildConversationContext, DEFAULT_CONVERSATION_BUDGET } from './conversation-context';
 import { ModelCallRecorder } from '../model/model-call-recorder.service';
-import { ModelProviderError } from '../model/model-provider.interface';
+import { ModelProviderError, type PromptPart } from '../model/model-provider.interface';
 import { AiBoundaryRefusalError } from '../../core/ai-boundary/boundary-types';
 import { WorkspaceManager, type Workspace } from '../workspace/workspace-manager';
 import { ApprovalRequiredError, ToolExecutionService } from '../tools/tool-execution.service';
@@ -101,6 +102,32 @@ export class AgentWorkflow {
     private readonly audit: AuditService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
+
+  /**
+   * The earlier turns of this task's conversation, rendered as one prompt part
+   * (ADR-074). Empty for a task outside a session or the first message of one.
+   *
+   * A failure to read history must never fail the answer: the conversation is
+   * context, not a precondition, so a read error is logged and the model answers
+   * without it - exactly as it did before this existed.
+   */
+  private async conversationContext(snapshot: TaskExecutionSnapshot): Promise<PromptPart[]> {
+    try {
+      const turns = await this.tasks.loadConversationTurns(
+        snapshot.taskId,
+        snapshot.sessionId,
+        DEFAULT_CONVERSATION_BUDGET.maxTurns,
+      );
+      return buildConversationContext(turns);
+    } catch (error) {
+      this.logger.warn(
+        `Conversation history for ${snapshot.reference} could not be read; answering without it: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    }
+  }
 
   /**
    * Loads the text of the task's attached documents (ADR-030), in attachment
@@ -482,6 +509,7 @@ export class AgentWorkflow {
         fields: (fields.output.fields as OdooFieldSummary[] | undefined) ?? [],
         grantedTools: this.grantedToolNames(snapshot),
         documents: await this.attachedDocuments(snapshot),
+        conversationContext: await this.conversationContext(snapshot),
       });
     } catch (error) {
       return this.failOnModelError(snapshot, 'planning', 'planning', error);
@@ -720,6 +748,8 @@ export class AgentWorkflow {
         rankedCandidates: candidates.ranked,
         grantedTools: this.grantedToolNames(snapshot),
         documents: await this.attachedDocuments(snapshot),
+        // ADR-074: a change request planned after a discussion plans against it.
+        conversationContext: await this.conversationContext(snapshot),
         odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
       });
     } catch (error) {
@@ -993,6 +1023,9 @@ export class AgentWorkflow {
         agentPermissions: snapshot.agentPermissions,
         executionMode: snapshot.executionMode,
         documents: await this.attachedDocuments(snapshot),
+        // ADR-074: the earlier turns of this conversation, so a follow-up such
+        // as "explain your previous answer" reaches a model that has seen it.
+        conversationContext: await this.conversationContext(snapshot),
         odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
         run: async (call) => {
           const result = await this.callTool(snapshot, workspace, call.name, call.input);

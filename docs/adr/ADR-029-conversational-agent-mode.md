@@ -82,3 +82,11 @@ leads to are one continuous history rather than two silos.
 
 The `kind` split is not a stopgap. It is retired only if the platform abandons the change-review
 workflow entirely, which would mean ADR-021 is retired — not a condition anyone expects.
+
+## Amendment — ADR-074 (19 October 2026)
+
+This ADR said the two kinds "share a session, so the conversation and the change it leads to
+are one continuous history". That was true for the portal and false for the model: the chat
+loop declared `conversationContext` and nothing ever filled it, so every message reached the
+model as the first of a new conversation. ADR-074 wires it — the session's earlier tasks are
+rendered as one bounded prompt part for chat answers and for change-request planning.

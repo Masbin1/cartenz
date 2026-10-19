@@ -46,6 +46,11 @@ export interface ModelPlanningInput {
   readonly documents?: readonly AttachedDocument[];
   /** Read-only Odoo source prefixes available to this task (ADR-031). */
   readonly odooSourcePrefixes?: readonly string[];
+  /**
+   * Earlier turns of the conversation this change request belongs to (ADR-074),
+   * so "now build what we discussed" plans against the discussion.
+   */
+  readonly conversationContext?: readonly PromptPart[];
 }
 
 /**
@@ -85,6 +90,8 @@ export interface OdooOnlinePlanningInput {
   readonly grantedTools: readonly string[];
   /** Documents attached to the task (ADR-030), rendered as untrusted parts. */
   readonly documents?: readonly AttachedDocument[];
+  /** Earlier turns of this conversation (ADR-074). */
+  readonly conversationContext?: readonly PromptPart[];
 }
 
 export interface PlanningOutcome {
@@ -186,6 +193,7 @@ export class ModelAgentPlanner {
 
     const parts: PromptPart[] = [
       { label: 'Development request', content: input.prompt, untrusted: false },
+      ...(input.conversationContext ?? []),
       {
         label: 'The Odoo Online instance',
         content: JSON.stringify(
@@ -315,6 +323,7 @@ export class ModelAgentPlanner {
 
     const parts: PromptPart[] = [
       { label: 'Development request', content: input.prompt, untrusted: false },
+      ...(input.conversationContext ?? []),
       { label: 'Repository analysis', content: JSON.stringify(facts, null, 2), untrusted: false },
     ];
 
