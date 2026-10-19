@@ -573,6 +573,61 @@ describe('assertProvisioningInvocation', () => {
 });
 
 /**
+ * The teardown invocation guard (ADR-068).
+ *
+ * `sudo` is a wide grant, so the shape is narrowed to exactly
+ * `-n <teardown-script> <project-name>` — the same shape as the backup and
+ * installed-modules scripts it sits beside in the sudoers `Cmnd_Alias`.
+ */
+describe('assertProvisioningInvocation - teardown', () => {
+  const createScripts = ['/opt/odoo/scripts/create_project', '/opt/odoo/scripts/create_project_enterprise'];
+  const grantScript = '/opt/cartenz/infrastructure/provisioning/grant-addons-write.sh';
+  const teardownScript = '/opt/cartenz/infrastructure/provisioning/teardown-project.sh';
+
+  /** The teardown script is the eleventh positional parameter. */
+  const call = (args: string[], configured: string | null = teardownScript) =>
+    assertProvisioningInvocation(
+      args,
+      createScripts,
+      grantScript,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      configured,
+    );
+
+  it('permits a well-formed teardown call', () => {
+    expect(() => call(['-n', teardownScript, 'fitgapklinik'])).not.toThrow();
+  });
+
+  it('refuses an interactive teardown call missing -n', () => {
+    expect(() => call([teardownScript, 'fitgapklinik'])).toThrow(/non-interactively/);
+  });
+
+  it('refuses an extra argument after the project name', () => {
+    expect(() => call(['-n', teardownScript, 'fitgapklinik', '--all'])).toThrow(
+      CommandArgumentError,
+    );
+  });
+
+  it('refuses an invalid project name', () => {
+    for (const bad of ['', '-x', 'UPPER', 'has spaces', '../escape', 'a;rm -rf /']) {
+      expect(() => call(['-n', teardownScript, bad])).toThrow(CommandArgumentError);
+    }
+  });
+
+  it('refuses teardown when no teardown script is configured', () => {
+    expect(() => call(['-n', teardownScript, 'fitgapklinik'], null)).toThrow(
+      /not a configured provisioning script/,
+    );
+  });
+});
+
+/**
  * The HTTPS-issuance invocation guard (ADR-040).
  *
  * Same narrowing discipline as the create/grant shapes above: `sudo` is a wide

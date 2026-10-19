@@ -7,7 +7,8 @@ import { CommandRunner } from '../../core/process/command-runner.service';
 import { technicalNameFromOnPremisePath, summariseTail } from './project-deployment.service';
 
 /**
- * Tears down a project's on-premise instance (ADR-068).
+ * Tears down a project's on-premise instance, as the last step of a permanent
+ * delete (ADR-024).
  *
  * `projects.service.ts#destroy` deletes the platform's own database row and
  * destroys the secrets it owns, but nothing about that touches the real

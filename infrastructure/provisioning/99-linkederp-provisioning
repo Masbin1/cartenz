@@ -10,7 +10,7 @@
 # What this grants, and nothing more:
 #
 #   - The "cartenz" user (the one the LinkedERP API and worker run as) may run
-#     exactly nine commands as root, with NO password prompt (NOPASSWD) and
+#     exactly twelve commands as root, with NO password prompt (NOPASSWD) and
 #     no other privilege.
 #   - Two are the operator's own project-creation scripts, called with no
 #     wildcard in their arguments: the platform's own CommandRunner
@@ -95,6 +95,23 @@
 #     This produces an instance for a human to look at; the AI agent never
 #     works against it (ADR-050 §3).
 #
+#   - The eleventh is the fit-gap database setup (ADR-073):
+#     infrastructure/provisioning/apply-db-setup.sh applies a reviewed setup
+#     plan to a project's own database through `odoo-bin shell`, validating
+#     every model and field against the live registry before writing and
+#     isolating each entry in its own savepoint. Shape: `-n <script>
+#     <project-name>`; the plan arrives in a root-owned staging file that the
+#     platform writes, never as an argument.
+#
+#   - The twelfth is the project teardown (ADR-068):
+#     infrastructure/provisioning/teardown-project.sh takes a permanently
+#     deleted project's instance down for real — unit, database, directory,
+#     Nginx site and certificate — after taking a restorable backup. Shape:
+#     `-n <script> <project-name>`, the same as the backup, installed-modules
+#     and apply-db-setup scripts. Without this grant the platform's permanent
+#     delete removed only its own row and every provisioned instance stayed
+#     running on the host.
+#
 #   - `sudo -l -U cartenz` on the host shows exactly this rule; there is no
 #     wildcard sudo access anywhere else for this user.
 #
@@ -112,7 +129,8 @@ Cmnd_Alias LINKEDERP_PROVISION = \
     /opt/cartenz/infrastructure/provisioning/list-installed-modules.sh, \
     /opt/cartenz/infrastructure/provisioning/restart-project.sh, \
     /opt/cartenz/infrastructure/provisioning/restore-existing-instance.sh, \
-    /opt/cartenz/infrastructure/provisioning/apply-db-setup.sh
+    /opt/cartenz/infrastructure/provisioning/apply-db-setup.sh, \
+    /opt/cartenz/infrastructure/provisioning/teardown-project.sh
 
 cartenz ALL=(root) NOPASSWD: LINKEDERP_PROVISION
 
