@@ -27,6 +27,7 @@ import { GitCredentialsService } from '../modules/settings/git-credentials.servi
 import { resolveProjectGitAccess } from './git/project-git-access';
 import type { ConversationTurn } from './orchestration/conversation-context';
 import type { ProjectHistory, ProjectHistoryTask } from './orchestration/project-history';
+import { composeTaskReport, reportFactsFromTask, type TaskSettlement } from './orchestration/task-report';
 
 /** Everything a workflow step needs about a task, read in one query. */
 export interface TaskExecutionSnapshot {
@@ -334,16 +335,28 @@ export class TaskRepository {
     if (isTerminalStatus(to)) patch.completedAt = new Date();
     if (options.failureReason) patch.failureReason = options.failureReason;
     /**
-     * A chat task's reply is the thing read as "the answer" in the thread
-     * (ADR-029, `saveAnswer`). A change task has nothing playing that role: its
-     * completion message only ever reached the Activity log, so the chat
-     * surface showed a status change and nothing else once a request finished.
-     * `coalesce` keeps a chat's own `saveAnswer()` call authoritative - this
-     * never overwrites it - while giving every other kind the same completion
-     * line as its answer the first time it reaches `completed`.
+     * The reply the thread shows (ADR-081).
+     *
+     * A task that settles gets a reply composed from what it recorded - the
+     * model's report, the files git changed, validation, the commit and how it
+     * ended - instead of the last status line. Before this a change task's reply
+     * was "Branch Staging was pushed to the remote repository at commit
+     * 4e389b49." and a failed one had none at all.
+     *
+     * Composing is best-effort: if the row cannot be read the transition still
+     * lands, with the earlier behaviour (`coalesce(answer, message)` on
+     * completion) as the fallback. A reply is never worth a stuck task.
      */
-    if (to === 'completed' && options.message) {
-      patch.answer = sql`coalesce(${agentTasks.answer}, ${options.message})`;
+    if (to === 'completed' || to === 'failed') {
+      const report = await this.composeSettlementReport(taskId, from, to, options);
+      // 'keep': a chat's own answer is the reply; the column is not touched.
+      if (report === 'keep') {
+        // nothing to write
+      } else if (report !== null) {
+        patch.answer = report;
+      } else if (to === 'completed' && options.message) {
+        patch.answer = sql`coalesce(${agentTasks.answer}, ${options.message})`;
+      }
     }
 
     const updated = await this.database.db
@@ -399,6 +412,67 @@ export class TaskRepository {
       .update(agentTasks)
       .set({ answer, updatedAt: new Date() })
       .where(eq(agentTasks.id, taskId));
+  }
+
+  /**
+   * Composes the reply a settling task shows in the thread (ADR-081), from the
+   * row as it stands right before the transition applies.
+   *
+   * - a string: the composed reply, written to `answer`;
+   * - `'keep'`: a chat that only answered already has its reply - the answer it
+   *   saved - and the column is left exactly as it is;
+   * - `null`: nothing could be composed (the row could not be read, or there is
+   *   no fact to report), so the caller falls back to the status line.
+   */
+  private async composeSettlementReport(
+    taskId: string,
+    from: AgentTaskStatus,
+    to: 'completed' | 'failed',
+    options: { message?: string; failureReason?: string },
+  ): Promise<string | 'keep' | null> {
+    try {
+      const [row] = await this.database.db
+        .select({
+          kind: agentTasks.kind,
+          prompt: agentTasks.prompt,
+          answer: agentTasks.answer,
+          plan: agentTasks.plan,
+          modifiedFiles: agentTasks.modifiedFiles,
+          diffStats: agentTasks.diffStats,
+          testResults: agentTasks.testResults,
+          commitHash: agentTasks.commitHash,
+          branch: agentTasks.branch,
+        })
+        .from(agentTasks)
+        .where(eq(agentTasks.id, taskId))
+        .limit(1);
+
+      if (!row) return null;
+
+      // A chat that only answered keeps its answer exactly as written: that
+      // answer IS the reply. (A chat that also wrote, committed or failed is
+      // composed like any other task, with its answer as the body.)
+      const touchedRepository =
+        Boolean(row.commitHash) || (Array.isArray(row.modifiedFiles) && row.modifiedFiles.length > 0);
+      if (row.kind === 'chat' && to === 'completed' && row.answer && !touchedRepository) return 'keep';
+
+      const facts = reportFactsFromTask(row);
+      const settlement: TaskSettlement = {
+        outcome: to,
+        from,
+        message: options.message ?? null,
+        failureReason: options.failureReason ?? null,
+      };
+
+      return composeTaskReport(facts, settlement);
+    } catch (error) {
+      this.logger.warn(
+        `Could not compose a settlement reply for task ${taskId}; falling back to the status line: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
   }
 
   async saveBranch(taskId: string, branch: string): Promise<void> {

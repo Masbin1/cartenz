@@ -684,6 +684,15 @@ export class AgentWorkflow {
       await this.narrate(snapshot, change);
     }
 
+    // ADR-081: the reply names what was created on the instance, with the ids
+    // Odoo returned - the tool log, not the model's prose, is the evidence.
+    await this.tasks.saveAnswer(
+      snapshot.taskId,
+      [outcome.summary.trim(), applied.map((change) => `- ${change}`).join('\n')]
+        .filter((section) => section.length > 0)
+        .join('\n\n'),
+    );
+
     /**
      * Through `testing`, not straight to `completed`.
      *
@@ -954,6 +963,18 @@ export class AgentWorkflow {
     // Retained with the task: the workspace is destroyed when the run ends, so
     // this is the only copy a reviewer will have.
     await this.tasks.saveDiffPatch(snapshot.taskId, diff.patch);
+
+    /**
+     * ADR-081: the model's account of its work becomes the body of the reply
+     * the thread shows - but only once git confirms there is work to account
+     * for (a change, or a pull). A summary claiming edits over an empty diff is
+     * exactly what the gate below fails, and it must not reach the person as if
+     * it were true.
+     */
+    const summary = outcome.summary.trim();
+    if (summary.length > 0 && (modified.length > 0 || outcome.pulled)) {
+      await this.tasks.saveAnswer(snapshot.taskId, summary);
+    }
 
     if (modified.length === 0) {
       /**

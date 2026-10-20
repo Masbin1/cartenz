@@ -65,6 +65,7 @@ A new ADR goes in the group matching the mode it changes; when in doubt, it is a
 | [ADR-074](ADR-074-conversation-remembers-earlier-turns.md) | A conversation remembers its earlier turns | Accepted |
 | [ADR-076](ADR-076-delete-project-deletes-github-repository.md) | Deleting a project deletes the GitHub repository it created | Accepted |
 | [ADR-080](ADR-080-project-wide-conversation-memory.md) | A request sees the project's other conversations | Accepted |
+| [ADR-081](ADR-081-task-settlement-reply.md) | The reply is composed from what the task did | Accepted |
 
 ## Odoo Online
 
