@@ -319,15 +319,26 @@ def main():
     if applied:
         ENV.cr.commit()
 
-    # The running Odoo server keeps its own ormcache (user groups, menus,
-    # views). A settings toggle changes group membership, but this shell
-    # process is not the server: without signalling, the server keeps
-    # serving pre-setup menus and hides every group-gated screen until it
-    # restarts. Signal through orm_signaling_* tables, exactly as the server
-    # does after its own RPC calls. Done even when nothing was applied, so a
-    # re-run also repairs an instance left with stale caches.
-    ENV.registry.clear_all_caches()
-    ENV.registry.signal_changes()
+    # The running Odoo server keeps its own cache (user groups, menus, views).
+    # A settings toggle changes group membership, but this shell process is
+    # not the server: without signalling, the server keeps serving pre-setup
+    # menus and hides every group-gated screen until it restarts.
+    #
+    # Odoo 19 exposes Registry.clear_all_caches() and signal_changes(); Odoo
+    # 20 moved cache invalidation onto the transaction (Transaction signals
+    # on commit) and kept only the private _signal_changes(cr, names), so the
+    # two are handled apart rather than crashing on the version that lacks
+    # the first. Signalling 'registry' makes the running server reload its
+    # whole registry on the next request, which is what a settings toggle
+    # needs and is safe for a shell that just committed.
+    registry = ENV.registry
+    clear_all_caches = getattr(registry, 'clear_all_caches', None)
+    if callable(clear_all_caches):
+        clear_all_caches()
+        registry.signal_changes()
+    else:
+        registry._signal_changes(ENV.cr, {'registry'})
+        ENV.cr.commit()
 
 
 main()

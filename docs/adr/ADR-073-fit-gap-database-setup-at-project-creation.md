@@ -452,3 +452,46 @@ projects, a gap applies to every one that has any.
 - End-to-end, idempotency: calling "Run setup again" on an already-applied
   project reports every entry `skipped` (already satisfies its natural key),
   not duplicated records.
+
+## Addendum (Odoo 20.0: the first 20.0 project failed for three reasons)
+
+Phase 1 was verified on 19.0 (`jokowi`). The first project created on 20.0
+(`woods project`, 11 configuration entries) failed at the setup step with
+`ERROR: Database 'woods-project' does not exist.` — and it did not, on the
+cluster the script was looking at. Three separate defects were behind that,
+all of them invisible on 19.0:
+
+1. **The database check assumed port 5432.** `apply-db-setup.sh` ran
+   `sudo -u postgres psql -tAc "SELECT 1 FROM pg_database ..."` with no `-p`,
+   so it only ever saw the 19.0 cluster on 5432; a 20.0 project's database
+   lives on 5433 (ADR-045) and was therefore always "missing". Fixed by
+   reading `db_port` from the project's own `odoo.conf` and passing it to both
+   the check and the driver, defaulting to 5432 only when the conf omits it —
+   the shape `backup-project.sh` already used, whose comment names this exact
+   trap. `list-installed-modules.sh` had the same missing `-p`, and in
+   addition hardcoded `BASE_DIR=/opt/odoo`, so it could not even find a 20.0
+   project's directory; it now resolves the tree from where the project
+   actually is, as `apply-db-setup.sh` does.
+2. **A run with no report lines exited 1, silently.** The report is extracted
+   with `grep '^DB_SETUP_REPORT: ' ... | sed ...`; under `set -e` with
+   `pipefail`, a `grep` that matches nothing returns 1 and killed the script
+   before it printed any reason. Fixed with `|| true` — an empty report is a
+   valid outcome, not a failure.
+3. **Odoo 20 has no `Registry.clear_all_caches()`.** The driver's cache
+   signalling (added for the stale-menu bug above) called
+   `clear_all_caches()` then `signal_changes()`, both of which 19.0 has and
+   20.0 does not: 20.0 moved cache invalidation onto the transaction and kept
+   only the private `_signal_changes(cr, names)`. The driver now branches on
+   the method's presence — 19.0 keeps `clear_all_caches()` +
+   `signal_changes()`, 20.0 signals `registry` through `_signal_changes` and
+   commits — instead of raising `AttributeError` after applying nothing.
+
+A fourth change is diagnostic, not a defect: the driver log is root-owned (it
+must be), so the service — which runs as `cartenz` — could report only "the
+setup driver exited 1" with no reason. The script now echoes the last 20 log
+lines on failure, which is what made defect 3 visible at all.
+
+Verified on the real project after all four: the stored 11-entry plan applies
+11/11 (`company`, `id_ID`, four settings toggles, two `product.attribute`s,
+three `mrp.workcenter`s), and a second run reports 11/11 `skipped`. A 19.0
+project (`jokowi`) still exits 0 on the same code path.

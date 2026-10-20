@@ -26,9 +26,6 @@ set -Eeuo pipefail
 #   list-installed-modules.sh dodolbintangmas
 # ============================================================
 
-BASE_DIR="/opt/odoo"
-PROJECTS_DIR="${BASE_DIR}/projects"
-
 usage() {
     echo
     echo "Usage:"
@@ -56,7 +53,24 @@ if [[ ! "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]{1,30}$ ]]; then
     exit 1
 fi
 
-PROJECT_DIR="${PROJECTS_DIR}/${PROJECT_NAME}"
+# Two Odoo trees share this host: 19.0 under /opt/odoo and 20.0 under
+# /opt/odoo20 (ADR-045). Picking the tree by where the project directory
+# actually is keeps this correct for both, the way apply-db-setup.sh and
+# backup-project.sh already resolve it.
+BASE_DIR=""
+for candidate_base in /opt/odoo /opt/odoo20; do
+    if [[ -d "${candidate_base}/projects/${PROJECT_NAME}" ]]; then
+        BASE_DIR="$candidate_base"
+        break
+    fi
+done
+
+if [[ -z "$BASE_DIR" ]]; then
+    echo "ERROR: Project directory does not exist under any known runtime: ${PROJECT_NAME}" >&2
+    exit 1
+fi
+
+PROJECT_DIR="${BASE_DIR}/projects/${PROJECT_NAME}"
 CONFIG_FILE="${PROJECT_DIR}/config/odoo.conf"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -74,13 +88,20 @@ if [[ -z "$DB_NAME" ]]; then
     exit 1
 fi
 
-if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
-    echo "ERROR: Database '${DB_NAME}' does not exist." >&2
+# 19.0 projects live on 5432 and 20.0 projects on 5433 (ADR-045); a bare
+# `psql` only sees the first cluster, which made every 20.0 project answer
+# "database does not exist". Read the port from the same config, as
+# backup-project.sh already does.
+PG_PORT="$(sed -nE 's/^[[:space:]]*db_port[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$CONFIG_FILE" | head -1)"
+PG_PORT="${PG_PORT:-5432}"
+
+if ! sudo -u postgres psql -p "$PG_PORT" -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
+    echo "ERROR: Database '${DB_NAME}' does not exist on port ${PG_PORT}." >&2
     exit 1
 fi
 
 # -A (unaligned) + -F$'\t' + -t (tuples only): a plain tab-separated stream,
 # nothing to strip before parsing. ON_ERROR_STOP so a broken query fails
 # loudly instead of printing a partial, silently-truncated list.
-sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$DB_NAME" -tA -F $'\t' \
+sudo -u postgres psql -p "$PG_PORT" -v ON_ERROR_STOP=1 -d "$DB_NAME" -tA -F $'\t' \
     -c "SELECT name, state FROM ir_module_module ORDER BY name"

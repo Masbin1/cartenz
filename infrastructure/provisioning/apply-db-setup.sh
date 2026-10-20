@@ -130,8 +130,16 @@ if [[ -z "$DB_NAME" ]]; then
     exit 1
 fi
 
-if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
-    echo "ERROR: Database '${DB_NAME}' does not exist." >&2
+# The database lives on the project's own cluster, not on a fixed one: 19.0
+# projects are created on 5432 and 20.0 projects on 5433 (ADR-045). A bare
+# `psql` only ever sees the first, so a 20.0 project's database is invisible
+# to it — read db_port from the same config, exactly as backup-project.sh
+# does, and default to 5432 only when the conf omits it.
+PG_PORT="$(sed -nE 's/^[[:space:]]*db_port[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$CONFIG_FILE" | head -1)"
+PG_PORT="${PG_PORT:-5432}"
+
+if ! sudo -u postgres psql -p "$PG_PORT" -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
+    echo "ERROR: Database '${DB_NAME}' does not exist on port ${PG_PORT}." >&2
     exit 1
 fi
 
@@ -177,10 +185,18 @@ set -e
 
 # The driver prints its JSON report lines prefixed with "DB_SETUP_REPORT: " so
 # they can be picked out of odoo-bin's own banner/log noise on stdout; every
-# other line in the log is diagnostic only.
-grep '^DB_SETUP_REPORT: ' "$LOG_FILE" | sed 's/^DB_SETUP_REPORT: //'
+# other line in the log is diagnostic only. `|| true` matters: a plan with no
+# entries (or one whose every entry died before reporting) leaves nothing to
+# grep, and under `set -e`/`pipefail` a bare grep would then kill the script
+# with exit 1 and print no reason at all.
+grep '^DB_SETUP_REPORT: ' "$LOG_FILE" | sed 's/^DB_SETUP_REPORT: //' || true
 
 if [[ $DRIVER_EXIT -ne 0 ]]; then
     echo "ERROR: the setup driver exited ${DRIVER_EXIT}. Full log: ${LOG_FILE}" >&2
+    # The log is root-owned (it must be: it is written through this shell's
+    # descriptor before sudo drops to odoo), so without this the reason a run
+    # failed is readable only by root - while the service that shows the
+    # message runs as "cartenz". Echo the tail for whoever reads the reply.
+    tail -n 20 "$LOG_FILE" >&2 || true
     exit "$DRIVER_EXIT"
 fi
