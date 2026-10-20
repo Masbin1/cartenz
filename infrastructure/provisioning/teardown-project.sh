@@ -89,6 +89,13 @@ for candidate_base in /opt/odoo /opt/odoo20; do
     fi
 done
 
+# backup-project.sh (step 1) defaults to the 19.0 tree on its own, and it runs as
+# a child process: the tree this project actually lives in has to be exported for
+# it to find a 20.0 project's directory and database.
+if [[ -n "$BASE_DIR" ]]; then
+    export BASE_DIR
+fi
+
 SERVICE_NAME="odoo-${PROJECT_NAME}"
 DOMAIN="${PROJECT_NAME}.${BASE_DOMAIN}"
 CONFIG_FILE="${PROJECT_DIR}/config/odoo.conf"

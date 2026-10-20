@@ -90,11 +90,17 @@ CONFIG_FILE="${PROJECT_DIR}/config/odoo.conf"
 DB_NAME="$(sed -nE 's/^[[:space:]]*db_name[[:space:]]*=[[:space:]]*([A-Za-z0-9_-]+).*/\1/p' "$CONFIG_FILE" | head -1)"
 DB_NAME="${DB_NAME:-$PROJECT_NAME}"
 
+# Odoo 20.0 lives on its own PostgreSQL cluster (5433; create_project writes
+# `db_port` into the project's conf), so the port is read from the project
+# rather than assumed: a 20.0 database is invisible to a default `psql`.
+PG_PORT="$(sed -nE 's/^[[:space:]]*db_port[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$CONFIG_FILE" | head -1)"
+PG_PORT="${PG_PORT:-5432}"
+
 # The dump is taken as the `odoo` role would see it, through the postgres
 # superuser on the local socket: the platform's own role can CONNECT but does
 # not own the tables, so `pg_dump` as that role fails on orm_signaling_registry.
-if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
-    fail "Database '${DB_NAME}' does not exist; nothing to back up."
+if ! sudo -u postgres psql -p "$PG_PORT" -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
+    fail "Database '${DB_NAME}' does not exist on port ${PG_PORT}; nothing to back up."
 fi
 
 ID="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -116,7 +122,7 @@ echo "=== Backing up '${PROJECT_NAME}' (database '${DB_NAME}') -> ${DEST} ==="
 
 # --- database ----------------------------------------------------------------
 echo "--- database ---"
-if ! sudo -u postgres pg_dump --format=custom --file="${DEST}/db.dump" "${DB_NAME}"; then
+if ! sudo -u postgres pg_dump -p "$PG_PORT" --format=custom --file="${DEST}/db.dump" "${DB_NAME}"; then
     fail "pg_dump failed for '${DB_NAME}'."
 fi
 [[ -s "${DEST}/db.dump" ]] || fail "pg_dump produced an empty file."
