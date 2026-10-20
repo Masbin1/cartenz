@@ -1,7 +1,7 @@
 # ADR-034: A new project is ready to run
 
 - Status: Accepted
-- Date: 06 September 2026
+- Date: 6 September 2026
 - Milestone: Phase 5 (Odoo-aware development)
 
 Amends ADR-027 (validation) and ADR-033 (project layout).

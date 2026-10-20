@@ -1,8 +1,8 @@
-# ADR-023 — Portal-managed model provider
+# ADR-023: Portal-managed model provider
 
-**Status:** Accepted
-**Date:** 2026-08-28
-**Amends:** ADR-03 (provider abstraction), ADR-020 (AI data boundary)
+- Status: Accepted
+- Date: 28 August 2026
+- Amends: ADR-03 (provider abstraction), ADR-020 (AI data boundary)
 
 > **Amended by ADR-044.** Decision 1 below describes the setting as
 > organisation-scoped, in `organization_model_settings`. The organisation no

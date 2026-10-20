@@ -1,10 +1,8 @@
 # ADR-070: Creating an Odoo Online database is assisted, not automated
 
-Status: Accepted (2026-10-13)
-
-Relates to: ADR-028 (execution adapters), ADR-052 (which rejects headless
-browsers), ADR-056 (module selection at project creation), ADR-064 (Odoo Online
-records), ADR-068 (Odoo Online model creation).
+- Status: Accepted
+- Date: 13 October 2026
+- Relates to: ADR-028 (execution adapters), ADR-052 (which rejects headless browsers), ADR-056 (module selection at project creation), ADR-064 (Odoo Online records), ADR-068 (Odoo Online model creation).
 
 ## Context
  

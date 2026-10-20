@@ -8,6 +8,11 @@ Builds on ADR-039 (provisioned instance), ADR-045 (version/edition template
 catalog), ADR-051 (region in template selection), ADR-056 (module selection
 and recommendation at project creation).
 
+Extended by ADR-075: the record vocabulary below (a hand-written list of four
+models, and a refusal of every relation with no resolver) is widened to any
+non-protected model with in-plan refs, for on-premise only. The brief still
+reviews and applies a plan at creation exactly as this ADR describes.
+
 ## Context
 
 ADR-056 closed the gap between "the brief says what the project needs" and

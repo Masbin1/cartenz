@@ -1,7 +1,7 @@
-# ADR-043 — Per-project access control
+# ADR-043: Per-project access control
 
-**Status:** Accepted
-**Date:** 2026-09-15
+- Status: Accepted
+- Date: 15 September 2026
 
 > **Amended by ADR-044**, one day later. Every "organisation" and "organisation
 > role" below describes the layer this record found and worked alongside; that

@@ -1,10 +1,8 @@
 # ADR-071: Creating an Odoo.sh project is assisted, and Cartenz adopts the repository Odoo.sh creates
 
-Status: Accepted (2026-10-14)
-
-Relates to: ADR-021 (push safety), ADR-028 (execution modes), ADR-041 (GitHub
-repository for a created project), ADR-052 §9 (no headless browser), ADR-058
-(registered Git credentials), ADR-070 (Odoo Online assisted creation).
+- Status: Accepted
+- Date: 14 October 2026
+- Relates to: ADR-021 (push safety), ADR-028 (execution modes), ADR-041 (GitHub repository for a created project), ADR-052 §9 (no headless browser), ADR-058 (registered Git credentials), ADR-070 (Odoo Online assisted creation).
 
 ## Context
 

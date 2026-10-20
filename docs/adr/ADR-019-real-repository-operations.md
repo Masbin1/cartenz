@@ -1,6 +1,9 @@
-# ADR-019 — Real repository operations ahead of microVM isolation
+# ADR-019: Real repository operations ahead of microVM isolation
 
-**Status:** Accepted · **Date:** 27 August 2026 · **Milestone:** Phase 2 · **Amends:** ADR-013
+- Status: Accepted
+- Date: 27 August 2026
+- Milestone: Phase 2
+- Amends: ADR-013
 
 ## Context
 

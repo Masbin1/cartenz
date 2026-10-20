@@ -1,6 +1,8 @@
-# ADR-020 — Model provider binding and the AI data boundary
+# ADR-020: Model provider binding and the AI data boundary
 
-**Status:** Accepted · **Date:** 28 August 2026 · **Milestone:** Phase 3
+- Status: Accepted
+- Date: 28 August 2026
+- Milestone: Phase 3
 
 ## Context
 

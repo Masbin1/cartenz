@@ -1,7 +1,7 @@
-# ADR-025 — Model-aware file selection
+# ADR-025: Model-aware file selection
 
-**Status:** Accepted
-**Date:** 2026-08-29
+- Status: Accepted
+- Date: 29 August 2026
 
 ## Context
 

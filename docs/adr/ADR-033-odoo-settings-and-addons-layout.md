@@ -1,7 +1,7 @@
 # ADR-033: Odoo paths in the portal, and an addons directory per project
 
 - Status: Accepted
-- Date: 06 September 2026
+- Date: 6 September 2026
 - Milestone: Phase 5 (Odoo-aware development)
 
 Amends ADR-031 (configuration surface) and ADR-032 (what is scaffolded).

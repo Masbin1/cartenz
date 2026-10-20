@@ -4,6 +4,7 @@
 - Date: 25 September 2026
 - Milestone: Phase 5 (connected-server estate)
 - Amends: ADR-028 (execution adapters)
+- Extended by: ADR-075 (the same policy, with a second executor for on-premise)
 
 ## Context
 
@@ -116,7 +117,8 @@ accepts.
   describes for configuration and access continues to hold; ADR-028's
   data-blind description of *business* records is what this ADR narrows, for
   Odoo Online specifically, under permission and approval.
-- Odoo.sh and on-premise are unaffected: the new tools declare
+- Odoo.sh is unaffected: the new tools declare
   `modes: ['odoo_online']`, so the mode gate in `permission-validator.ts`
   refuses them anywhere else, the same enforcement ADR-028 already relies on for
-  every mode-gated tool.
+  every mode-gated tool. On-premise is given the same policy with a different
+  executor in ADR-075.

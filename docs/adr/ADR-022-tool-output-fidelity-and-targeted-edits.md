@@ -1,8 +1,8 @@
-# ADR-022 — Tool output fidelity and targeted edits
+# ADR-022: Tool output fidelity and targeted edits
 
-**Status:** Accepted
-**Date:** 2026-08-28
-**Supersedes in part:** ADR-020 §5 (which named targeted edits as future work)
+- Status: Accepted
+- Date: 28 August 2026
+- Supersedes in part: ADR-020 §5 (which named targeted edits as future work)
 
 ## Context
 

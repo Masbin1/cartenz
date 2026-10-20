@@ -1,7 +1,7 @@
 # ADR-038: A scaffolded project is created with staging and development branches
 
 - Status: Accepted
-- Date: 08 September 2026
+- Date: 8 September 2026
 - Milestone: Phase 5 (Odoo-aware development)
 
 Amends ADR-032 (scaffolding) and ADR-021 (environments). Builds on ADR-036 (an

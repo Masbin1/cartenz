@@ -1,6 +1,8 @@
-# ADR-012 — Local runtime without Docker
+# ADR-012: Local runtime without Docker
 
-**Status:** Accepted · **Date:** 27 August 2026 · **Milestone:** Phase 1
+- Status: Accepted
+- Date: 27 August 2026
+- Milestone: Phase 1
 
 ## Context
 

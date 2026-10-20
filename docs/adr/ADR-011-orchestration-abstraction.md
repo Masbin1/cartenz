@@ -1,6 +1,8 @@
-# ADR-011 — Orchestration abstraction, with Temporal deferred
+# ADR-011: Orchestration abstraction, with Temporal deferred
 
-**Status:** Accepted · **Date:** 27 August 2026 · **Milestone:** Phase 1
+- Status: Accepted
+- Date: 27 August 2026
+- Milestone: Phase 1
 
 ## Context
 

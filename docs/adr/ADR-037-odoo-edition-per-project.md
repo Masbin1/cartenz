@@ -1,7 +1,7 @@
 # ADR-037: Odoo edition (Community or Enterprise) is chosen per project
 
 - Status: Accepted
-- Date: 08 September 2026
+- Date: 8 September 2026
 - Milestone: Phase 5 (Odoo-aware development)
 
 Amends ADR-035 (the generated `odoo.conf`). Builds on ADR-033 (Odoo paths in the
