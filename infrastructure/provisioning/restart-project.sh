@@ -253,9 +253,17 @@ fi
 # stay up serving requests — step 5 starts the always-on unit separately.
 
 echo "Upgrading ${DB_NAME} (this can take a while)..."
+
+# --logfile overrides whatever the project's own odoo.conf set (it usually sets
+# one): Odoo writes NOTHING to stdout/stderr once a logfile is configured, so
+# without this flag "$LOG_FILE" stays empty forever and the only error the
+# operator ever sees is "Full log: <empty file>" - the real failure lands in
+# the project's own logs/odoo.log, which the cartenz user and this script's
+# caller cannot read (0750 odoo:odoo). The explicit flag here, not the conf
+# file, decides where THIS run's output goes.
 if sudo -u "$ODOO_USER" "$VENV_PYTHON" "$ODOO_BIN" \
     -c "$CONFIG_FILE" -d "$DB_NAME" -u all --stop-after-init --no-http \
-    > "$LOG_FILE" 2>&1; then
+    --logfile "$LOG_FILE" --log-level info; then
 
     # --- 5a. Success: start the unit and confirm it is actually serving -----
 
