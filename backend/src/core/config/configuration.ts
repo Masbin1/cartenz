@@ -96,7 +96,7 @@ const environmentSchema = z.object({
   AI_MAX_STEPS: z.coerce.number().int().min(1).max(200).default(30),
   AI_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(500).default(60),
   AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(64000).default(8000),
-  AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5000).max(600000).default(120000),
+  AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5000).max(1800000).default(120000),
   /** 0 for the most deterministic output, which is what a code change wants. */
   AI_TEMPERATURE: z.coerce.number().min(0).max(2).default(0),
 

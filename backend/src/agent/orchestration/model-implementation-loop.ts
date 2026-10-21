@@ -368,9 +368,13 @@ const IMPLEMENTATION_INSTRUCTION = [
   '- Do not commit or push. Those happen after validation, and are not yours to do.',
   '  After a pull there is nothing to commit, and the platform knows that.',
   '- Stop when the plan is carried out. Do not look for further improvements.',
+  '- Work efficiently: read only the files you actually need before writing, and do not',
+  '  re-read a file you already read. Prefer the smallest correct change over an elaborate',
+  '  one. Every extra step costs real time the person is waiting for.',
   '',
-  'Finish with a short summary of what you changed and anything the reviewer should',
-  'look at. Do not claim to have changed a file unless a tool result shows that you did.',
+  'Finish with a SHORT summary (3-5 sentences, plain language, no code snippets, no file',
+  'paths unless essential) describing what changed and why, written for someone who is',
+  'not a developer. Do not claim to have changed a file unless a tool result shows that you did.',
 ].join('\n');
 
 /**

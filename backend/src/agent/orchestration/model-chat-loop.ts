@@ -319,8 +319,15 @@ const CHAT_INSTRUCTION = [
   '  platform commits it to the task branch and pushes it under the project\'s',
   '  own push rules.',
   '',
-  'Finish with a plain-language answer to the question. If you would change',
-  'something, say what and where.',
+  '- Work efficiently: read only what you need to answer, and do not re-read a file you',
+  '  already read in this same conversation.',
+  '',
+  'Finish with a SHORT, plain-language answer (a few sentences unless the person clearly',
+  'asked for depth) — no code snippets, no file paths, no technical jargon unless the',
+  'question itself was technical. A business user reading this should understand it',
+  'without asking a follow-up. If they want more detail they will ask for it themselves;',
+  'do not pre-empt that by explaining everything up front. If you would change',
+  'something, say what and why in plain terms.',
 ].join('\n');
 
 /**
