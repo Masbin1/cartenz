@@ -1620,6 +1620,12 @@ function CheckoutPanel({
                               : `${branch.behind} commit${branch.behind === 1 ? '' : 's'} behind the remote.`}
                     {branch.lastSyncedAt ? ` · Synced ${relativeTime(branch.lastSyncedAt)}` : ''}
                   </p>
+                  {branch.exists && branch.commitSubject ? (
+                    <p className="mt-0.5 truncate text-meta text-content-subtle" title={branch.commitSubject}>
+                      {branch.commitSubject}
+                      {branch.commitAuthor ? ` — ${branch.commitAuthor}` : ''}
+                    </p>
+                  ) : null}
                 </div>
                 <p className="shrink-0 font-mono text-meta text-content-subtle">
                   {branch.historyDepth !== null ? `${branch.historyDepth} commits` : ''}

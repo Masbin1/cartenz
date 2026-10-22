@@ -481,6 +481,33 @@ export class GitService {
   }
 
   /**
+   * A commit's subject line (first line of its message) and author, or null
+   * when the commit does not resolve.
+   *
+   * Read separately from `headOf` rather than folded into it: most callers of
+   * `headOf` only need the hash to compare refs, and asking `git log` for a
+   * subject on every one of those would be a wasted process per branch. This
+   * is for the few places - the checkout panel's branch list - that need to
+   * show a person what the commit actually is, not just which one it is.
+   */
+  async commitSubject(
+    repositoryPath: string,
+    ref: string,
+  ): Promise<{ subject: string; author: string; authoredAt: string } | null> {
+    const result = await this.run(repositoryPath, [
+      'log',
+      '-1',
+      '--format=%s%x1f%an%x1f%aI',
+      ref,
+    ]);
+    if (result.exitCode !== 0) return null;
+
+    const [subject, author, authoredAt] = result.stdout.trim().split('\x1f');
+    if (!subject) return null;
+    return { subject, author: author ?? '', authoredAt: authoredAt ?? '' };
+  }
+
+  /**
    * How many commits are reachable from `to` and not from `from`.
    *
    * The number of commits a branch is behind or ahead, depending on which way

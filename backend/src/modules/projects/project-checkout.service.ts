@@ -49,6 +49,12 @@ export interface CheckoutBranchState {
   readonly inUse: boolean;
   /** Commits reachable from the local branch - proves the clone is not shallow. */
   readonly historyDepth: number | null;
+  /** The local branch tip's commit message subject line, when it resolves. */
+  readonly commitSubject: string | null;
+  /** The local branch tip's author name, when it resolves. */
+  readonly commitAuthor: string | null;
+  /** The local branch tip's authored-at timestamp (ISO 8601), when it resolves. */
+  readonly commitAuthoredAt: string | null;
   readonly lastSyncedAt: string | null;
 }
 
@@ -716,6 +722,9 @@ export class ProjectCheckoutService {
         dirty: false,
         inUse: false,
         historyDepth: null,
+        commitSubject: null,
+        commitAuthor: null,
+        commitAuthoredAt: null,
         lastSyncedAt: null,
       };
     }
@@ -733,6 +742,7 @@ export class ProjectCheckoutService {
 
     const worktree = worktrees.get(branch) ?? null;
     const status = worktree ? await this.git.status(worktree).catch(() => null) : null;
+    const commitInfo = await this.git.commitSubject(path, `refs/heads/${branch}`);
 
     return {
       branch,
@@ -745,6 +755,9 @@ export class ProjectCheckoutService {
       dirty: status ? !status.clean : false,
       inUse: worktree !== null,
       historyDepth: await this.git.countReachable(path, `refs/heads/${branch}`),
+      commitSubject: commitInfo?.subject ?? null,
+      commitAuthor: commitInfo?.author ?? null,
+      commitAuthoredAt: commitInfo?.authoredAt ?? null,
       lastSyncedAt: await this.readState(projectId, branch),
     };
   }

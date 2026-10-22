@@ -105,6 +105,10 @@ describe('ProjectCheckoutService', () => {
       countCommits: async (_path: string, from: string, to: string) =>
         from === HEAD && to === REMOTE_HEAD ? 3 : 0,
       countReachable: async () => 827,
+      commitSubject: async (_path: string, ref: string) =>
+        ref === `refs/heads/${branches[0]}` || branches.some((b) => ref === `refs/heads/${b}`)
+          ? { subject: 'Test commit subject', author: 'Test Author', authoredAt: '2026-01-01T00:00:00Z' }
+          : null,
       status: async () => ({ clean: true, entries: [] }),
       branchAt: async () => undefined,
       detachAt: async () => undefined,

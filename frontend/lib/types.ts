@@ -981,6 +981,12 @@ export interface CheckoutBranchState {
   /** A running task has this branch checked out in its worktree. */
   inUse: boolean;
   historyDepth: number | null;
+  /** The local branch tip's commit message subject line, when it resolves. */
+  commitSubject: string | null;
+  /** The local branch tip's author name, when it resolves. */
+  commitAuthor: string | null;
+  /** The local branch tip's authored-at timestamp (ISO 8601), when it resolves. */
+  commitAuthoredAt: string | null;
   lastSyncedAt: string | null;
 }
 
