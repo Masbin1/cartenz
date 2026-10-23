@@ -1062,7 +1062,9 @@ export class AgentWorkflow {
 
         return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
           message:
-            'Answered. The approved plan named no file to change, so there is nothing to commit.',
+            (snapshot.plan?.delivery ?? 'commit') === 'push_existing'
+              ? 'Nothing to change: the plan delivers the commits already on the branch.'
+              : 'Answered. The approved plan named no file to change, so there is nothing to commit.',
         });
       }
 
@@ -1283,6 +1285,22 @@ export class AgentWorkflow {
   }
 
   /**
+   * Commits this branch has that its remote-tracking ref does not, or null when
+   * the comparison cannot be made.
+   *
+   * Null means "unknown", never zero: a branch that has never been fetched has no
+   * `origin/<branch>` to count against, and reporting that as 0 would say "already
+   * at the remote tip" about a branch nobody has compared with anything.
+   */
+  private async unpushedCount(workspace: Workspace): Promise<number | null> {
+    const tracking = `origin/${workspace.branch}`;
+    const resolved = await this.git.resolveRef(workspace.repositoryPath, tracking);
+    if (!resolved) return null;
+
+    return this.git.countCommits(workspace.repositoryPath, tracking, workspace.branch);
+  }
+
+  /**
    * TESTING. Runs the validation tools named in the plan.
    *
    * These remain simulated (ADR-019): each executes repository code, which is the
@@ -1362,6 +1380,40 @@ export class AgentWorkflow {
      */
     const status = await this.git.status(workspace.repositoryPath);
     if (status.clean) {
+      /**
+       * A clean tree is not the same as "nothing to deliver" (ADR-083).
+       *
+       * A request to push commits that are already on the branch approves a plan
+       * whose only work is the push: the tree is clean because there was nothing
+       * to author, and the commits to send pre-date the task. Completing here -
+       * "nothing to commit or push" - is the false success this exists to remove,
+       * so the ahead count decides instead of the tree.
+       *
+       * Only an explicit `push_existing` plan may reach the push from a clean
+       * tree. A read-only inspection (ADR-082) also runs with a clean tree and
+       * must never push, which is why this cannot be inferred from the status.
+       */
+      if ((snapshot.plan?.delivery ?? 'commit') === 'push_existing') {
+        const ahead = await this.unpushedCount(workspace);
+
+        if (ahead !== null && ahead > 0) {
+          return this.tasks.transition(snapshot.taskId, 'testing', 'committing', {
+            message:
+              `Nothing to commit: ${ahead} commit(s) on ${workspace.branch} are not on ` +
+              `origin/${workspace.branch}. Preparing the push.`,
+          });
+        }
+
+        return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
+          message:
+            ahead === null
+              ? `There was nothing to commit, and ${workspace.branch} has no fetched ` +
+                'remote to compare against, so nothing was pushed.'
+              : `There was nothing to commit, and ${workspace.branch} is already at the ` +
+                'remote tip: nothing was pushed.',
+        });
+      }
+
       return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
         message:
           'The working tree is unchanged: there is nothing to commit or push. ' +
@@ -1437,20 +1489,59 @@ export class AgentWorkflow {
   /** COMMITTING. Commits locally, then requests approval for the push. */
   private async commit(snapshot: TaskExecutionSnapshot): Promise<boolean> {
     const workspace = await this.acquireWorkspace(snapshot);
-    const message = commitMessageFor(snapshot);
 
-    const result = await this.callTool(snapshot, workspace, 'git_commit', { message });
+    /**
+     * A `push_existing` plan has nothing to author (ADR-083): the commits it
+     * delivers were made before the task, so `git_commit` would stage nothing and
+     * fail with "nothing to commit" - the task failed for doing what was asked.
+     * The branch tip is recorded as the commit this task settles at, which is what
+     * the push verification and the settlement report read.
+     *
+     * The check is on the tree, not on the plan alone: a plan may say
+     * `push_existing` and still leave the model having written something, and that
+     * work must be committed rather than silently left behind.
+     */
+    const cleanTree = (await this.git.status(workspace.repositoryPath)).clean;
+    let commit: string;
+    /**
+     * The message of the commit this task made, when it made one. A
+     * `push_existing` task authors nothing, so the approval shows no message
+     * rather than the message of a commit it did not write.
+     */
+    let commitMessage: string | null = null;
 
-    if (result.status === 'suspended') return false;
-    if (result.status !== 'succeeded') {
-      return this.tasks.transition(snapshot.taskId, 'committing', 'failed', {
-        failureReason: 'The commit could not be created.',
-      });
+    if (cleanTree) {
+      if ((snapshot.plan?.delivery ?? 'commit') !== 'push_existing') {
+        return this.tasks.transition(snapshot.taskId, 'committing', 'completed', {
+          message: 'There was nothing to commit: the working tree is clean.',
+        });
+      }
+
+      const ahead = (await this.unpushedCount(workspace)) ?? 0;
+      commit = await this.git.revParse(workspace.repositoryPath, 'HEAD');
+      await this.tasks.saveCommitHash(snapshot.taskId, commit);
+      await this.narrate(
+        snapshot,
+        `Nothing to author: ${ahead} commit(s) already on ${workspace.branch} are not on ` +
+          'the remote. Preparing to push them.',
+      );
+    } else {
+      const message = commitMessageFor(snapshot);
+      commitMessage = message.split('\n')[0];
+
+      const result = await this.callTool(snapshot, workspace, 'git_commit', { message });
+
+      if (result.status === 'suspended') return false;
+      if (result.status !== 'succeeded') {
+        return this.tasks.transition(snapshot.taskId, 'committing', 'failed', {
+          failureReason: 'The commit could not be created.',
+        });
+      }
+
+      commit = await this.git.revParse(workspace.repositoryPath, 'HEAD');
+      await this.tasks.saveCommitHash(snapshot.taskId, commit);
+      await this.narrate(snapshot, `Committed ${commit.slice(0, 8)} on ${workspace.branch}.`);
     }
-
-    const commit = await this.git.revParse(workspace.repositoryPath, 'HEAD');
-    await this.tasks.saveCommitHash(snapshot.taskId, commit);
-    await this.narrate(snapshot, `Committed ${commit.slice(0, 8)} on ${workspace.branch}.`);
 
     // On-premise pushes to the remote the selected repository already carries,
     // rather than to a URL the platform cloned from (ADR-028). It reaches the same
@@ -1598,7 +1689,7 @@ export class AgentWorkflow {
         branch: workspace.branch,
         commit: commit.slice(0, 12),
         baseBranch: workspace.baseBranch,
-        commitMessage: message.split('\n')[0],
+        ...(commitMessage ? { commitMessage } : {}),
       },
       taskStatus: 'committing',
     });

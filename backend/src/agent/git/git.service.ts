@@ -508,6 +508,70 @@ export class GitService {
   }
 
   /**
+   * The recent commits reachable from `ref`, newest first, optionally excluding
+   * everything reachable from a second ref.
+   *
+   * `exclude` is what makes "which commits does this branch have that the remote
+   * does not" answerable in one call (`git log <branch> --not origin/<branch>`).
+   * It exists for the model-facing `git_log` tool: `git_diff` compares the working
+   * tree against the workspace's base commit, so a clean tree says nothing at all
+   * about the remote - and a task asking "what is not pushed?" was answered "there
+   * is nothing waiting to push" on a branch that was two commits ahead.
+   *
+   * Throws when git refuses the ref, rather than returning an empty list: empty
+   * reads as "no commits", which is the opposite of what a wrong ref name means.
+   */
+  async log(
+    repositoryPath: string,
+    options: { ref: string; limit: number; exclude?: string | null },
+  ): Promise<{ commit: string; subject: string; author: string; authoredAt: string }[]> {
+    const args = [
+      'log',
+      `--max-count=${options.limit}`,
+      '--format=%H%x1f%s%x1f%an%x1f%aI',
+      options.ref,
+    ];
+    if (options.exclude) args.push('--not', options.exclude);
+
+    const result = await this.run(repositoryPath, args);
+    if (result.exitCode !== 0) {
+      throw new GitCommandError(`log ${options.ref}`, result.exitCode, summariseFailure(result));
+    }
+
+    return result.stdout
+      .split('\n')
+      .filter((line) => line.trim().length > 0)
+      .map((line) => {
+        const [commit, subject, author, authoredAt] = line.split('\x1f');
+        return {
+          commit: commit ?? '',
+          subject: subject ?? '',
+          author: author ?? '',
+          authoredAt: authoredAt ?? '',
+        };
+      });
+  }
+
+  /**
+   * The commit a ref points at, or null when it does not exist.
+   *
+   * The nullable sibling of `revParse`, for callers asking a question - "does this
+   * branch have a remote-tracking ref?" - where a missing ref is an answer rather
+   * than an error.
+   */
+  async resolveRef(repositoryPath: string, ref: string): Promise<string | null> {
+    const result = await this.run(repositoryPath, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      `${ref}^{commit}`,
+    ]);
+    if (result.exitCode !== 0) return null;
+    const commit = result.stdout.trim();
+    return commit.length > 0 ? commit : null;
+  }
+
+  /**
    * How many commits are reachable from `to` and not from `from`.
    *
    * The number of commits a branch is behind or ahead, depending on which way

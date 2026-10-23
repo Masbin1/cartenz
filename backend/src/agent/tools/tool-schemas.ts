@@ -185,6 +185,30 @@ export const GIT_PULL_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/**
+ * Reading history, as a model needs it.
+ *
+ * `ref` exists for the branch-by-name case; `limit` is bounded because a tool
+ * result is written into the action log and published to every subscribed browser.
+ */
+export const GIT_LOG_SCHEMA = {
+  type: 'object',
+  properties: {
+    limit: {
+      type: 'integer',
+      minimum: 1,
+      maximum: 50,
+      description: 'How many commits to read, newest first. Defaults to 20.',
+    },
+    ref: {
+      type: 'string',
+      description:
+        'The ref to read, such as "HEAD" or a branch name. Defaults to the task branch.',
+    },
+  },
+  additionalProperties: false,
+} as const;
+
 export const VALIDATION_SCHEMA = {
   type: 'object',
   properties: {

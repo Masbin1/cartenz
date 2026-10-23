@@ -102,8 +102,9 @@ describe('a read-only plan', () => {
     });
 
     it('tells the implementing model that its summary is the deliverable there', () => {
-      expect(loop).toMatch(/it is a pull or an/);
-      expect(loop).toMatch(/inspection, and the summary you end with IS the deliverable/);
+      expect(loop).toMatch(/it is a pull, an/);
+      expect(loop).toMatch(/inspection, or a request to push commits that already exist/);
+      expect(loop).toMatch(/The summary you/);
     });
   });
 });

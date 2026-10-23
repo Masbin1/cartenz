@@ -1154,3 +1154,49 @@ Two facts confirmed on the live platform:
    with "nothing to commit or push" and `push()` only sends `snapshot.commitHash`,
    so "push the commits already on the branch" settles as a false success. That
    capability (with its existing `git_push` approval) is not built.
+
+### Built the same evening — history reading and delivering existing commits (ADR-083)
+
+Both gaps recorded above were closed in code. Nothing here is live until
+`systemctl restart cartenz-api cartenz-worker` runs as root.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Full backend suite | `npx jest` (in `backend/`) | **1313 passed, 114 suites, 0 failed** |
+| `git_log`, real git against a real local remote | `npx jest src/agent/git/git-log.spec.ts` | 6 passed: ordering, `limit`, `--not <tracking>` returning exactly the 2 local-only commits, ahead/behind (`2`/`0`), a bad ref throwing instead of returning empty, `resolveRef` null for a missing ref |
+| Push of a commit the task never made | `npx jest src/agent/orchestration/push-existing-commits.spec.ts` | 12 passed, including a real push that moved the bare remote's `Staging` to the local HEAD |
+| Backend typecheck | `npx tsc --noEmit` | exit 0 |
+| Backend build | `npm run build` | emitted; `dist/` owned by `cartenz` |
+| New code in the artefact | `grep -c push_existing dist/agent/orchestration/agent-workflow.js` | 7 (and `plan-schema.js` 2) |
+| ADR index integrity | link/file assertion from `references/adr-authoring.md` | 68 links, 68 unique, 68 files, none missing |
+
+What was actually built, in the order the failures appeared:
+
+1. **`git_log`** (`availableToModel: true`, `repository_read`) returns the branch's
+   recent commits, `upstream: {ref, ahead, behind, diverged, asOf: 'the last
+   fetch'}` and `localOnly` — the commits reachable from the branch and not from
+   `origin/<branch>`. `GitService.log()` takes the exclude ref; `resolveRef()` is
+   the nullable ref lookup. A ref git refuses throws, because an empty list reads
+   as "no commits".
+2. **`plan.delivery: 'commit' | 'push_existing'`**, defaulting to `'commit'`. The
+   default is the safety property: a clean tree with commits ahead is never
+   silently turned into a push, which is what keeps an ADR-082 inspection from
+   delivering anything.
+3. **`validate()`** routes `testing -> committing` only for a `push_existing` plan
+   whose branch is ahead of its tracking ref; ahead `0` completes honestly ("already
+   at the remote tip"), and "no tracking ref" completes saying the comparison could
+   not be made rather than guessing.
+4. **`commit()`** on a clean tree with `push_existing` records the tip as the task's
+   commit and skips `git_commit`, then takes the unchanged approval path —
+   `git_push` approval rows, `GIT_PUSH_ENABLED`, ADR-041 auto-push, ADR-054 backup
+   before a staging promotion, ADR-060 verification (local HEAD == recorded commit
+   == remote tip) inside the tool.
+
+### Not verified here
+
+- A `push_existing` task end to end against a live model: needs the restart above.
+  The next read-only or push request on Omnisurge is the test, and `git_log`'s
+  output on `Staging` should now read `ahead 0, behind 0` (it was landed by hand:
+  `5d4fa03..d648c88`).
+- Rebase, still: a diverged branch fails at the push with git's own refusal. That is
+  deliberate, not a regression.

@@ -4,6 +4,7 @@ import { assertSafeRefName } from '../../git/git-url';
 import {
   GIT_BRANCH_SCHEMA,
   GIT_COMMIT_SCHEMA,
+  GIT_LOG_SCHEMA,
   GIT_PULL_SCHEMA,
   GIT_PUSH_SCHEMA,
   NO_ARGUMENTS_SCHEMA,
@@ -45,6 +46,7 @@ export class RealGitTools {
     return [
       this.gitStatus,
       this.gitDiff,
+      this.gitLog,
       this.gitPull,
       this.gitBranch,
       this.gitCommit,
@@ -193,6 +195,108 @@ export class RealGitTools {
         linesRemoved: diff.linesRemoved,
         patchTruncated: diff.patchTruncated,
         files: diff.files,
+      };
+    },
+  };
+
+  /**
+   * Reads history, including what the remote does not have.
+   *
+   * Offered to the model because a person asks questions the working tree cannot
+   * answer: "is this committed?", "is it pushed?", "what is on Staging that is not
+   * on GitHub?". Without it the only tools were `git_status` and `git_diff`, and
+   * both compare the tree to the workspace's *base commit* - so a clean tree
+   * reported "nothing waiting to push" on a branch that was two commits ahead of
+   * its remote (`task_599312`). The model noticed and said it had no way to look;
+   * this is that way.
+   *
+   * Read-only, leaves nothing, and the counts are against the last fetch - the
+   * description says so, because a stale `origin/<branch>` would otherwise be read
+   * as the remote's current state.
+   */
+  private readonly gitLog: ToolDefinition<{ limit?: number; ref?: string }> = {
+    name: 'git_log',
+    description:
+      'Read the branch history and its position against the remote: recent commits, how many ' +
+      'commits are local only (ahead) or missing locally (behind), and the commits the remote ' +
+      'does not have. Counts are against the last fetch, so call git_pull first if the remote ' +
+      'may have moved. Use this to answer whether work is committed and whether it is pushed.',
+    permission: 'repository_read',
+    modes: ['odoo_sh', 'on_premise'],
+    leavesPlatform: false,
+    simulated: false,
+    parameters: GIT_LOG_SCHEMA,
+    availableToModel: true,
+    validate: (input) => {
+      if (typeof input !== 'object' || input === null) return 'input must be an object';
+      const { limit, ref } = input as { limit?: unknown; ref?: unknown };
+
+      if (limit !== undefined) {
+        if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 50) {
+          return 'limit must be an integer between 1 and 50';
+        }
+      }
+
+      if (ref !== undefined) {
+        if (typeof ref !== 'string' || ref.length === 0) return 'ref must be a non-empty string';
+        try {
+          assertSafeRefName(ref);
+        } catch (error) {
+          return (error as Error).message;
+        }
+      }
+
+      return null;
+    },
+    execute: async (input, context) => {
+      assertRepository(context);
+
+      const path = context.workspace.repositoryPath;
+      const branch = context.workspace.branch;
+      const ref = input.ref ?? branch;
+      const limit = input.limit ?? 20;
+
+      // Both clone-backed and on-premise workspaces reach their remote as
+      // `origin`: a clone the platform made, or the directory's own remote, which
+      // the push path reads the same way.
+      const tracking = `origin/${branch}`;
+      const trackingExists = (await this.git.resolveRef(path, tracking)) !== null;
+
+      const commits = await this.git.log(path, { ref, limit });
+      const shaped = (rows: typeof commits) =>
+        rows.map((row) => ({ ...row, shortCommit: row.commit.slice(0, 8) }));
+
+      if (!trackingExists) {
+        return {
+          branch,
+          ref,
+          commits: shaped(commits),
+          upstream: null,
+          note:
+            `${tracking} does not exist locally, so this branch has never been fetched from ` +
+            'the remote and "ahead" cannot be counted. Call git_pull, or push it for the first time.',
+        };
+      }
+
+      // ahead = commits HEAD has that the tracking ref does not; behind = the
+      // reverse. Both are counts, because "2 ahead" tells a person what to do and
+      // "differs" does not.
+      const ahead = await this.git.countCommits(path, tracking, branch);
+      const behind = await this.git.countCommits(path, branch, tracking);
+      const localOnly = await this.git.log(path, { ref: branch, limit, exclude: tracking });
+
+      return {
+        branch,
+        ref,
+        commits: shaped(commits),
+        upstream: {
+          ref: tracking,
+          ahead,
+          behind,
+          diverged: (ahead ?? 0) > 0 && (behind ?? 0) > 0,
+          asOf: 'the last fetch',
+        },
+        localOnly: shaped(localOnly),
       };
     },
   };
@@ -362,9 +466,9 @@ export class RealGitTools {
       }
       if (input.commit && input.commit !== head) {
         throw new Error(
-          `This workspace holds ${head.slice(0, 8)}, but the task recorded its commit as ` +
-            `${input.commit.slice(0, 8)}. The workspace is not the one that holds this ` +
-            'task\'s work, so pushing from it would deliver nothing.',
+          `This workspace holds ${head.slice(0, 8)}, but the task recorded ` +
+            `${input.commit.slice(0, 8)} as the commit it settles at. This workspace ` +
+            'is not the one that holds this task\'s work, so pushing from it would deliver nothing.',
         );
       }
 

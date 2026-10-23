@@ -11,6 +11,15 @@ export interface ImplementationPlan {
   readonly odooVersion: string | null;
   readonly steps: readonly PlanStep[];
   readonly filesToModify: readonly PlannedFileChange[];
+  /**
+   * What the task delivers (ADR-083): `commit` when it changes files, or
+   * `push_existing` when the request only sends commits already on the branch.
+   *
+   * Optional on the type as well as defaulted in the schema: a plan persisted
+   * before this existed has no field, and `undefined` must keep the old behaviour
+   * rather than read as "not a commit".
+   */
+  readonly delivery?: 'commit' | 'push_existing';
   readonly validation: readonly string[];
   readonly risks: readonly string[];
   /** True while the plan is produced by the mock planner (ADR-013). */

@@ -331,27 +331,29 @@ The agent cannot commit or push. `git_commit` and `git_push` are registered with
 implementation instruction says so in as many words. A `change` task pushes only
 the commit *it* made: `validate()` completes the task with "nothing to commit or
 push" when the working tree is clean (`agent-workflow.ts`, `validate`), and
-`push()` sends `snapshot.commitHash`. So no phrasing makes a task push a commit
-that already exists on the branch — the capability is absent, not the wording.
+`push()` sends `snapshot.commitHash`. A push is therefore only possible for a plan
+that declares `delivery: 'push_existing'` (ADR-083), which is what the second
+prompt below asks for.
 
-What a request *can* do with pre-existing commits is inspect them, and since
-ADR-082 that is a normal `completed` task rather than a failure: a plan that
-names no file is answered, with the summary saved as the task's answer.
+What a request can also do is inspect the branch, and since ADR-082 that is a
+normal `completed` task rather than a failure: a plan that names no file is
+answered, with the summary saved as the task's answer.
 
-**Prompt that works today — find the commits that never reached the remote:**
+**Prompt that works — find the commits that never reached the remote:**
 
 ```
 Periksa branch Staging di project <nama project>. Jangan ubah file apa pun dan
 jangan commit; ini hanya pengecekan.
 
-Laporkan apa adanya, pisahkan yang kamu buktikan dari yang kamu tidak bisa lihat:
+Pakai git_log dan laporkan apa adanya, pisahkan yang kamu buktikan dari yang kamu
+tidak bisa lihat:
 1. git_status dan git_diff: apakah working tree bersih, dan apakah ada file
    berbeda dari base commit.
-2. Kalau kamu punya cara membandingkan branch ini dengan origin/Staging (jumlah
-   commit ahead/behind, daftar commit lokal yang belum ada di remote), sebutkan
-   hasilnya.
-3. Kalau kamu TIDAK punya alat untuk membandingkan dengan remote, katakan itu
-   eksplisit dan jangan menyimpulkan "tidak ada yang perlu di-push".
+2. git_log: jumlah commit ahead/behind terhadap origin/Staging, dan daftar commit
+   lokal yang belum ada di remote (hash, judul, penulis, file yang berubah).
+3. Kalau origin/Staging belum pernah di-fetch sehingga angka ahead tidak bisa
+   dihitung, katakan itu eksplisit dan jangan menyimpulkan "tidak ada yang perlu
+   di-push".
 4. Kalau git_pull dijalankan, tulis hasilnya apa adanya - termasuk pesan error
    lengkapnya, jangan menebak penyebabnya.
 ```
@@ -362,35 +364,40 @@ naming the branch and the remote ref stops the model from answering about
 `main`; and point 3 exists because of a real wrong answer — see the tool gap
 below.
 
-**The inspection is limited by the tool surface, so do not read its conclusion as
-a remote fact.** The model has `git_status`, `git_diff` and `git_pull`; it has no
-`git_log`, no `rev-list` and no `ls-remote`. `git_diff` compares the working tree
-to the *workspace base commit*, not to the remote, so a clean tree proves only
-that the run changed nothing. `task_599312` answered "tidak ada commit lokal yang
-menunggu push" on a branch that was **ahead 2, behind 21** of `origin/Staging` —
-it had no tool that could see the remote tip and said so in a footnote. Check the
-branch from a shell (`git rev-list --left-right --count origin/<b>...<b>`) before
-acting on such an answer; adding `git_log` as an offered read-only tool is what
-would make the answer trustworthy.
+**The inspection can see the remote since ADR-083.** `git_log` is offered to the
+model and answers the question that had no answer: the branch's recent commits,
+`ahead`/`behind` against `origin/<branch>`, and the commits the remote does not
+have. Its counts are against the last fetch, which is why the prompt asks for a
+`git_pull` attempt too. Before it existed, `task_599312` answered "tidak ada
+commit lokal yang menunggu push" on a branch that was ahead 2 / behind 21 — the
+only tools were `git_status` and `git_diff`, and both compare the working tree to
+the workspace base commit. A conclusion from an inspection is now worth reading,
+but a shell `git rev-list --left-right --count origin/<b>...<b>` is still the
+cheapest way to confirm it.
 
-**Prompt that cannot work yet — pushing the existing commits:**
+**Prompt that works — push the commits that already exist:**
 
 ```
-Push branch Staging apa adanya ke origin/Staging. Jangan ubah file, jangan
-commit ulang, jangan rewrite history: kirim saja commit yang sudah ada.
+Push branch Staging di project <nama project> apa adanya ke origin/Staging.
+
+Jangan ubah file apa pun, jangan commit ulang, jangan rewrite history: yang saya
+mau hanya mengirim commit yang sudah ada di branch lokal ke remote. Set rencana
+push_existing.
+
+Kalau remote menolak, berhenti dan laporkan alasannya apa adanya - jangan force
+push, jangan rebase sendiri.
 ```
 
-Today this settles as `completed` with "The working tree is unchanged: there is
-nothing to commit or push", which is worse than a failure because it reads like
-success. The capability needs `git_push` offered to the model behind its existing
-approval (`permission-validator.ts` maps it to a `git_push` approval), `validate()`
-routing an ahead-of-upstream branch to `pushing` even with a clean tree, and
-`push()` accepting a branch whose tip is not the task's own commit.
+The planner sets `delivery: 'push_existing'`, the plan names no file, the person
+approves it, `validate()` sees the commits ahead and routes to the push, and the
+push is verified before the task reports delivery (ADR-060) — the existing
+approval, backup and `GIT_PUSH_ENABLED` gates all still apply. If the tree is
+already at the remote tip the task completes saying so instead of pushing nothing;
+if the branch has diverged, git refuses and the task failed with that refusal,
+because rebase is still not a capability the platform has.
 
-**Do not use a dummy change to trigger a push.** A `change` task that makes a new
-commit does push the whole branch, so the backlog rides along — but only when the
-branch is not behind the remote (git then refuses non-fast-forward), and at the
-cost of a junk commit in the history of a customer branch.
+Do not ask for a push by asking for a dummy change instead. It works only when the
+branch is not behind the remote, and it leaves a junk commit in a customer branch.
 
 ---
 

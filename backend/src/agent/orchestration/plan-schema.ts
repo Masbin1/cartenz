@@ -60,6 +60,28 @@ export const implementationPlanSchema = z.object({
    * change on disk.
    */
   filesToModify: z.array(plannedFileChangeSchema).min(0).max(20),
+  /**
+   * What the task delivers (ADR-083).
+   *
+   * Two requests look identical on disk and differ only in what the person wants
+   * done with the branch: a change (the platform commits the files above) and
+   * "push what is already committed here" (nothing to author, the commits exist).
+   * Without this field the second one had no path at all - a clean tree completed
+   * the task with "nothing to commit or push", which reads like success and
+   * delivers nothing.
+   *
+   * `commit` is the default so an older plan, or a planner that omits the field,
+   * keeps the behaviour it had; a push of pre-existing commits is never inferred
+   * from a clean tree alone.
+   */
+  delivery: z
+    .enum(['commit', 'push_existing'])
+    .default('commit')
+    .describe(
+      "'commit' when this task changes files and the platform commits them. " +
+        "'push_existing' when the request only sends commits that are already on the branch: " +
+        'filesToModify stays empty, nothing is committed, and the push delivers the existing tip.',
+    ),
   validation: z
     .array(z.string().max(100))
     .min(1)
@@ -88,4 +110,5 @@ export type ModelImplementationPlan = z.infer<typeof implementationPlanSchema>;
 export const odooOnlinePlanSchema = implementationPlanSchema.omit({
   filesToModify: true,
   validation: true,
+  delivery: true,
 });
