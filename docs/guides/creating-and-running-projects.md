@@ -324,6 +324,62 @@ cannot be a target.
 For a Community project, the agent reads only the Odoo base source (not
 enterprise), matching the edition (ADR-037).
 
+### What a request can and cannot get the agent to do
+
+The agent cannot commit or push. `git_commit` and `git_push` are registered with
+`availableToModel: false` (`backend/src/agent/tools/real/git.tools.ts`), and the
+implementation instruction says so in as many words. A `change` task pushes only
+the commit *it* made: `validate()` completes the task with "nothing to commit or
+push" when the working tree is clean (`agent-workflow.ts`, `validate`), and
+`push()` sends `snapshot.commitHash`. So no phrasing makes a task push a commit
+that already exists on the branch — the capability is absent, not the wording.
+
+What a request *can* do with pre-existing commits is inspect them, and since
+ADR-082 that is a normal `completed` task rather than a failure: a plan that
+names no file is answered, with the summary saved as the task's answer.
+
+**Prompt that works today — find the commits that never reached the remote:**
+
+```
+Periksa branch Staging di project <nama project>. Jangan ubah file apa pun dan
+jangan commit; ini hanya pengecekan.
+
+Laporkan:
+1. Commit yang ada di Staging lokal tetapi belum ada di origin/Staging - hash
+   lengkap, judul, penulis, tanggal, dan file yang berubah di tiap commit.
+2. Posisi branch sekarang terhadap origin/Staging (ahead/behind berapa commit).
+3. Apakah push apa adanya akan diterima remote atau ditolak non-fast-forward,
+   dan kalau ditolak, langkah apa yang diperlukan supaya commit itu bisa masuk.
+
+Kalau git fetch atau git pull gagal, tulis pesan error-nya apa adanya. Jangan
+menebak penyebabnya.
+```
+
+Why it is shaped that way: "jangan ubah file apa pun" is what makes the plan
+name no file, which is what routes the run to the answered-not-failed path;
+naming the branch and the remote ref stops the model from answering about
+`main`; asking for "pesan error apa adanya" is what surfaces a host fault
+(a root-owned `.git`, a dead deploy key) instead of a plausible summary.
+
+**Prompt that cannot work yet — pushing the existing commits:**
+
+```
+Push branch Staging apa adanya ke origin/Staging. Jangan ubah file, jangan
+commit ulang, jangan rewrite history: kirim saja commit yang sudah ada.
+```
+
+Today this settles as `completed` with "The working tree is unchanged: there is
+nothing to commit or push", which is worse than a failure because it reads like
+success. The capability needs `git_push` offered to the model behind its existing
+approval (`permission-validator.ts` maps it to a `git_push` approval), `validate()`
+routing an ahead-of-upstream branch to `pushing` even with a clean tree, and
+`push()` accepting a branch whose tip is not the task's own commit.
+
+**Do not use a dummy change to trigger a push.** A `change` task that makes a new
+commit does push the whole branch, so the backlog rides along — but only when the
+branch is not behind the remote (git then refuses non-fast-forward), and at the
+cost of a junk commit in the history of a customer branch.
+
 ---
 
 ## 7. Quick Verification
