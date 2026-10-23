@@ -344,22 +344,34 @@ names no file is answered, with the summary saved as the task's answer.
 Periksa branch Staging di project <nama project>. Jangan ubah file apa pun dan
 jangan commit; ini hanya pengecekan.
 
-Laporkan:
-1. Commit yang ada di Staging lokal tetapi belum ada di origin/Staging - hash
-   lengkap, judul, penulis, tanggal, dan file yang berubah di tiap commit.
-2. Posisi branch sekarang terhadap origin/Staging (ahead/behind berapa commit).
-3. Apakah push apa adanya akan diterima remote atau ditolak non-fast-forward,
-   dan kalau ditolak, langkah apa yang diperlukan supaya commit itu bisa masuk.
-
-Kalau git fetch atau git pull gagal, tulis pesan error-nya apa adanya. Jangan
-menebak penyebabnya.
+Laporkan apa adanya, pisahkan yang kamu buktikan dari yang kamu tidak bisa lihat:
+1. git_status dan git_diff: apakah working tree bersih, dan apakah ada file
+   berbeda dari base commit.
+2. Kalau kamu punya cara membandingkan branch ini dengan origin/Staging (jumlah
+   commit ahead/behind, daftar commit lokal yang belum ada di remote), sebutkan
+   hasilnya.
+3. Kalau kamu TIDAK punya alat untuk membandingkan dengan remote, katakan itu
+   eksplisit dan jangan menyimpulkan "tidak ada yang perlu di-push".
+4. Kalau git_pull dijalankan, tulis hasilnya apa adanya - termasuk pesan error
+   lengkapnya, jangan menebak penyebabnya.
 ```
 
 Why it is shaped that way: "jangan ubah file apa pun" is what makes the plan
-name no file, which is what routes the run to the answered-not-failed path;
+name no file, which routes the run to the answered-not-failed path (ADR-082);
 naming the branch and the remote ref stops the model from answering about
-`main`; asking for "pesan error apa adanya" is what surfaces a host fault
-(a root-owned `.git`, a dead deploy key) instead of a plausible summary.
+`main`; and point 3 exists because of a real wrong answer — see the tool gap
+below.
+
+**The inspection is limited by the tool surface, so do not read its conclusion as
+a remote fact.** The model has `git_status`, `git_diff` and `git_pull`; it has no
+`git_log`, no `rev-list` and no `ls-remote`. `git_diff` compares the working tree
+to the *workspace base commit*, not to the remote, so a clean tree proves only
+that the run changed nothing. `task_599312` answered "tidak ada commit lokal yang
+menunggu push" on a branch that was **ahead 2, behind 21** of `origin/Staging` —
+it had no tool that could see the remote tip and said so in a footnote. Check the
+branch from a shell (`git rev-list --left-right --count origin/<b>...<b>`) before
+acting on such an answer; adding `git_log` as an offered read-only tool is what
+would make the answer trustworthy.
 
 **Prompt that cannot work yet — pushing the existing commits:**
 

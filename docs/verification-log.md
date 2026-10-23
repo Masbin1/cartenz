@@ -1107,3 +1107,50 @@ for ADR-082: a plan that names a file and produces no diff still fails.
   worker must be restarted (root) for `dist/` to be in use.
 - The two unpushable commits landing on `origin/Staging`: blocked on fact 1 and a
   pull/rebase, both operator steps.
+
+### Later the same day — the two unpushable commits landed, and what the agent could not see
+
+The `chown -R cartenz:cartenz` ran: `find <checkout> ! -user cartenz | wc -l` now
+reports 0 and `git fetch origin` succeeds from the project checkout. The backlog
+was landed by hand (root was not needed for the push itself):
+
+```
+git -C <checkout> fetch origin
+git -C <checkout> worktree add /tmp/omni-land Staging
+cd /tmp/omni-land
+GIT_AUTHOR_NAME='LinkedERP AI Agent' GIT_AUTHOR_EMAIL=ai-agent@linkederp.com \
+GIT_COMMITTER_NAME='LinkedERP AI Agent' GIT_COMMITTER_EMAIL=ai-agent@linkederp.com \
+GIT_SSH_COMMAND='ssh -i /opt/cartenz/.ssh/id_cartenz -o IdentitiesOnly=yes' \
+  git rebase origin/Staging          # clean: both files were absent on the remote
+git push origin Staging              # 5d4fa03..d648c88
+```
+
+| Check | Result |
+| --- | --- |
+| `git rev-list --left-right --count origin/Staging...HEAD` after the rebase | `0 2` (behind 0, ahead 2) |
+| `git push` | `5d4fa03..d648c88  Staging -> Staging`, exit 0 |
+| `git ls-remote origin Staging` independently | `d648c880f0680380ee6d0b91239462b31c1a5364` |
+| Both files in the remote tree | `git cat-file -e origin/Staging:<path>` for `omnisurge_data_import/docs/USER_MANUAL.md` and `linkederp_dashboard_api/docs/delivery-trip-kpi-dev-task.md` — present, manual reads as a real 5.8 KB guide |
+| Local branch vs remote after the push | `0 0`; worktree removed, only the detached-HEAD checkout remains |
+
+Two facts confirmed on the live platform:
+
+1. **The ADR-082 fix works.** Services restarted 15:13:35; `task_599312`
+   ("cek commit yang belum ke push", 15:14:06) settled **`completed`** with
+   `plan->filesToModify = []` and an answer on the task. `task_499253` at 15:16
+   still failed — but its plan named a file (`filesToModify` length 1), which is
+   the case ADR-082 deliberately leaves failing.
+2. **The agent's inspection answer cannot be trusted about the remote.**
+   `task_599312` concluded "tidak ada commit lokal yang menunggu push" while the
+   branch was ahead 2 / behind 21. Cause: the offered tool set is `git_status`,
+   `git_diff`, `git_pull` — there is no `git_log`, no `rev-list`, no `ls-remote`,
+   and `git_diff` compares the working tree to the workspace base commit, not to
+   the remote. The model said so itself ("saya tidak punya alat git_push atau
+   git_log"). The prompt in `docs/guides/creating-and-running-projects.md` §6 was
+   corrected to ask for that distinction instead of facts the tools cannot
+   produce; `git_log` as an offered read-only tool is the real fix, not yet built.
+3. **A push cannot be requested from the agent at all.** `git_commit` and
+   `git_push` are `availableToModel: false`; `validate()` completes a clean tree
+   with "nothing to commit or push" and `push()` only sends `snapshot.commitHash`,
+   so "push the commits already on the branch" settles as a false success. That
+   capability (with its existing `git_push` approval) is not built.
