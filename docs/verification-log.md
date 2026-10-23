@@ -1052,3 +1052,58 @@ Two facts found while working that cost time and are worth recording:
 - `smoke-test.sh` remains in its broken organisation-model state; `smoke-test-access.sh` was
   the one rewritten. The template rebuild (phonenumbers) and the standard-DB uploads remain
   operator steps.
+
+---
+
+## 23 October 2026 — an inspection request was reported as a failure (ADR-082)
+
+The operator asked the platform to *look* at the branch (`task_679338`, project
+Omnisurge, "apakah kamu bisa cek commit nya?"). The task produced a correct
+Indonesian answer, saved it to `agent_tasks.answer`, and settled `failed` with
+`The agent reported completion but made no change to the working tree.` The plan
+it had approved named no file (`plan->filesToModify = []`), so an empty diff was
+the right outcome and the gate read it as a model that did nothing.
+
+Two more tasks in the same hour failed the same way (`task_680597`,
+`task_373668` - both planned `docs/USER_MANUAL.md`, which already exists at the
+branch tip, so the model correctly refused to rewrite it). Those are out of scope
+for ADR-082: a plan that names a file and produces no diff still fails.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Backend tests, full suite | `npx jest` (in `backend/`) | **1295 passed, 112 suites, 0 failed** |
+| The new spec alone | `npx jest src/agent/orchestration/read-only-plan-task.spec.ts` | 9 passed |
+| Backend typecheck | `npx tsc --noEmit` | exit 0, no output |
+| Backend build | `npm run build` (`nest build`) | emitted; `dist/` owned by `cartenz`, 0 root-owned files |
+| New code in the artefact | `grep -c readOnlyPlan dist/agent/orchestration/agent-workflow.js` | 3 |
+| Planner instruction in the artefact | `grep -o "asks for information rather than a code change" dist/.../model-agent-planner.js` | present |
+| ADR index integrity | link/file assertion from `references/adr-authoring.md` | 67 links, 67 unique, 67 files, none missing |
+
+### Two host facts found in the same session, both still open
+
+1. **A project checkout's `.git` holds root-owned paths, so `git fetch` cannot
+   write objects.** `task_679338`'s `git_pull` failed with
+   `insufficient permission for adding an object to repository database
+   /opt/cartenz/.runtime/checkouts/ffef487d-.../repo/.git/objects`. Measured:
+   9 root-owned paths in that checkout (`objects/4e`, `objects/bf`, `objects/d8`
+   and their loose objects), 77 in `342db054-...`, 114 under
+   `.runtime/workspaces`. The parent directory is `cartenz`-owned, so the copy is
+   to blame, not the platform: a `git` command was run as root in a checkout the
+   service later writes. Fixed by `chown -R cartenz:cartenz` (root step) - not by
+   code.
+2. **`Staging` on that project is `ahead 2, behind 21` of `origin/Staging`.**
+   Commit `1821f96` ("[LinkedERP AI] lah di chat sebelumnya ada ini Cartenz") is
+   the local-only commit the operator was asking about. A push is refused
+   non-fast-forward until the branch is brought up to date, and a `git_pull`
+   cannot run until fact 1 is fixed. Authentication is not the problem: the
+   platform supplies the deploy key through `GIT_SSH_COMMAND`
+   (`git-credentials.ts:214`, `IdentitiesOnly=yes`); a bare `git ls-remote` from
+   a shell fails with `Permission denied (publickey)` only because it carries no
+   `GIT_SSH_COMMAND`.
+
+### Not verified here
+
+- A read-only request resubmitted end to end against a live model: the API and
+  worker must be restarted (root) for `dist/` to be in use.
+- The two unpushable commits landing on `origin/Staging`: blocked on fact 1 and a
+  pull/rebase, both operator steps.

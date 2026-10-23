@@ -972,7 +972,20 @@ export class AgentWorkflow {
      * it were true.
      */
     const summary = outcome.summary.trim();
-    if (summary.length > 0 && (modified.length > 0 || outcome.pulled)) {
+
+    /**
+     * A plan that named no file is a request whose deliverable is not a file:
+     * a pull, or an inspection ("is this commit pushed?", "what is on Staging?").
+     * Its answer is kept on the task for the same reason a chat's is, and the
+     * gate below must not read an honest empty diff as a model that did nothing.
+     *
+     * `planFiles === 0` is false when the plan is absent, so a change task with
+     * no plan (or one that named files) keeps the strict rule untouched.
+     */
+    const planFiles = snapshot.plan?.filesToModify.length;
+    const readOnlyPlan = planFiles === 0;
+
+    if (summary.length > 0 && (modified.length > 0 || outcome.pulled || readOnlyPlan)) {
       await this.tasks.saveAnswer(snapshot.taskId, summary);
     }
 
@@ -1020,6 +1033,36 @@ export class AgentWorkflow {
             pull === 'up_to_date'
               ? `${branch} is already at the remote tip. There was nothing new to pull.`
               : `Pulled ${commits} commit(s) into ${branch}. Nothing further was asked for.`,
+        });
+      }
+
+      /**
+       * The approved plan named no file, so nothing was ever going to change.
+       *
+       * An inspection request - "is this commit pushed?", "what is on Staging?" -
+       * plans read-only steps, and a model that answers it correctly leaves the
+       * working tree exactly as it found it. Failing that as "no change to the
+       * working tree" reports a fulfilled request as a broken one, which reads
+       * to a person as the platform being unable to do what it was asked.
+       *
+       * The task still passes through `testing` (the state machine keeps
+       * `implementing -> completed` absent, ADR-018), where a clean tree
+       * completes it - exactly the route a pull-only task takes. The guard that
+       * matters is untouched below: a plan that DID name files and produced an
+       * empty diff still fails.
+       */
+      if (readOnlyPlan) {
+        if (summary.length === 0) {
+          return this.tasks.transition(snapshot.taskId, 'implementing', 'failed', {
+            failureReason: outcome.haltReason
+              ? `The agent produced no answer: ${outcome.haltReason}.`
+              : 'The agent reported completion but produced no answer.',
+          });
+        }
+
+        return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
+          message:
+            'Answered. The approved plan named no file to change, so there is nothing to commit.',
         });
       }
 

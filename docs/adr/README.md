@@ -66,6 +66,7 @@ A new ADR goes in the group matching the mode it changes; when in doubt, it is a
 | [ADR-076](ADR-076-delete-project-deletes-github-repository.md) | Deleting a project deletes the GitHub repository it created | Accepted |
 | [ADR-080](ADR-080-project-wide-conversation-memory.md) | A request sees the project's other conversations | Accepted |
 | [ADR-081](ADR-081-task-settlement-reply.md) | The reply is composed from what the task did | Accepted |
+| [ADR-082](ADR-082-read-only-plan-is-answered.md) | A plan that names no file is answered, not failed | Proposed |
 
 ## Odoo Online
 

@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 23 September 2026
 - Milestone: Phase 5 (connected-server estate)
+- Extended by: ADR-082 (a plan that names no file is answered, not failed - the
+  same gate, for a request whose deliverable is an answer rather than a pull)
 
 Builds on ADR-011 (the orchestration contract), ADR-018 (the task state machine),
 ADR-019 (per-task workspaces), ADR-021 (push safety), ADR-028 (execution adapters),
