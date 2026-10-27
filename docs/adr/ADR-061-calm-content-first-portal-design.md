@@ -56,7 +56,7 @@ The working reference is `docs/design/ui-design-system.md`.
 - Two runtime dependencies were added: `lucide-react` and
   `@fontsource-variable/inter`.
 
-## Retirement
+## Retirement condition
 
 Revisit if a formal LinkedERP product design system is issued that supersedes
 these tokens and components.

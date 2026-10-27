@@ -343,6 +343,28 @@ correctly — not a change to task creation itself.
    configuration as context, so the agent's generated module is written
    against a database state it can already observe.
 
+## Verification
+
+- Unit: `keepCataloguedSettings`/`keepCataloguedRecords` drop a field or model
+  absent from the live catalog, and independently reject anything failing a
+  `^[a-z][a-z0-9_.]*$` floor on model/field names — the same two-layer
+  discipline `module-selection-sanitiser.spec.ts` already tests for module
+  names.
+- Unit: the settings-toggle catalog returns `group_show_uom_price` for 20.0
+  Enterprise and omits it for 19.0 Enterprise, built from the real manifests on
+  this host (no hand-maintained fixture that could drift).
+- Host: `apply-db-setup.sh` run by hand against a scratch project with a
+  deliberately malformed entry (unknown field) applies every other entry and
+  reports that one `failed`, not the whole plan rolled back.
+- End-to-end: creating a project from the wood-production brief produces an
+  instance whose `res.config.settings` toggles (the `res.groups` they imply) reflect
+  the accepted plan, whose `uom.uom`/`stock.warehouse`/`mrp.workcenter`
+  rows match the accepted records exactly, and whose specification carries
+  the three `configuration_gap` requirements from §1's worked example.
+- End-to-end, idempotency: calling "Run setup again" on an already-applied
+  project reports every entry `skipped` (already satisfies its natural key),
+  not duplicated records.
+
 ## Addendum (phase 1 operational findings + brief upload)
 
 Three bugs found and fixed while verifying phase 1 end-to-end against a real
@@ -430,28 +452,6 @@ projects, a gap applies to every one that has any.
   new conversation rather than the most recent one (gap work is new work);
   the prompt is drafted once when the project loads, then the parameter is
   dropped from the address bar so a reload never redrafts over an edit.
-
-## Verification
-
-- Unit: `keepCataloguedSettings`/`keepCataloguedRecords` drop a field or model
-  absent from the live catalog, and independently reject anything failing a
-  `^[a-z][a-z0-9_.]*$` floor on model/field names — the same two-layer
-  discipline `module-selection-sanitiser.spec.ts` already tests for module
-  names.
-- Unit: the settings-toggle catalog returns `group_show_uom_price` for 20.0
-  Enterprise and omits it for 19.0 Enterprise, built from the real manifests on
-  this host (no hand-maintained fixture that could drift).
-- Host: `apply-db-setup.sh` run by hand against a scratch project with a
-  deliberately malformed entry (unknown field) applies every other entry and
-  reports that one `failed`, not the whole plan rolled back.
-- End-to-end: creating a project from the wood-production brief produces an
-  instance whose `res.config.settings` toggles (the `res.groups` they imply) reflect
-  the accepted plan, whose `uom.uom`/`stock.warehouse`/`mrp.workcenter`
-  rows match the accepted records exactly, and whose specification carries
-  the three `configuration_gap` requirements from §1's worked example.
-- End-to-end, idempotency: calling "Run setup again" on an already-applied
-  project reports every entry `skipped` (already satisfies its natural key),
-  not duplicated records.
 
 ## Addendum (Odoo 20.0: the first 20.0 project failed for three reasons)
 

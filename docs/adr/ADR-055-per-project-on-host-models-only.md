@@ -70,7 +70,7 @@ filtered, what the two deliberate exceptions are, and how to go fully on-host.
   recorded exception, unchanged by this flag (a local-only project never sends
   one off-host, which is the practical mitigation).
 
-## Retirement
+## Retirement condition
 
 If the boundary gains a binary-aware path for attachments, the flag's practical
 scope narrows to source code and it should be re-read rather than assumed.

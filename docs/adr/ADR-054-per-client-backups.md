@@ -104,7 +104,7 @@ already reach.
 - The first live backup on a host is an operator-verifiable step: run the script
   directly once, restore it once as a drill, then trust the automatic path.
 
-## Retirement
+## Retirement condition
 
 If a managed backup service (with off-host retention and its own restore
 tooling) is adopted, these scripts become the drill path and this ADR is

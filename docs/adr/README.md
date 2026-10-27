@@ -18,6 +18,8 @@ architecture.
 
 A new ADR goes in the group matching the mode it changes; when in doubt, it is a Platform decision.
 
+ADR-077 to ADR-079 were never used; the gap is deliberate.
+
 ## Platform — decisions that govern every hosting mode
 
 | ADR | Title | Status |
@@ -55,6 +57,8 @@ A new ADR goes in the group matching the mode it changes; when in doubt, it is a
 | [ADR-052](ADR-052-ephemeral-preview-instances.md) | Ephemeral preview instances — see the draft Odoo UI before approving | Accepted |
 | [ADR-053](ADR-053-approved-chat-write-lands.md) | An approved chat write lands — committed and pushed like a change task | Accepted |
 | [ADR-055](ADR-055-per-project-on-host-models-only.md) | A per-project "on-host models only" flag | Accepted |
+| [ADR-058](ADR-058-deployment-wide-git-credentials.md) | Git credentials are registered once, at deployment scope | Accepted |
+| [ADR-059](ADR-059-per-project-git-transport-and-credential.md) | A project chooses its git transport and credential | Accepted |
 | [ADR-060](ADR-060-one-approval-per-push-and-verified-delivery.md) | One approval per push, and a push is not delivered until it is verified | Accepted |
 | [ADR-061](ADR-061-calm-content-first-portal-design.md) | A calm, content-first portal design | Accepted |
 | [ADR-062](ADR-062-task-pulls-its-branch.md) | A task can pull the branch it works on, and "nothing new" is a success | Accepted |
