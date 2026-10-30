@@ -403,6 +403,21 @@ export class AgentWorkflow {
           : `Cloned ${workspace.baseBranch} at ${workspace.baseCommit?.slice(0, 8)} and created ${workspace.branch}.`,
     );
 
+    if (snapshot.kind === 'chat') {
+      const cachedMemory = await this.projectMemory.findForProject(snapshot.projectId);
+      if (cachedMemory) {
+        await this.narrate(
+          snapshot,
+          `Using cached project analysis (Odoo ${cachedMemory.detectedOdooVersion ?? 'unknown'}). Skipping full repo scan and code search.`,
+        );
+        return this.tasks.transition(
+          snapshot.taskId,
+          'analyzing',
+          'implementing',
+        );
+      }
+    }
+
     // Through the tool layer, not called directly: the analysis must appear in the
     // action log and pass the permission validator like any other agent action.
     await this.callTool(snapshot, workspace, 'detect_odoo_version', {});

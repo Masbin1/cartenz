@@ -121,7 +121,7 @@ export class ChatLoop {
   ) {}
 
   async run(input: ChatLoopInput): Promise<ChatLoopOutcome> {
-    const provider = await this.providers.forProject(input.projectId);
+    const provider = await this.providers.forProject(input.projectId, { fast: true });
     const tools = this.offeredTools(input.agentPermissions, input.executionMode ?? null);
 
     // An empty tool list is legitimate for a chat task: an `ai_project` has no

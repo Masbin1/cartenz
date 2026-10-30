@@ -95,11 +95,12 @@ export class ModelProviderResolver {
    */
   async forProject(
     projectId?: string,
-    options: { readonly localOnly?: boolean } = {},
+    options: { readonly localOnly?: boolean; readonly fast?: boolean } = {},
   ): Promise<ModelProvider> {
     const chain = await this.settings.resolveChain();
     const localOnly = options.localOnly === true;
-    const cacheKey = `${projectId ?? '-'}|${localOnly ? 'local' : 'any'}`;
+    const fast = options.fast === true;
+    const cacheKey = `${projectId ?? '-'}|${localOnly ? 'local' : 'any'}|${fast ? 'fast' : 'normal'}`;
 
     const cached = this.cache.get(cacheKey);
     if (cached && cached.revision === chain.revision) return cached.provider;
