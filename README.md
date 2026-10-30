@@ -27,6 +27,77 @@ GitHub repository its pushes land in.
 
 ---
 
+## Why Cartenz, instead of a generic AI coding agent
+
+A generic coding agent (ChatGPT in a terminal, Claude Code pointed at a repo,
+Copilot Workspace) can write code. None of them know what an Odoo module is,
+none of them refuse to touch `main`, and none of them can prove the change
+they just wrote actually passes the module's own tests. Cartenz exists to
+close those three gaps for Odoo consultancy work specifically — not to be a
+better general-purpose coding assistant.
+
+1. **It understands Odoo, not just text.** Every plan is built from the
+   project's actual manifests and models — the Odoo version is detected from
+   `__manifest__.py`, not asked for; candidate files are ranked by what they
+   declare (which model, which view, which inherited class), not by a keyword
+   match (ADR-025). A generic agent greps a repository; Cartenz reads it as
+   an Odoo project.
+
+2. **Nothing executes without a human approving it first.** The plan — the
+   exact files, the exact change — is shown to a person before a single line
+   is written. The diff, again, before anything is committed. The push,
+   again, before anything reaches the remote. A coding agent that decides and
+   acts in one step is a liability in a client's production codebase;
+   Cartenz treats every step past read access as something a person signs
+   off on.
+
+3. **It proves the change works, instead of asserting it.** Where an Odoo
+   runtime is configured, Cartenz installs the touched module into a scratch
+   database created for that one task, runs the module's own tests, and
+   reports pass/fail — then destroys the database. That is a real test run
+   against real Odoo, not a model's opinion that the code "looks correct"
+   (ADR-027).
+
+4. **Production is a closed door, not a reminder.** A task aimed at a
+   production branch or environment is refused before any row is written —
+   not flagged, not warned about, refused. The on-premise mode works
+   directly on the customer's live custom-module directory, while the
+   shared Odoo core and Enterprise trees stay strictly read-only.
+
+5. **There is no shell.** Cartenz has no general-purpose command execution at
+   all — the tool registry is tested to assert none exists. Every effect is
+   one of a fixed set of mediated tools: read a file, write a file (one
+   quoted region at a time), run git, run this project's own Odoo tests. A
+   generic agent with shell access can run anything a human can type;
+   Cartenz cannot run anything that is not on that list.
+
+6. **It can build the project, not only edit it.** Beyond connecting to an
+   existing Odoo codebase, Cartenz scaffolds a new project's module layout,
+   provisions a running Odoo instance behind HTTPS, and creates the GitHub
+   repository its commits land in — the same governance (plan, approval,
+   validation, push) applies from the first commit onward.
+
+7. **Every action is accountable.** Every tool call, every approval and
+   every push sits in the audit log with who approved what and when.
+   Secrets are sealed on arrival and are returned by no endpoint. Everything
+   sent to or received from a model passes one data boundary, in both
+   directions, with no exception.
+
+8. **One place to see everything in flight.** The AI Office view gives a
+   live, spatial read of every task actually running across every project —
+   not a log file to tail, a floor you can look at.
+
+9. **No lock-in to one AI vendor.** The model behind the agent is configured
+   per deployment, not hard-coded to one provider; swapping models does not
+   mean rewriting the platform.
+
+The result is not "an AI that writes Odoo code" — plenty of generic agents
+can attempt that. It is an AI that writes Odoo code inside a system that
+controls, proves and records what it did, on the codebase a consultancy's
+clients actually run in production.
+
+---
+
 ## 1. What the agent runs on: three execution modes
 
 A project type records where a project came from; an execution mode records how a
