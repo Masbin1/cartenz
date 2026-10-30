@@ -475,7 +475,7 @@ export class OdooOnlineClient {
   }
 
   /**
-   * Record reads, restricted to the record surface (ADR-064).
+   * Record reads, restricted to the record surface (ADR-064, paging ADR-084).
    *
    * The model is checked again here although the tool validated it first: the
    * client is the last point before the network, and a caller added later that
@@ -488,10 +488,12 @@ export class OdooOnlineClient {
     domain: unknown[],
     fields: readonly string[],
     limit: number,
+    offset: number,
   ): Promise<Record<string, unknown>[]> {
     return (await this.recordCall(credentials, uid, model, 'search_read', [domain], {
       fields: [...fields],
       limit,
+      offset,
     })) as Record<string, unknown>[];
   }
 

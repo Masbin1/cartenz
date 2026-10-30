@@ -20,6 +20,7 @@ import {
 import {
   DEFAULT_READ_FIELDS,
   effectiveReadLimit,
+  effectiveReadOffset,
   validateCreateRecords,
   validateSearchRecords,
   validateUpdateRecords,
@@ -261,9 +262,13 @@ export class OdooOnlineTools {
     domain?: unknown[];
     fields?: string[];
     limit?: number;
+    offset?: number;
   }> = {
     name: 'odoo_search_records',
-    description: 'Search records of an Odoo model and read selected fields',
+    description:
+      'Search records of an Odoo model and read selected fields. Call repeatedly with an ' +
+      'increasing offset to walk an entire table looking for wrong or mismatched data - there ' +
+      'is no limit on how much of a table may be read this way, only on one call\'s page size.',
     permission: 'database_record_read',
     modes: ['odoo_online'],
     leavesPlatform: false,
@@ -277,11 +282,22 @@ export class OdooOnlineTools {
       const domain = input.domain ?? [];
       const fields = input.fields?.length ? input.fields : [...DEFAULT_READ_FIELDS];
       const limit = effectiveReadLimit(input.limit);
+      const offset = effectiveReadOffset(input.offset);
       const [records, total] = await Promise.all([
-        this.client.searchRecords(credentials, uid, input.model, domain, fields, limit),
+        this.client.searchRecords(credentials, uid, input.model, domain, fields, limit, offset),
         this.client.countRecords(credentials, uid, input.model, domain),
       ]);
-      return { model: input.model, total, returned: records.length, records };
+      return {
+        model: input.model,
+        total,
+        offset,
+        returned: records.length,
+        // Tells the model whether another call with a higher offset would see
+        // more rows, so it can decide to keep paging without re-deriving this
+        // from total/offset/returned itself.
+        hasMore: offset + records.length < total,
+        records,
+      };
     },
   };
 

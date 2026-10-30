@@ -80,6 +80,7 @@ ADR-077 to ADR-079 were never used; the gap is deliberate.
 | [ADR-064](ADR-064-odoo-online-record-writes.md) | Odoo Online records are reachable, gated by permission and approval | Accepted |
 | [ADR-068](ADR-068-odoo-online-model-creation.md) | Odoo Online can create a model, as one Studio-shaped sequence | Accepted |
 | [ADR-070](ADR-070-odoo-online-assisted-creation.md) | Creating an Odoo Online database is assisted, not automated | Accepted |
+| [ADR-084](ADR-084-odoo-online-read-paging.md) | Odoo Online record reads are capped by page, not by table size | Accepted |
 
 ## Odoo.sh
 

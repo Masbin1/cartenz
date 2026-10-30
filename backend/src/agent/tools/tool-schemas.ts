@@ -431,9 +431,17 @@ export const ODOO_SEARCH_RECORDS_SCHEMA = {
     },
     limit: {
       type: 'integer',
-      description: 'Maximum records to return. Defaults to 20, capped at 100.',
+      description: 'Maximum records to return. Defaults to 20, capped at 2000.',
       minimum: 1,
-      maximum: 100,
+      maximum: 2000,
+    },
+    offset: {
+      type: 'integer',
+      description:
+        'Records to skip before reading, for paging through a table larger than one call\'s ' +
+        'limit. Call again with offset increased by the previous returned count until returned ' +
+        'is 0 or less than limit, to have read every record that matched the domain.',
+      minimum: 0,
     },
   },
   required: ['model'],

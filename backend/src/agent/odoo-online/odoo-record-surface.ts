@@ -16,8 +16,21 @@
 /** Largest number of records one create or update call may touch. */
 export const MAX_RECORDS_PER_WRITE = 50;
 
-/** Largest number of records one search may return. */
-export const MAX_RECORDS_PER_READ = 100;
+/**
+ * Largest number of records one search call may return.
+ *
+ * Writes stay capped tight (above): a write is an *effect* on a live
+ * instance, and "sample data" never needed more than a handful at a time.
+ * Reads are different - finding every mismatched or wrong record in a
+ * table is exactly the kind of request this cap must not block, and reading
+ * is reversible by construction (nothing on the instance changes). The cap
+ * here is a page size, not a ceiling on the investigation: a model asking
+ * `odoo_search_records` repeatedly with increasing `offset` can walk an
+ * entire table of any size. 2000 keeps one JSON-RPC response and one model
+ * turn bounded in practice without bounding what the task as a whole can
+ * see.
+ */
+export const MAX_RECORDS_PER_READ = 2000;
 
 /** Fields returned by a search that names none: enough to identify a record. */
 export const DEFAULT_READ_FIELDS = ['id', 'display_name'] as const;
@@ -130,6 +143,16 @@ export function validateSearchRecords(input: unknown): string | null {
   ) {
     return 'limit must be a positive integer';
   }
+  // Paging through an entire table (ADR-084): an offset is only ever a
+  // position to resume reading from, never negative and never a source of
+  // the SQL-level abuse a limit guards against, so it needs no upper bound
+  // of its own - the limit cap already bounds what one call returns.
+  if (
+    input.offset !== undefined &&
+    (!Number.isInteger(input.offset) || (input.offset as number) < 0)
+  ) {
+    return 'offset must be a non-negative integer';
+  }
   return null;
 }
 
@@ -138,4 +161,9 @@ export function effectiveReadLimit(limit: unknown): number {
   return Number.isInteger(limit) && (limit as number) > 0
     ? Math.min(limit as number, MAX_RECORDS_PER_READ)
     : 20;
+}
+
+/** The offset actually sent: the request's, or the start of the table. */
+export function effectiveReadOffset(offset: unknown): number {
+  return Number.isInteger(offset) && (offset as number) > 0 ? (offset as number) : 0;
 }
