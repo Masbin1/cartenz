@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Info } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowRight, Info, Sparkles } from 'lucide-react';
 import { useRequireAuth } from '@/lib/auth';
 import { ApiError, api } from '@/lib/api';
 import { AppShell } from '@/components/ui/app-shell';
@@ -180,6 +181,34 @@ export default function AccountPage() {
             divided
           >
             <NotificationsSection />
+          </Section>
+
+          <Section title="About Cartenz" size="small" divided>
+            <Link
+              href="/why-cartenz"
+              className="group flex items-center gap-4 rounded-card border border-surface-border bg-surface-raised p-5 transition-colors hover:border-surface-strong hover:bg-surface-overlay/50 sm:p-6"
+            >
+              <span
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent"
+                aria-hidden="true"
+              >
+                <Sparkles className="h-[18px] w-[18px]" strokeWidth={1.75} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-callout font-medium text-content">
+                  Why Cartenz
+                </span>
+                <span className="mt-0.5 block text-meta text-content-subtle">
+                  What Cartenz does, and why it is built this way rather than as a
+                  generic AI coding agent.
+                </span>
+              </span>
+              <ArrowRight
+                className="h-4 w-4 shrink-0 text-content-subtle transition-transform group-hover:translate-x-0.5"
+                strokeWidth={1.75}
+                aria-hidden="true"
+              />
+            </Link>
           </Section>
         </div>
       </div>
