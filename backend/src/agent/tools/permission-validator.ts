@@ -145,7 +145,9 @@ export class ToolPermissionValidator {
         // mid-implementation would re-run the loop from the start after the
         // second decision - on a live instance, where the first half already ran.
         if (
-          (approvalAction === 'odoo_record_write' || approvalAction === 'odoo_model_create') &&
+          (approvalAction === 'odoo_record_write' ||
+            approvalAction === 'odoo_model_create' ||
+            approvalAction === 'browser_session') &&
           context.taskKind === 'change' &&
           context.grantedApprovals.includes('implementation_plan')
         ) {
@@ -197,6 +199,12 @@ export function approvalActionForTool(toolName: string): string | null {
     // rule.
     case 'odoo_create_model':
       return 'odoo_model_create';
+    // Acting in a person's signed-in Odoo session (ADR-087, Option B). One grant
+    // per task, not per click: a session cannot be decomposed into reviewable
+    // writes ahead of time, so the approval is of the session, watched live.
+    case 'browser_click':
+    case 'browser_type':
+      return 'browser_session';
     default:
       return null;
   }

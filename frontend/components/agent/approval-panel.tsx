@@ -15,6 +15,7 @@ const ACTION_LABELS: Record<string, string> = {
   chat_edit: 'File change',
   odoo_record_write: 'Odoo data change',
   odoo_model_create: 'New Odoo model',
+  browser_session: 'Work in your Odoo browser session',
 };
 
 /**

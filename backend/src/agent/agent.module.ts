@@ -7,6 +7,7 @@ import { RealRepositoryTools } from './tools/real/repository.tools';
 import { RealGitTools } from './tools/real/git.tools';
 import { RealOdooTools } from './tools/real/odoo.tools';
 import { OdooOnlineTools } from './tools/real/odoo-online.tools';
+import { BrowserTools } from './tools/real/browser.tools';
 import { ProjectRecordsClient } from './on-premise/project-records-client';
 import { ProjectHistoryTools } from './tools/real/project-history.tools';
 import { OdooOnlineClient } from './odoo-online/odoo-online-client';
@@ -71,6 +72,7 @@ import { ProjectsModule } from '../modules/projects/projects.module';
     OdooOnlineTools,
     ProjectRecordsClient,
     ProjectHistoryTools,
+    BrowserTools,
     OdooOnlineClient,
     GitHubClient,
     ToolRegistry,

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   ArrowUp,
   FileText,
+  Globe,
   Image as ImageIcon,
   MessagesSquare,
   PanelLeft,
@@ -35,6 +36,7 @@ import { PlanView } from '@/components/agent/plan-view';
 import { ApprovalPanel } from '@/components/agent/approval-panel';
 import { PreviewPanel } from '@/components/projects/preview-panel';
 import { TaskInspector } from '@/components/agent/task-inspector';
+import { BrowserPanel } from '@/components/agent/browser-panel';
 import { DiffViewer } from '@/components/diff/diff-viewer';
 import { isActiveStatus, relativeTime } from '@/lib/format';
 import type {
@@ -117,6 +119,7 @@ export default function AgentWorkspacePage() {
   // person opens on demand, so the conversation has the width by default.
   const [conversationsOpen, setConversationsOpen] = useStoredFlag('cartenz.agent.conversationsOpen');
   const [detailsOpen, setDetailsOpen] = useStoredFlag('cartenz.agent.detailsOpen');
+  const [browserOpen, setBrowserOpen] = useStoredFlag('cartenz.agent.browserOpen');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { events, connected } = useTaskStream(selectedTaskId);
@@ -535,7 +538,11 @@ export default function AgentWorkspacePage() {
 
         <div
           className={`grid gap-12 lg:gap-8 ${
-            conversationsOpen && detailsOpen
+            browserOpen
+              ? conversationsOpen
+                ? 'lg:grid-cols-[224px_minmax(0,1fr)_minmax(0,1.2fr)]'
+                : 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]'
+              : conversationsOpen && detailsOpen
               ? 'lg:grid-cols-[224px_minmax(0,1fr)_300px]'
               : conversationsOpen
                 ? 'lg:grid-cols-[224px_minmax(0,1fr)]'
@@ -672,6 +679,16 @@ export default function AgentWorkspacePage() {
                 >
                   {detailsOpen ? 'Hide request details' : 'Show request details'}
                   <PanelRight className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBrowserOpen((open) => !open)}
+                  aria-pressed={browserOpen}
+                  className={`btn-secondary btn-sm hidden shrink-0 lg:inline-flex ${browserOpen ? 'bg-surface-overlay' : ''}`}
+                  title="Open a browser beside the conversation, e.g. this project's Odoo"
+                >
+                  <Globe className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                  {browserOpen ? 'Hide browser' : 'Browser'}
                 </button>
               </div>
 
@@ -1074,7 +1091,18 @@ export default function AgentWorkspacePage() {
           </div>
 
           {/* RIGHT: the selected request's outcome. Under the conversation below lg. */}
-          <aside aria-labelledby="request-title" className={`min-w-0 ${detailsOpen ? '' : 'lg:hidden'}`}>
+          {browserOpen ? (
+            <BrowserPanel
+              projectId={project.id}
+              odooOnline={project.projectType === 'odoo_online'}
+              initialUrl={odooUrlOf(project)}
+              onClose={() => setBrowserOpen(false)}
+            />
+          ) : null}
+          <aside
+            aria-labelledby="request-title"
+            className={`min-w-0 ${detailsOpen && !browserOpen ? '' : 'lg:hidden'}`}
+          >
             <div className="mb-5 flex items-center justify-between gap-3">
               <h2 id="request-title" className="text-headline text-content">
                 Request
@@ -1091,6 +1119,13 @@ export default function AgentWorkspacePage() {
       </div>
     </AppShell>
   );
+}
+
+/** The project's own Odoo address, if it has one, for the browser panel to open first. */
+function odooUrlOf(project: ProjectDetail): string | null {
+  const api = project.connections.find((c) => c.connectionType === 'odoo_api');
+  const apiUrl = typeof api?.metadata.url === 'string' ? api.metadata.url : null;
+  return apiUrl ?? project.connectedInstance?.url ?? project.provisioning.url ?? null;
 }
 
 /**

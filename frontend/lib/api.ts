@@ -25,6 +25,8 @@ import type {
   PendingApprovalSummary,
   ProjectAccessMember,
   BackupSummary,
+  BrowserInput,
+  BrowserSessionState,
   CheckoutStatus,
   CheckoutSyncResult,
   ProjectDetail,
@@ -832,6 +834,18 @@ export const api = {
         method: 'DELETE',
       }),
 
+    /** The in-portal Odoo Online browser (ADR-087): a server-side session a person signs in to. */
+    browser: (projectId: string) => request<BrowserSessionState>(`/projects/${projectId}/browser`),
+
+    openBrowser: (projectId: string) =>
+      request<BrowserSessionState>(`/projects/${projectId}/browser`, { method: 'POST' }),
+
+    browserInput: (projectId: string, body: BrowserInput) =>
+      request<{ url: string }>(`/projects/${projectId}/browser/input`, { method: 'POST', body }),
+
+    closeBrowser: (projectId: string) =>
+      request<void>(`/projects/${projectId}/browser`, { method: 'DELETE' }),
+
     /**
      * The per-client backups (ADR-054): a restorable snapshot of the instance's
      * database, filestore and addons repository. `backups` reads what exists and
@@ -1177,6 +1191,20 @@ interface ProjectConnectionResponse {
   metadata: Record<string, unknown>;
   hasCredentials: boolean;
   createdAt: string;
+}
+
+/**
+ * One frame of a browser session, as an object URL the caller revokes. Its own
+ * fetch because the body is a JPEG, not JSON; a 401 is left to the next JSON
+ * call to refresh, since frames are polled every second anyway.
+ */
+export async function fetchBrowserFrame(projectId: string): Promise<string | null> {
+  const token = tokenStore.access;
+  const response = await fetch(`${BASE}/projects/${projectId}/browser/screenshot`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    cache: 'no-store',
+  });
+  return response.ok ? URL.createObjectURL(await response.blob()) : null;
 }
 
 /** WebSocket URL for the task event stream, with the access token attached. */

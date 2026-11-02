@@ -1,6 +1,6 @@
 # ADR-087: Browser-driven (RPA) control of a live Odoo instance
 
-- Status: Proposed — awaiting review before any implementation starts
+- Status: Accepted — Option B, Odoo Online only (decided 2 November 2026; see "Decision")
 - Date: 27 October 2026
 - Milestone: Phase 5 (connected-server estate) / Phase 6 candidate
 - Supersedes, for the scope defined here: the data-blind and record-surface
@@ -308,3 +308,46 @@ to review.
 This ADR is retired into either "Accepted" (with option and open questions
 answered) or "Rejected" (Option A stands, this document stands as the record
 of why) — it should not stay "Proposed" indefinitely once reviewed.
+
+## Decision (2 November 2026)
+
+Option B, scoped to the `odoo_online` execution mode. Odoo.sh and on-premise
+projects keep the existing surface (ADR-064/075/084/086) unchanged.
+
+Answers to the open questions:
+
+1. **Option**: B — human-supervised, per project, opted in.
+2. **Infrastructure**: Chromium runs on this host, behind a server flag
+   (`BROWSER_SESSIONS_ENABLED`, default false) and a hard cap of two open
+   sessions platform-wide. This host now measures 6.6 GiB with ~5 GiB
+   available; revisit (separate host over CDP) before raising the cap.
+3. **Credential**: neither a shared nor a personal password is stored. The
+   person signs in to Odoo themselves inside the panel; keystrokes pass through
+   to the page and are not recorded.
+4. **Refused even inside a session** (`browser-policy.ts`, enforced by URL
+   before and after every agent action): `/web/database`, `res.users`,
+   `res.groups`, `res.config.settings`, any `ir.*` model, `base.module`,
+   `/odoo/settings`, and debug mode. Every request the page makes is held to the
+   project's own host and Odoo's sign-in hosts; anything else is aborted.
+5. **Alongside, not instead of**, the RPC tools. The agent is instructed to
+   prefer the record and schema tools and use the browser only for what only
+   the UI does.
+6. **Login-and-stay.** The profile (cookies included) is a temporary directory
+   deleted when the person closes the session, after 30 idle minutes, or when
+   the API process stops. No session artifact outlives the person.
+
+Shape as built:
+
+- Permission `browser_control`, default false, approval-bearing, not
+  inherited from the record permissions.
+- Approval action `browser_session`: one grant per task before the first
+  `browser_click` / `browser_type`; `browser_snapshot` and `browser_navigate`
+  need no approval. A change task's approved plan stands in for it, as it does
+  for `odoo_record_write`.
+- Tools act only on refs from the agent's own latest accessibility snapshot,
+  never on raw selectors or coordinates.
+- The audit trail is the existing per-tool action log (each action's ref, text
+  and resulting URL/snapshot). Screenshot recording is not built; add it if a
+  reviewer needs a visual record.
+- The README §3 and `/why-cartenz` "there is no shell" statements are not yet
+  qualified for this capability; that copy change is outstanding.

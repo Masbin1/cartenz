@@ -3,6 +3,8 @@ import { RealRepositoryTools } from './real/repository.tools';
 import { RealGitTools } from './real/git.tools';
 import { RealOdooTools } from './real/odoo.tools';
 import { OdooOnlineTools } from './real/odoo-online.tools';
+import { BrowserTools } from './real/browser.tools';
+import type { RedisService } from '../../core/redis/redis.service';
 import { ProjectRecordsClient } from '../on-premise/project-records-client';
 import { ProjectHistoryTools } from './real/project-history.tools';
 import { OdooOnlineClient } from '../odoo-online/odoo-online-client';
@@ -77,5 +79,6 @@ export function buildTestToolRegistry(): ToolRegistry {
     new RealOdooTools(analyser),
     new OdooOnlineTools(new OdooOnlineClient(), onPremiseRecords, database, secrets),
     new ProjectHistoryTools(tasks),
+    new BrowserTools({ client: { get: refuse('Redis.get') } } as unknown as RedisService),
   );
 }

@@ -513,6 +513,17 @@ const environmentSchema = z.object({
     .transform((value) => value === 'true'),
 
   /**
+   * The master switch for the in-portal Odoo Online browser (ADR-087, Option B).
+   *
+   * Off by default: each open session is one headless Chromium on this host
+   * (200-500 MB), so an operator turns it on knowing the host has the room.
+   */
+  BROWSER_SESSIONS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+
+  /**
    * SSH host key policy (ADR-021).
    *
    * "yes" is correct and requires a recorded host key on the connection.
@@ -852,6 +863,10 @@ export interface AppConfig {
     /** Push a non-production task without a per-task approval (ADR-041). */
     readonly autoPushOnTask: boolean;
     readonly sshHostKeyPolicy: Environment['GIT_SSH_HOST_KEY_POLICY'];
+  };
+  /** The in-portal Odoo Online browser (ADR-087). */
+  readonly browser: {
+    readonly enabled: boolean;
   };
   /** Creating and pushing to a GitHub repository for a created project (ADR-041). */
   readonly github: {
@@ -1278,6 +1293,9 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       pushEnabled: env.GIT_PUSH_ENABLED,
       autoPushOnTask: env.GIT_AUTO_PUSH_ON_TASK,
       sshHostKeyPolicy: env.GIT_SSH_HOST_KEY_POLICY,
+    },
+    browser: {
+      enabled: env.BROWSER_SESSIONS_ENABLED,
     },
     github: {
       token: emptyToUndefined(env.GITHUB_TOKEN) ?? null,

@@ -23,6 +23,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { AiOfficeModule } from './modules/ai-office/ai-office.module';
 import { AgentModule } from './agent/agent.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { BrowserModule } from './modules/browser/browser.controller';
 
 /**
  * The application root, shared by both entry points: the API (main.ts) and the
@@ -58,6 +59,7 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     NotificationsModule,
     AiOfficeModule,
     RealtimeModule,
+    BrowserModule,
   ],
   controllers: [],
   providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],

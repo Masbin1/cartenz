@@ -21,6 +21,7 @@ export const AGENT_PERMISSIONS = [
   'odoo_customize',
   'restart_odoo',
   'production_deploy',
+  'browser_control',
 ] as const;
 
 export type AgentPermission = (typeof AGENT_PERMISSIONS)[number];
@@ -58,6 +59,10 @@ export const DEFAULT_AGENT_PERMISSIONS: Readonly<Record<AgentPermission, boolean
   odoo_customize: true,
   restart_odoo: false,
   production_deploy: false,
+  // Driving a person's logged-in Odoo Online session (ADR-087, Option B). None of
+  // the record surface's deny-list or caps apply inside it, so it is never on by
+  // default and never inherited from the record permissions.
+  browser_control: false,
 };
 
 /**
@@ -70,6 +75,7 @@ export const APPROVAL_BEARING_PERMISSIONS: readonly AgentPermission[] = [
   'restart_odoo',
   'production_deploy',
   'database_record_write',
+  'browser_control',
 ];
 
 /**

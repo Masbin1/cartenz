@@ -141,6 +141,42 @@ describe('ToolPermissionValidator', () => {
     expect(decision.outcome).toBe('allowed');
   });
 
+  describe('the signed-in browser (ADR-087)', () => {
+    const click = { toolName: 'browser_click', input: { ref: 'e12' } };
+
+    it('is denied unless the project grants browser_control, whatever else it grants', () => {
+      const decision = validator.validate(
+        click,
+        policy({ database_record_write: true, odoo_customize: true }, [], 'odoo_online'),
+      );
+      expect(decision.outcome).toBe('denied');
+    });
+
+    it('is denied outside Odoo Online, so odoo.sh and on-premise keep their own surface', () => {
+      for (const mode of ['odoo_sh', 'on_premise'] as const) {
+        expect(validator.validate(click, policy({ browser_control: true }, [], mode)).outcome).toBe('denied');
+      }
+    });
+
+    it('asks once for the session before the first click, then allows', () => {
+      const first = validator.validate(click, policy({ browser_control: true }, [], 'odoo_online', 'chat'));
+      expect(first.outcome === 'approval_required' && first.approvalAction).toBe('browser_session');
+      const granted = validator.validate(
+        click,
+        policy({ browser_control: true }, ['browser_session'], 'odoo_online', 'chat'),
+      );
+      expect(granted.outcome).toBe('allowed');
+    });
+
+    it('refuses anything but a snapshot ref, so the agent cannot aim a raw selector', () => {
+      const decision = validator.validate(
+        { toolName: 'browser_click', input: { ref: 'text=Delete' } },
+        policy({ browser_control: true }, ['browser_session'], 'odoo_online'),
+      );
+      expect(decision.outcome).toBe('denied');
+    });
+  });
+
   it('refuses a model name that does not start with x_, before it leaves the platform', () => {
     const decision = validator.validate(
       { toolName: 'odoo_create_model', input: { model: 'servis', label: 'Servis' } },
@@ -297,6 +333,10 @@ describe('tool registry', () => {
       .sort();
 
     expect(real).toEqual([
+      'browser_click',
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_type',
       'create_file',
       'delete_file',
       'detect_odoo_version',

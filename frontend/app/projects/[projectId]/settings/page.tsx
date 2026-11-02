@@ -39,6 +39,7 @@ const PERMISSION_NOTES: Record<string, string> = {
   database_record_write: 'Write customer records. Denied by default; requires approval.',
   project_history_read: 'Read this project\'s earlier conversations, so a new request can see what was already discussed and tried.',
   restart_odoo: 'Restart the Odoo service. Requires approval.',
+  browser_control: 'Odoo Online only. Act in the Odoo session a person signed in to in the Browser panel. Bypasses the record limits; denied by default, approved once per task.',
   production_deploy: 'Deploy to production. Out of scope for the MVP.',
 };
 

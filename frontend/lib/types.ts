@@ -1010,3 +1010,21 @@ export interface CheckoutSyncResult {
   message: string;
   durationMs: number;
 }
+
+/** The in-portal Odoo Online browser session (ADR-087). */
+export interface BrowserSessionState {
+  /** BROWSER_SESSIONS_ENABLED on the server. */
+  enabled: boolean;
+  open: boolean;
+  url: string | null;
+  /** Whether the project grants browser_control, i.e. the agent may act in it. */
+  agentAllowed: boolean;
+}
+
+export type BrowserInput =
+  | { type: 'click'; x: number; y: number }
+  | { type: 'scroll'; dy: number }
+  | { type: 'type'; text: string }
+  | { type: 'key'; key: string }
+  | { type: 'navigate'; url: string }
+  | { type: 'back' | 'forward' | 'reload' };

@@ -104,6 +104,7 @@ export const APPROVAL_ACTIONS = [
   'chat_edit',
   'odoo_record_write',
   'odoo_model_create',
+  'browser_session',
 ] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 

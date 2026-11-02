@@ -71,3 +71,13 @@ export function taskIdFromChannel(channel: string): string | null {
   const match = /^task:(.+):events$/.exec(channel);
   return match ? match[1] : null;
 }
+
+/**
+ * Where the API process advertises a project's open browser session (ADR-087):
+ * `{ port, host }` of the Chromium it launched, so the worker's browser tools
+ * attach to the same logged-in session over CDP on 127.0.0.1. Expires with the
+ * session; a worker that finds nothing tells the agent to ask for a login.
+ */
+export function browserSessionKey(projectId: string): string {
+  return `browser:session:${projectId}`;
+}

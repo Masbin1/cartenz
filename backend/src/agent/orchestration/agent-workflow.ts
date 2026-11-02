@@ -335,6 +335,11 @@ export class AgentWorkflow {
           message: 'The new Odoo model was approved. Creating it.',
         });
 
+      case 'browser_session':
+        return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'implementing', {
+          message: 'Working in the Odoo browser session was approved. Continuing.',
+        });
+
       default:
         return this.tasks.transition(snapshot.taskId, 'waiting_approval', 'failed', {
           failureReason: `No resumption is defined for an approved ${decision.action}.`,
