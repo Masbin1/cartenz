@@ -188,6 +188,8 @@ export class CommandRunner {
   private readonly modulesListScript: string;
   /** The fit-gap database-setup applier sudo may be asked to run (ADR-073). */
   private readonly dbSetupScript: string;
+  /** The on-premise record read/write script sudo may be asked to run (ADR-075). */
+  private readonly recordsScript: string;
   /** The project-restart script sudo may be asked to run (ADR-057). */
   private readonly restartScript: string;
   /** The restored-copy script sudo may be asked to run (ADR-067). */
@@ -248,6 +250,11 @@ export class CommandRunner {
     // hold even when provisioning is on.
     this.dbSetupScript = config.provisioning?.enabled
       ? (config.provisioning.dbSetupScript ?? '')
+      : '';
+    // ADR-075. Same posture again: empty PROJECT_RECORDS_SCRIPT is the off
+    // switch, and it must hold even when provisioning is on.
+    this.recordsScript = config.provisioning?.enabled
+      ? (config.provisioning.recordsScript ?? '')
       : '';
     // ADR-057. Same posture as the pull, preview, backup and modules-list
     // scripts: empty PROJECT_RESTART_SCRIPT is the off switch, and it must hold
@@ -368,6 +375,7 @@ export class CommandRunner {
         this.restoreScript || null,
         this.teardownScript || null,
         this.dbSetupScript || null,
+        this.recordsScript || null,
       );
     }
 
@@ -655,6 +663,11 @@ const RESTORE_BACKUP_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.zip$/;
  *   repository before a staging push. The same shape as the grant script; the
  *   configured path is the only thing distinguishing them.
  *
+ *   `sudo -n <records-script> <project-name>` — the on-premise record access
+ *   script (ADR-075), the same shape again; the operation (search, count,
+ *   aggregate, create, write), model and values travel on stdin, never in the
+ *   argument vector.
+ *
  * The configured scripts are disjoint by construction (distinct configuration
  * keys); a script appearing in none of them is refused. Every check here duplicates a check the scripts themselves
  * make; that is deliberate: the scripts run as root on the strength of a
@@ -680,6 +693,7 @@ export function assertProvisioningInvocation(
   restoreScript: string | null = null,
   teardownScript: string | null = null,
   dbSetupScript: string | null = null,
+  recordsScript: string | null = null,
 ): void {
   if (args[0] !== '-n') {
     throw new CommandArgumentError(
@@ -702,6 +716,7 @@ export function assertProvisioningInvocation(
   const isBackup = backupScript !== null && script === backupScript;
   const isModulesList = modulesListScript !== null && script === modulesListScript;
   const isDbSetup = dbSetupScript !== null && script === dbSetupScript;
+  const isRecords = recordsScript !== null && script === recordsScript;
   const isRestart = restartScript !== null && script === restartScript;
   const isRestore = restoreScript !== null && script === restoreScript;
   const isTeardown = teardownScript !== null && script === teardownScript;
@@ -715,6 +730,7 @@ export function assertProvisioningInvocation(
     !isBackup &&
     !isModulesList &&
     !isDbSetup &&
+    !isRecords &&
     !isRestart &&
     !isRestore &&
     !isTeardown
@@ -728,6 +744,7 @@ export function assertProvisioningInvocation(
       ...(backupScript ? [backupScript] : []),
       ...(modulesListScript ? [modulesListScript] : []),
       ...(dbSetupScript ? [dbSetupScript] : []),
+      ...(recordsScript ? [recordsScript] : []),
       ...(restartScript ? [restartScript] : []),
       ...(restoreScript ? [restoreScript] : []),
       ...(teardownScript ? [teardownScript] : []),
@@ -829,6 +846,20 @@ export function assertProvisioningInvocation(
     if (args.length !== 3) {
       throw new CommandArgumentError(
         `The database-setup script takes exactly "-n <script> <project-name>"; got ` +
+          `${args.length} arguments.`,
+      );
+    }
+    return;
+  }
+
+  // ADR-075. Same shape again - one project name and nothing else. The
+  // operation, model, fields and values travel on stdin, never in the
+  // argument vector; this is the read/write counterpart to the setup script
+  // above, distinguished only by its configured path.
+  if (isRecords) {
+    if (args.length !== 3) {
+      throw new CommandArgumentError(
+        `The records script takes exactly "-n <script> <project-name>"; got ` +
           `${args.length} arguments.`,
       );
     }

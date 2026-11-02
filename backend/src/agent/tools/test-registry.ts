@@ -3,6 +3,7 @@ import { RealRepositoryTools } from './real/repository.tools';
 import { RealGitTools } from './real/git.tools';
 import { RealOdooTools } from './real/odoo.tools';
 import { OdooOnlineTools } from './real/odoo-online.tools';
+import { ProjectRecordsClient } from '../on-premise/project-records-client';
 import { ProjectHistoryTools } from './real/project-history.tools';
 import { OdooOnlineClient } from '../odoo-online/odoo-online-client';
 import type { AppConfig } from '../../core/config/configuration';
@@ -59,6 +60,12 @@ export function buildTestToolRegistry(): ToolRegistry {
     db: { select: refuse('DatabaseService.select') },
   } as unknown as DatabaseService;
 
+  const onPremiseRecords = {
+    available: false,
+    resolveTechnicalName: refuse('ProjectRecordsClient.resolveTechnicalName'),
+    run: refuse('ProjectRecordsClient.run'),
+  } as unknown as ProjectRecordsClient;
+
   const tasks = {
     loadProjectHistory: refuse('TaskRepository.loadProjectHistory'),
     countProjectHistory: refuse('TaskRepository.countProjectHistory'),
@@ -68,7 +75,7 @@ export function buildTestToolRegistry(): ToolRegistry {
     new RealRepositoryTools(config),
     new RealGitTools(git, secrets),
     new RealOdooTools(analyser),
-    new OdooOnlineTools(new OdooOnlineClient(), database, secrets),
+    new OdooOnlineTools(new OdooOnlineClient(), onPremiseRecords, database, secrets),
     new ProjectHistoryTools(tasks),
   );
 }

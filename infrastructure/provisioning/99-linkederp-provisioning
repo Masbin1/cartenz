@@ -112,6 +112,17 @@
 #     delete removed only its own row and every provisioned instance stayed
 #     running on the host.
 #
+#   - The thirteenth is on-premise record access (ADR-075):
+#     infrastructure/provisioning/project-records.sh reads or writes business
+#     records on a project's own database through `odoo-bin shell`, mirroring
+#     apply-db-setup.sh's own stdin-request convention and the same
+#     protected-model deny-list Odoo Online's record tools already enforce
+#     (odoo-record-surface.ts / odoo_record_policy.py, kept in step by a unit
+#     test). Shape: `-n <script> <project-name>`, the same as the backup,
+#     installed-modules, apply-db-setup and teardown scripts; the request
+#     (operation, model, fields, values) arrives on stdin, never as an
+#     argument.
+#
 #   - `sudo -l -U cartenz` on the host shows exactly this rule; there is no
 #     wildcard sudo access anywhere else for this user.
 #
@@ -130,7 +141,8 @@ Cmnd_Alias LINKEDERP_PROVISION = \
     /opt/cartenz/infrastructure/provisioning/restart-project.sh, \
     /opt/cartenz/infrastructure/provisioning/restore-existing-instance.sh, \
     /opt/cartenz/infrastructure/provisioning/apply-db-setup.sh, \
-    /opt/cartenz/infrastructure/provisioning/teardown-project.sh
+    /opt/cartenz/infrastructure/provisioning/teardown-project.sh, \
+    /opt/cartenz/infrastructure/provisioning/project-records.sh
 
 cartenz ALL=(root) NOPASSWD: LINKEDERP_PROVISION
 

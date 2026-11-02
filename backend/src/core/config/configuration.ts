@@ -329,6 +329,20 @@ const environmentSchema = z.object({
     .default('/opt/cartenz/infrastructure/provisioning/apply-db-setup.sh'),
 
   /**
+   * Absolute path to the on-premise record read/write script (ADR-075).
+   *
+   * Same posture as PROJECT_DB_SETUP_SCRIPT: defaulted, and empty disables
+   * the on-premise record tools (odoo_search_records, odoo_aggregate_records,
+   * odoo_create_records, odoo_update_records) on a deployment that has not
+   * installed the script's sudoers entry — a project then behaves exactly as
+   * before ADR-075, with on_premise's tool surface limited to
+   * detect_odoo_version and list_modules.
+   */
+  PROJECT_RECORDS_SCRIPT: z
+    .string()
+    .default('/opt/cartenz/infrastructure/provisioning/project-records.sh'),
+
+  /**
    * Absolute path to the project-restart script (ADR-057).
    *
    * Same posture as PROJECT_PULL_SCRIPT and PROJECT_BACKUP_SCRIPT: defaulted,
@@ -766,6 +780,14 @@ export interface AppConfig {
      * screen.
      */
     readonly dbSetupScript: string | null;
+    /**
+     * The on-premise record read/write script (ADR-075), or null when the
+     * deployment has not configured one. Null disables
+     * odoo_search_records/odoo_aggregate_records/odoo_create_records/
+     * odoo_update_records for `on_premise` tasks end to end: the guard
+     * refuses the invocation, and those tools stay `odoo_online`-only.
+     */
+    readonly recordsScript: string | null;
     /**
      * The project-restart script (ADR-057), or null when the deployment has
      * not configured one. Null disables the restart action end to end: the
@@ -1210,6 +1232,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       backupScript: emptyToUndefined(env.PROJECT_BACKUP_SCRIPT) ?? null,
       modulesListScript: emptyToUndefined(env.PROJECT_MODULES_LIST_SCRIPT) ?? null,
       dbSetupScript: emptyToUndefined(env.PROJECT_DB_SETUP_SCRIPT) ?? null,
+      recordsScript: emptyToUndefined(env.PROJECT_RECORDS_SCRIPT) ?? null,
       restartScript: emptyToUndefined(env.PROJECT_RESTART_SCRIPT) ?? null,
       restoreScript: emptyToUndefined(env.PROJECT_RESTORE_SCRIPT) ?? null,
       teardownScript: emptyToUndefined(env.PROJECT_TEARDOWN_SCRIPT) ?? null,

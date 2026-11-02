@@ -72,6 +72,7 @@ ADR-077 to ADR-079 were never used; the gap is deliberate.
 | [ADR-081](ADR-081-task-settlement-reply.md) | The reply is composed from what the task did | Accepted |
 | [ADR-082](ADR-082-read-only-plan-is-answered.md) | A plan that names no file is answered, not failed | Proposed |
 | [ADR-083](ADR-083-read-history-and-push-existing-commits.md) | The agent can read history, and a task can deliver commits it did not make | Proposed |
+| [ADR-087](ADR-087-browser-driven-rpa-control.md) | Browser-driven (RPA) control of a live Odoo instance | Proposed |
 
 ## Odoo Online
 
@@ -81,6 +82,7 @@ ADR-077 to ADR-079 were never used; the gap is deliberate.
 | [ADR-068](ADR-068-odoo-online-model-creation.md) | Odoo Online can create a model, as one Studio-shaped sequence | Accepted |
 | [ADR-070](ADR-070-odoo-online-assisted-creation.md) | Creating an Odoo Online database is assisted, not automated | Accepted |
 | [ADR-084](ADR-084-odoo-online-read-paging.md) | Odoo Online record reads are capped by page, not by table size | Accepted |
+| [ADR-086](ADR-086-odoo-aggregate-records.md) | Native aggregation (read_group) for Odoo Online and on-premise | Accepted |
 
 ## Odoo.sh
 
@@ -109,4 +111,4 @@ ADR-077 to ADR-079 were never used; the gap is deliberate.
 | [ADR-056](ADR-056-module-selection-at-project-creation.md) | Module selection at project creation | Accepted |
 | [ADR-057](ADR-057-merge-to-main-and-project-restart.md) | Merge staging into main, and restart the running instance | Accepted |
 | [ADR-073](ADR-073-fit-gap-database-setup-at-project-creation.md) | Fit-gap database setup at project creation | Proposed |
-| [ADR-075](ADR-075-on-premise-database-injection.md) | An on-premise project's database is reachable — from the brief and from a prompt | Proposed |
+| [ADR-075](ADR-075-on-premise-database-injection.md) | An on-premise project's database is reachable — from the brief and from a prompt | Accepted |

@@ -53,9 +53,13 @@ const READ_ONLY_METHODS = new Set(['search_read', 'search_count']);
  * A fixed list rather than "whatever the caller asks for": `unlink` is absent
  * deliberately (deleting customer records is not sample data, and nothing in this
  * mode asks for it), as is `execute` - a method that runs arbitrary server-side
- * code is the whole allow-list defeated in one call.
+ * code is the whole allow-list defeated in one call. `read_group` is Odoo's own
+ * aggregation primitive (SUM/COUNT/AVG grouped by one or more fields) - the same
+ * query Odoo's pivot views and dashboards run - and is read-only in exactly the
+ * same sense `search_read` is: it answers a question about existing records
+ * without creating, changing or deleting any of them (ADR-086).
  */
-const RECORD_METHODS = new Set(['search_read', 'search_count', 'create', 'write']);
+const RECORD_METHODS = new Set(['search_read', 'search_count', 'read_group', 'create', 'write']);
 
 export interface OdooOnlineCredentials {
   /** Instance root, e.g. `https://vania-uat123.odoo.com`. Must be https. */
@@ -535,6 +539,40 @@ export class OdooOnlineClient {
     values: Record<string, unknown>,
   ): Promise<boolean> {
     return (await this.recordCall(credentials, uid, model, 'write', [[...ids], values])) === true;
+  }
+
+  /**
+   * Odoo's native aggregation (ADR-086): SUM/COUNT/AVG/MIN/MAX of `fields`,
+   * grouped by `groupBy`. This is the same primitive the pivot view and every
+   * dashboard widget in Odoo itself calls - `read_group` never returns raw
+   * rows, only one aggregated row per distinct group, so it answers "total
+   * sales by month" or "count of leads by stage" without reading the
+   * underlying records at all.
+   *
+   * A field named for aggregation takes a `:` suffix to choose the function,
+   * e.g. `amount_total:sum` - the convention `read_group` itself uses. A bare
+   * field name with no suffix defaults to count-of-non-null for a non-numeric
+   * field. `groupBy` entries may use the same `date_field:granularity` form
+   * Odoo's own grouping does (`date_order:month`).
+   */
+  async aggregateRecords(
+    credentials: OdooOnlineCredentials,
+    uid: number,
+    model: string,
+    domain: unknown[],
+    fields: readonly string[],
+    groupBy: readonly string[],
+    limit: number,
+  ): Promise<Record<string, unknown>[]> {
+    const result = await this.recordCall(credentials, uid, model, 'read_group', [
+      domain,
+      [...fields],
+      [...groupBy],
+    ], { limit });
+    if (!Array.isArray(result)) {
+      throw new OdooRpcError(`read_group on ${model} returned something other than a list`);
+    }
+    return result as Record<string, unknown>[];
   }
 
   /**

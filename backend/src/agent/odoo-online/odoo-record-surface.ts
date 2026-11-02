@@ -167,3 +167,63 @@ export function effectiveReadLimit(limit: unknown): number {
 export function effectiveReadOffset(offset: unknown): number {
   return Number.isInteger(offset) && (offset as number) > 0 ? (offset as number) : 0;
 }
+
+/** Largest number of groups one aggregation call may return. */
+export const MAX_GROUPS_PER_AGGREGATE = 1000;
+
+const AGGREGATE_FIELD = /^[a-z0-9_]+(:(sum|avg|count|count_distinct|min|max|array_agg|bool_and|bool_or))?$/;
+const AGGREGATE_GROUP_BY = /^[a-z0-9_]+(:(year|quarter|month|week|day|hour|minute|second))?$/;
+
+/** Validates an `odoo_aggregate_records` request (ADR-086). Returns a reason, or null. */
+export function validateAggregateRecords(input: unknown): string | null {
+  if (!isPlainObject(input)) return 'the input must be an object';
+  const refusal = recordModelRefusal(input.model as string);
+  if (refusal) return refusal;
+
+  if (input.domain !== undefined && !Array.isArray(input.domain)) {
+    return 'domain must be an Odoo domain array, e.g. [["state", "=", "sale"]]';
+  }
+
+  const fields = input.fields;
+  if (!Array.isArray(fields) || fields.length === 0) {
+    return 'fields is required: a non-empty array naming what to aggregate, e.g. ["amount_total:sum"]';
+  }
+  if (fields.length > 20) return 'at most 20 fields may be aggregated in one call';
+  for (const field of fields) {
+    if (typeof field !== 'string' || !AGGREGATE_FIELD.test(field)) {
+      return (
+        `"${String(field)}" is not a valid aggregated field. Use a field name, optionally with ` +
+        '":function", e.g. "amount_total:sum" or "id:count".'
+      );
+    }
+  }
+
+  const groupBy = input.groupBy;
+  if (!Array.isArray(groupBy) || groupBy.length === 0) {
+    return 'groupBy is required: a non-empty array of field names to group by, e.g. ["state"]';
+  }
+  if (groupBy.length > 5) return 'at most 5 fields may be grouped by in one call';
+  for (const field of groupBy) {
+    if (typeof field !== 'string' || !AGGREGATE_GROUP_BY.test(field)) {
+      return (
+        `"${String(field)}" is not a valid groupBy field. Use a field name, optionally with ` +
+        '":granularity" for a date/datetime field, e.g. "date_order:month".'
+      );
+    }
+  }
+
+  if (
+    input.limit !== undefined &&
+    (!Number.isInteger(input.limit) || (input.limit as number) < 1)
+  ) {
+    return 'limit must be a positive integer';
+  }
+  return null;
+}
+
+/** The limit actually sent to read_group: the request's, capped. */
+export function effectiveAggregateLimit(limit: unknown): number {
+  return Number.isInteger(limit) && (limit as number) > 0
+    ? Math.min(limit as number, MAX_GROUPS_PER_AGGREGATE)
+    : MAX_GROUPS_PER_AGGREGATE;
+}

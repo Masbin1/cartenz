@@ -447,3 +447,43 @@ export const ODOO_SEARCH_RECORDS_SCHEMA = {
   required: ['model'],
   additionalProperties: false,
 } as const;
+
+export const ODOO_AGGREGATE_RECORDS_SCHEMA = {
+  type: 'object',
+  properties: {
+    model: odooModelName,
+    domain: {
+      type: 'array',
+      description:
+        'An Odoo domain, e.g. [["state", "=", "sale"]]. Omit or use [] to match every record.',
+      items: {},
+    },
+    fields: {
+      type: 'array',
+      description:
+        'What to compute, one per entry: a field name with an optional ":function" suffix - ' +
+        '"amount_total:sum", "id:count", "margin:avg", "date_order:max". Functions: sum, avg, ' +
+        'count, count_distinct, min, max.',
+      items: { type: 'string' },
+      minItems: 1,
+      maxItems: 20,
+    },
+    groupBy: {
+      type: 'array',
+      description:
+        'Fields to group by, e.g. ["state"] or ["partner_id"]. A date/datetime field may take ' +
+        'a granularity suffix, e.g. "date_order:month", "date_order:year".',
+      items: { type: 'string' },
+      minItems: 1,
+      maxItems: 5,
+    },
+    limit: {
+      type: 'integer',
+      description: 'Maximum groups to return. Defaults to 1000, capped at 1000.',
+      minimum: 1,
+      maximum: 1000,
+    },
+  },
+  required: ['model', 'fields', 'groupBy'],
+  additionalProperties: false,
+} as const;

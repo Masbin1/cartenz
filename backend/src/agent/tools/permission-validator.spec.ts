@@ -311,6 +311,7 @@ describe('tool registry', () => {
       'list_directory',
       'list_modules',
       'odoo_add_field_to_view',
+      'odoo_aggregate_records',
       'odoo_create_field',
       'odoo_create_model',
       'odoo_create_records',

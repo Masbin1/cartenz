@@ -7,8 +7,10 @@ import {
   OdooOnlineClient,
   type OdooOnlineCredentials,
 } from '../../odoo-online/odoo-online-client';
+import { ProjectRecordsClient } from '../../on-premise/project-records-client';
 import {
   ODOO_ADD_FIELD_TO_VIEW_SCHEMA,
+  ODOO_AGGREGATE_RECORDS_SCHEMA,
   ODOO_CREATE_FIELD_SCHEMA,
   ODOO_CREATE_MODEL_SCHEMA,
   ODOO_CREATE_RECORDS_SCHEMA,
@@ -19,8 +21,10 @@ import {
 } from '../tool-schemas';
 import {
   DEFAULT_READ_FIELDS,
+  effectiveAggregateLimit,
   effectiveReadLimit,
   effectiveReadOffset,
+  validateAggregateRecords,
   validateCreateRecords,
   validateSearchRecords,
   validateUpdateRecords,
@@ -37,19 +41,28 @@ import {
 import type { AnyToolDefinition, ToolDefinition, ToolExecutionContext } from '../tool.interface';
 
 /**
- * The Odoo Online tools (ADR-028, ADR-064).
+ * The Odoo Online tools (ADR-028, ADR-064), and - for the four record tools
+ * only - the on-premise record tools too (ADR-075).
  *
- * These are the whole tool surface for `odoo_online` - no filesystem, no Git, no
- * shell. Each resolves the project's sealed Odoo Online credentials, then drives
- * the instance through the JSON-RPC client:
+ * Customization (schema, views, model creation) stays `odoo_online`-only:
+ * there is no Studio-equivalent RPC surface for on-premise, and ADR-075 was
+ * scoped to records on purpose. The four record tools
+ * (search/aggregate/create/update) instead branch on `context.executionMode`
+ * at the top of `execute` and call one of two executors that implement the
+ * *same validated request* two different ways:
  *
- * - customization (schema and views) under `odoo_customize`;
- * - records - sample data, demo customers, price updates - under
- *   `database_record_read` and `database_record_write`, both off by default and
- *   set per project. A record write in a chat pauses for the `chat_edit`
- *   approval (permission-validator.ts); in a change task the approved plan is
- *   the approval. Users, groups, `ir.*` and other configuration models are never
- *   a record target, whatever the permissions say (odoo-record-surface.ts).
+ * - `odoo_online`: `OdooOnlineClient`, JSON-RPC against the instance's own
+ *   credentials;
+ * - `on_premise`: `ProjectRecordsClient`, a root-run `odoo-bin shell` against
+ *   the project's own database on this host.
+ *
+ * Both sit behind `database_record_read` / `database_record_write`, both off
+ * by default and set per project. A record write in a chat pauses for the
+ * `chat_edit` approval (permission-validator.ts); in a change task the
+ * approved plan is the approval. Users, groups, `ir.*` and other
+ * configuration models are never a record target on either executor,
+ * whatever the permissions say (odoo-record-surface.ts /
+ * odoo_record_policy.py, kept in step by a unit test).
  */
 
 function readString(record: Record<string, unknown>, key: string): string | null {
@@ -57,10 +70,19 @@ function readString(record: Record<string, unknown>, key: string): string | null
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+interface SearchResult {
+  readonly total: number;
+  readonly offset: number;
+  readonly returned: number;
+  readonly hasMore: boolean;
+  readonly records: Record<string, unknown>[];
+}
+
 @Injectable()
 export class OdooOnlineTools {
   constructor(
     private readonly client: OdooOnlineClient,
+    private readonly onPremiseRecords: ProjectRecordsClient,
     private readonly database: DatabaseService,
     @Inject(SECRETS_PROVIDER) private readonly secrets: SecretsProvider,
   ) {}
@@ -73,6 +95,7 @@ export class OdooOnlineTools {
       this.createModel,
       this.addFieldToView,
       this.searchRecords,
+      this.aggregateRecords,
       this.createRecords,
       this.updateRecords,
     ];
@@ -120,6 +143,23 @@ export class OdooOnlineTools {
 
     const apiKey = await this.secrets.read(connection.secretRef);
     return { url, db, login, apiKey };
+  }
+
+  /**
+   * Resolves the on-premise project's technical name (ADR-075), the thing
+   * project-records.sh needs to find the right odoo.conf and database. A
+   * project with no resolvable on-premise path (never provisioned, or a
+   * repository-only connection) refuses rather than guessing.
+   */
+  private async resolveTechnicalName(context: ToolExecutionContext): Promise<string> {
+    const technicalName = await this.onPremiseRecords.resolveTechnicalName(context.projectId);
+    if (!technicalName) {
+      throw new Error(
+        'This project has no provisioned on-premise instance on this host, so there is no ' +
+          'database to read or write records on.',
+      );
+    }
+    return technicalName;
   }
 
   private readonly listModels: ToolDefinition<{ query?: string }> = {
@@ -270,34 +310,99 @@ export class OdooOnlineTools {
       'increasing offset to walk an entire table looking for wrong or mismatched data - there ' +
       'is no limit on how much of a table may be read this way, only on one call\'s page size.',
     permission: 'database_record_read',
-    modes: ['odoo_online'],
+    modes: ['odoo_online', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: ODOO_SEARCH_RECORDS_SCHEMA,
     availableToModel: true,
     validate: validateSearchRecords,
     execute: async (input, context) => {
-      const credentials = await this.resolveCredentials(context);
-      const uid = await this.client.authenticate(credentials);
       const domain = input.domain ?? [];
       const fields = input.fields?.length ? input.fields : [...DEFAULT_READ_FIELDS];
       const limit = effectiveReadLimit(input.limit);
       const offset = effectiveReadOffset(input.offset);
-      const [records, total] = await Promise.all([
-        this.client.searchRecords(credentials, uid, input.model, domain, fields, limit, offset),
-        this.client.countRecords(credentials, uid, input.model, domain),
-      ]);
-      return {
-        model: input.model,
-        total,
-        offset,
-        returned: records.length,
-        // Tells the model whether another call with a higher offset would see
-        // more rows, so it can decide to keep paging without re-deriving this
-        // from total/offset/returned itself.
-        hasMore: offset + records.length < total,
-        records,
-      };
+
+      let result: SearchResult;
+      if (context.executionMode === 'on_premise') {
+        const technicalName = await this.resolveTechnicalName(context);
+        result = (await this.onPremiseRecords.run(technicalName, {
+          operation: 'search',
+          model: input.model,
+          domain,
+          fields,
+          limit,
+          offset,
+        })) as SearchResult;
+      } else {
+        const credentials = await this.resolveCredentials(context);
+        const uid = await this.client.authenticate(credentials);
+        const [records, total] = await Promise.all([
+          this.client.searchRecords(credentials, uid, input.model, domain, fields, limit, offset),
+          this.client.countRecords(credentials, uid, input.model, domain),
+        ]);
+        result = {
+          total,
+          offset,
+          returned: records.length,
+          hasMore: offset + records.length < total,
+          records,
+        };
+      }
+
+      return { model: input.model, ...result };
+    },
+  };
+
+  private readonly aggregateRecords: ToolDefinition<{
+    model: string;
+    domain?: unknown[];
+    fields: string[];
+    groupBy: string[];
+    limit?: number;
+  }> = {
+    name: 'odoo_aggregate_records',
+    description:
+      'Odoo\'s own aggregation (SUM/AVG/COUNT/MIN/MAX grouped by one or more fields) - the ' +
+      'same query the pivot view runs. Use this instead of odoo_search_records for a question ' +
+      'that is really a total or an average ("total sales by month", "count of leads by stage"), ' +
+      'since it computes the answer on the instance rather than requiring every row to be read.',
+    permission: 'database_record_read',
+    modes: ['odoo_online', 'on_premise'],
+    leavesPlatform: false,
+    simulated: false,
+    parameters: ODOO_AGGREGATE_RECORDS_SCHEMA,
+    availableToModel: true,
+    validate: validateAggregateRecords,
+    execute: async (input, context) => {
+      const domain = input.domain ?? [];
+      const limit = effectiveAggregateLimit(input.limit);
+
+      let groups: Record<string, unknown>[];
+      if (context.executionMode === 'on_premise') {
+        const technicalName = await this.resolveTechnicalName(context);
+        const result = (await this.onPremiseRecords.run(technicalName, {
+          operation: 'aggregate',
+          model: input.model,
+          domain,
+          fields: input.fields,
+          groupBy: input.groupBy,
+          limit,
+        })) as { groups: Record<string, unknown>[] };
+        groups = result.groups;
+      } else {
+        const credentials = await this.resolveCredentials(context);
+        const uid = await this.client.authenticate(credentials);
+        groups = await this.client.aggregateRecords(
+          credentials,
+          uid,
+          input.model,
+          domain,
+          input.fields,
+          input.groupBy,
+          limit,
+        );
+      }
+      return { model: input.model, groupCount: groups.length, groups };
     },
   };
 
@@ -308,13 +413,22 @@ export class OdooOnlineTools {
     name: 'odoo_create_records',
     description: 'Create records (e.g. sample products or customers) on the live Odoo instance',
     permission: 'database_record_write',
-    modes: ['odoo_online'],
+    modes: ['odoo_online', 'on_premise'],
     leavesPlatform: true,
     simulated: false,
     parameters: ODOO_CREATE_RECORDS_SCHEMA,
     availableToModel: true,
     validate: validateCreateRecords,
     execute: async (input, context) => {
+      if (context.executionMode === 'on_premise') {
+        const technicalName = await this.resolveTechnicalName(context);
+        const result = (await this.onPremiseRecords.run(technicalName, {
+          operation: 'create',
+          model: input.model,
+          records: input.records,
+        })) as { created: number; ids: number[] };
+        return { model: input.model, created: result.created, ids: result.ids };
+      }
       const credentials = await this.resolveCredentials(context);
       const uid = await this.client.authenticate(credentials);
       const ids = await this.client.createRecords(credentials, uid, input.model, input.records);
@@ -330,13 +444,23 @@ export class OdooOnlineTools {
     name: 'odoo_update_records',
     description: 'Update field values on existing records of the live Odoo instance',
     permission: 'database_record_write',
-    modes: ['odoo_online'],
+    modes: ['odoo_online', 'on_premise'],
     leavesPlatform: true,
     simulated: false,
     parameters: ODOO_UPDATE_RECORDS_SCHEMA,
     availableToModel: true,
     validate: validateUpdateRecords,
     execute: async (input, context) => {
+      if (context.executionMode === 'on_premise') {
+        const technicalName = await this.resolveTechnicalName(context);
+        const result = (await this.onPremiseRecords.run(technicalName, {
+          operation: 'write',
+          model: input.model,
+          ids: input.ids,
+          values: input.values,
+        })) as { updated: number };
+        return { model: input.model, updated: result.updated, ids: input.ids };
+      }
       const credentials = await this.resolveCredentials(context);
       const uid = await this.client.authenticate(credentials);
       const ok = await this.client.updateRecords(

@@ -1,7 +1,7 @@
 # ADR-075: An on-premise project's database is reachable — from the brief and from a prompt
 
-- Status: Proposed
-- Date: 19 October 2026
+- Status: Accepted
+- Date: 19 October 2026 (Phase 1 implemented 27 October 2026)
 - Milestone: Phase 5 (connected-server estate)
 
 Builds on ADR-026 (on-premise deployment), ADR-028 (execution modes),
@@ -278,6 +278,32 @@ prompt is ever interpolated into a shell command or into Python source.
    attachment upload — both deliberately refused here.
 3. **Phase 3.** Sample-data recipes (a named bundle such as "sparepart shop
    starter set") so the brief path is not inventing every record from prose.
+
+## Implementation note (27 October 2026)
+
+Phase 1 landed with two narrower choices than this ADR originally scoped,
+both worth a reader's attention before treating the section above as the
+built shape:
+
+- **No `$ref` resolution in the chat-facing driver.** `project-records-driver.py`
+  refuses a `many2one` field unless the value is already a bare, existing
+  record id. The ref/natural-key resolution §3 describes for the *brief*
+  path's applier was not ported into the record tools' driver: a chat or
+  change-task write that needs to set a relation must look the target id up
+  first (with `odoo_search_records`) and pass it as an integer. This keeps
+  the chat-facing driver's validated surface narrower than the brief
+  applier's, deliberately — extending it to resolve refs is tracked as
+  follow-up, not done here.
+- **`odoo_aggregate_records` (ADR-086) shipped alongside this**, on both
+  executors, rather than as a separate follow-up: `read_group` was added to
+  `RECORD_METHODS` for Odoo Online and to the on-premise driver's operation
+  set at the same time, since both needed the identical validation
+  (`validateAggregateRecords`, mirrored in the driver's own checks).
+
+Everything else in this document — the deny-list, the four-plus-one
+operations (search, count, create, write, plus `read_group`), the 50/2000
+caps, the approval posture, the shared `odoo_record_policy.py` pinned to the
+TypeScript array by a unit test — was built as designed.
 
 ## Verification
 
