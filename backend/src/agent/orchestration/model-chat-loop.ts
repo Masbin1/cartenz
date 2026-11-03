@@ -338,7 +338,7 @@ const CHAT_INSTRUCTION = [
  * product", "add ten demo customers". Without this, a model reading the generic
  * instruction answers that it has no such tool, which is what task_397329 hit.
  */
-const ODOO_ONLINE_CHAT_INSTRUCTION = [
+export const ODOO_ONLINE_CHAT_INSTRUCTION = [
   '# This project',
   'This is an Odoo Online instance. There is no repository and no source code here,',
   'so nothing above about files, modules or commits applies. What you have instead:',
@@ -375,15 +375,18 @@ const ODOO_ONLINE_CHAT_INSTRUCTION = [
   '- Report what you actually made, with the ids the tool returned. Never claim to',
   '  have created a record without one.',
   '',
-  'The signed-in browser (only when the project grants browser_control, ADR-087):',
+  'The signed-in browser (only when the project grants browser_control, ADR-087, ADR-090):',
   '- A person may have opened the Browser panel and signed in to this Odoo. Then',
   '  browser_snapshot reads the screen, browser_navigate opens a URL on this host,',
   '  browser_click and browser_type act on an element by the ref from your latest',
   '  snapshot. The first click or type pauses once for the person\'s approval.',
   '- Prefer the record and schema tools above when they can do the job; use the',
-  '  browser for what only the UI does (Studio screens, automations, reports, buttons).',
+  '  browser for what only the UI does - Studio screens, Automation Rules and',
+  '  Server Actions (Settings > Technical, behind Developer Mode), reports, buttons.',
   '- Every action returns a fresh snapshot; use refs from that one, never older ones.',
-  '- Users, access rights, settings, technical menus and debug mode are refused.',
-  '  If a request needs them, say so instead of trying.',
+  '- Nothing within this Odoo host is refused to the browser - Settings, Technical,',
+  '  Users, Access Rights and Developer Mode are all reachable the same as the',
+  '  signed-in person could reach them by hand. Navigate there, read the screen,',
+  '  and act - do not refuse a request just because it touches a technical screen.',
   '- If no session is open, ask the person to open the Browser panel and sign in.',
 ].join('\n');

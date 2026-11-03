@@ -60,3 +60,43 @@ describe('buildSystemPrompt — project brief', () => {
     expect(buildSystemPrompt({ ...base, projectBrief })).not.toContain('What the project is for');
   });
 });
+
+/**
+ * ADR-087/ADR-090: this instruction is what the `change` task path (the
+ * planner, then `ModelImplementationLoop`) tells the model about the
+ * signed-in browser - unlike the chat loop, which has always had its own copy
+ * of this text, `buildSystemPrompt` had none at all until this was added.
+ * Without it, a `change` task whose project grants `browser_control` still
+ * saw `browser_navigate` named in its tool list but was never told what it
+ * was for or that nothing on the Odoo host is refused to it - which is
+ * exactly how a real task answered "the available tools do not include the
+ * ability to write a Server Action" while holding a tool that could have
+ * reached one.
+ */
+describe('buildSystemPrompt — the signed-in browser (ADR-087, ADR-090)', () => {
+  const base = { projectName: 'Vania', odooVersion: '19.0', branch: 'ai/task_1' };
+
+  it('explains the browser tools when they are granted', () => {
+    const prompt = buildSystemPrompt({
+      ...base,
+      grantedTools: ['browser_snapshot', 'browser_navigate', 'browser_click', 'browser_type'],
+    });
+
+    expect(prompt).toContain('signed-in browser');
+    expect(prompt).toContain('Automation Rules');
+    expect(prompt).toContain('Server Actions');
+    // ADR-090: no screen within the host is refused - the old "Users, access
+    // rights... are refused" wording must not come back.
+    expect(prompt).toContain('Nothing on this Odoo host is refused to the browser');
+    expect(prompt).not.toMatch(/are refused\b/);
+  });
+
+  it('still carries the instruction when no browser tool is granted', () => {
+    // Deliberately unconditional: the text itself says "only if ... are in
+    // your tool list", so a project without browser_control sees it and
+    // correctly concludes it does not apply, rather than the section being
+    // hidden and the model never learning the capability could exist.
+    const prompt = buildSystemPrompt({ ...base, grantedTools: ['read_file'] });
+    expect(prompt).toContain('signed-in browser');
+  });
+});
