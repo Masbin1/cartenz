@@ -5,6 +5,7 @@ import type { AuditService } from '../../core/audit/audit.service';
 import type { TaskRepository } from '../../agent/task-repository';
 import type { ToolRegistry } from '../../agent/tools/tool-registry';
 import type { ModelCallRecorder } from '../../agent/model/model-call-recorder.service';
+import type { TaskKindClassifier } from '../../agent/orchestration/task-kind-classifier';
 import type { ProjectEnvironmentsService } from '../projects/project-environments.service';
 import type { AgentOrchestrator } from '../../agent/orchestration/agent-orchestrator.interface';
 
@@ -45,6 +46,7 @@ const makeService = (database: Record<string, unknown>) =>
     {} as unknown as TaskRepository,
     {} as unknown as ToolRegistry,
     {} as unknown as ModelCallRecorder,
+    {} as unknown as TaskKindClassifier,
     {} as unknown as ProjectEnvironmentsService,
     {} as unknown as AgentOrchestrator,
   );

@@ -20,6 +20,7 @@ import { ProjectMemoryService } from './analysis/project-memory.service';
 import { ModelAgentPlanner } from './orchestration/model-agent-planner';
 import { ModelImplementationLoop } from './orchestration/model-implementation-loop';
 import { ChatLoop } from './orchestration/model-chat-loop';
+import { TaskKindClassifier } from './orchestration/task-kind-classifier';
 import { ModelCallRecorder } from './model/model-call-recorder.service';
 import { ModelModule } from './model/model.module';
 import { AgentWorkflow } from './orchestration/agent-workflow';
@@ -81,6 +82,7 @@ import { ProjectsModule } from '../modules/projects/projects.module';
     ModelAgentPlanner,
     ModelImplementationLoop,
     ChatLoop,
+    TaskKindClassifier,
     ModelCallRecorder,
     AgentWorkflow,
     ExecutorRegistry,
@@ -112,6 +114,7 @@ import { ProjectsModule } from '../modules/projects/projects.module';
     ProjectMemoryService,
     OdooProjectAnalyser,
     ModelCallRecorder,
+    TaskKindClassifier,
     ExecutorRegistry,
     AGENT_ORCHESTRATOR,
   ],

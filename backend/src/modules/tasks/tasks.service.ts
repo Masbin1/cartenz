@@ -24,6 +24,7 @@ import { AUDIT_EVENTS } from '../../core/audit/audit-events';
 import { TaskRepository } from '../../agent/task-repository';
 import { ToolRegistry } from '../../agent/tools/tool-registry';
 import { ModelCallRecorder } from '../../agent/model/model-call-recorder.service';
+import { TaskKindClassifier } from '../../agent/orchestration/task-kind-classifier';
 import { ProjectEnvironmentsService } from '../projects/project-environments.service';
 import {
   AGENT_ORCHESTRATOR,
@@ -56,6 +57,7 @@ export class TasksService {
     private readonly taskRepository: TaskRepository,
     private readonly registry: ToolRegistry,
     private readonly modelCalls: ModelCallRecorder,
+    private readonly taskKindClassifier: TaskKindClassifier,
     private readonly environments: ProjectEnvironmentsService,
     @Inject(AGENT_ORCHESTRATOR) private readonly orchestrator: AgentOrchestrator,
   ) {}
@@ -95,7 +97,7 @@ export class TasksService {
     // development run; `chat` answers a question. An approved write in a chat is
     // committed and pushed by the platform afterwards (ADR-053), but the chat
     // never does either by its own choice.
-    const kind: AgentTaskKind = dto.kind ?? 'change';
+    let kind: AgentTaskKind = dto.kind ?? 'change';
 
     const context = await this.authz.requireProjectAccess(user, projectId);
 
@@ -110,6 +112,20 @@ export class TasksService {
       .limit(1);
 
     if (!project) throw new NotFoundException('Project not found');
+
+    /**
+     * ADR-088: on Odoo Online only, a request that did not name a kind is
+     * classified from its own text instead of defaulting to `change`. The two
+     * kinds there differ only in when approval is asked (once, up front, for
+     * `change`; inline, the moment a write tool is reached, for `chat`) -
+     * neither skips the validation the other runs, because Odoo Online has
+     * none to skip. That is what makes guessing safe here and nowhere else:
+     * `tasks.service.ts` leaves the manual toggle in place for odoo.sh and
+     * on-premise, where `chat` skips the test run `change` does not.
+     */
+    if (dto.kind === undefined && project.projectType === 'odoo_online') {
+      kind = await this.taskKindClassifier.classify(dto.prompt, projectId);
+    }
 
     /**
      * A repository-backed project with no repository cannot be worked on at all.

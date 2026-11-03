@@ -83,6 +83,7 @@ ADR-077 to ADR-079 were never used; the gap is deliberate.
 | [ADR-070](ADR-070-odoo-online-assisted-creation.md) | Creating an Odoo Online database is assisted, not automated | Accepted |
 | [ADR-084](ADR-084-odoo-online-read-paging.md) | Odoo Online record reads are capped by page, not by table size | Accepted |
 | [ADR-086](ADR-086-odoo-aggregate-records.md) | Native aggregation (read_group) for Odoo Online and on-premise | Accepted |
+| [ADR-088](ADR-088-odoo-online-task-kind-autodetect.md) | Task-kind auto-detection on Odoo Online | Accepted |
 
 ## Odoo.sh
 

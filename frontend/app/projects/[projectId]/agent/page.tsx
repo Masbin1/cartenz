@@ -324,7 +324,10 @@ export default function AgentWorkspacePage() {
         // server opens one — which is the only way a new session is created.
         sessionId: sessionId || undefined,
         environmentId: environmentId || undefined,
-        kind,
+        // ADR-088: Odoo Online omits kind so the server classifies the prompt
+        // itself; the toggle above is hidden there for the same reason. Every
+        // other project type keeps sending the person's own choice.
+        kind: project?.projectType === 'odoo_online' ? undefined : kind,
         documentIds: attachedIds.size > 0 ? [...attachedIds] : undefined,
       });
       setSessionId(created.sessionId);
@@ -921,26 +924,28 @@ export default function AgentWorkspacePage() {
                   ) : null}
 
                   <div className="flex flex-wrap items-center gap-2 border-t border-surface-border px-3 py-2.5 sm:px-4">
-                    <div
-                      role="group"
-                      aria-label="Task mode"
-                      className="flex rounded-lg bg-surface-overlay p-0.5"
-                    >
-                      <ModeButton
-                        active={kind === 'change'}
-                        disabled={submitting}
-                        onClick={() => setKind('change')}
+                    {project.projectType === 'odoo_online' ? null : (
+                      <div
+                        role="group"
+                        aria-label="Task mode"
+                        className="flex rounded-lg bg-surface-overlay p-0.5"
                       >
-                        Change
-                      </ModeButton>
-                      <ModeButton
-                        active={kind === 'chat'}
-                        disabled={submitting}
-                        onClick={() => setKind('chat')}
-                      >
-                        Chat
-                      </ModeButton>
-                    </div>
+                        <ModeButton
+                          active={kind === 'change'}
+                          disabled={submitting}
+                          onClick={() => setKind('change')}
+                        >
+                          Change
+                        </ModeButton>
+                        <ModeButton
+                          active={kind === 'chat'}
+                          disabled={submitting}
+                          onClick={() => setKind('chat')}
+                        >
+                          Chat
+                        </ModeButton>
+                      </div>
+                    )}
 
                     <button
                       type="button"
