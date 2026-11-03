@@ -631,7 +631,11 @@ export default function AgentWorkspacePage() {
               aria-labelledby="conversation-title"
               className="space-y-6 lg:flex lg:h-[calc(100dvh-6.5rem)] lg:min-h-[30rem] lg:flex-col lg:space-y-3"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              {/*
+                With the browser open the column is narrow: buttons drop to icons
+                (labels stay for screen readers) so the title keeps the room.
+              */}
+              <div className="flex items-center justify-between gap-3">
                 <button
                   type="button"
                   onClick={() => setConversationsOpen((open) => !open)}
@@ -640,7 +644,9 @@ export default function AgentWorkspacePage() {
                   title="Your earlier conversations with the agent on this project"
                 >
                   <PanelLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-                  {conversationsOpen ? 'Hide conversations' : 'Show conversations'}
+                  <span className={browserOpen ? 'lg:sr-only' : ''}>
+                    {conversationsOpen ? 'Hide conversations' : 'Show conversations'}
+                  </span>
                   <span className="tabular-nums text-content-subtle">{sessions.length}</span>
                 </button>
                 <div className="min-w-0 flex-1 lg:text-center">
@@ -665,7 +671,7 @@ export default function AgentWorkspacePage() {
                   }
                 >
                   <Plus className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-                  <span className="hidden sm:inline">
+                  <span className={`hidden sm:inline ${browserOpen ? 'lg:sr-only' : ''}`}>
                     {sessionId ? 'New conversation' : 'New conversation (next request)'}
                   </span>
                   <span className="sm:hidden">New</span>
@@ -674,7 +680,7 @@ export default function AgentWorkspacePage() {
                   type="button"
                   onClick={() => setDetailsOpen((open) => !open)}
                   aria-pressed={detailsOpen}
-                  className={`btn-secondary btn-sm hidden shrink-0 lg:inline-flex ${detailsOpen ? 'bg-surface-overlay' : ''}`}
+                  className={`btn-secondary btn-sm hidden shrink-0 ${browserOpen ? '' : 'lg:inline-flex'} ${detailsOpen ? 'bg-surface-overlay' : ''}`}
                   title="The selected request's status, changed files, validation and agent"
                 >
                   {detailsOpen ? 'Hide request details' : 'Show request details'}
@@ -688,7 +694,7 @@ export default function AgentWorkspacePage() {
                   title="Open a browser beside the conversation, e.g. this project's Odoo"
                 >
                   <Globe className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-                  {browserOpen ? 'Hide browser' : 'Browser'}
+                  <span className={browserOpen ? 'lg:sr-only' : ''}>{browserOpen ? 'Hide browser' : 'Browser'}</span>
                 </button>
               </div>
 
