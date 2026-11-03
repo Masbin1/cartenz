@@ -1,8 +1,11 @@
 # ADR-087: Browser-driven (RPA) control of a live Odoo instance
 
-- Status: Accepted — Option B, Odoo Online only (decided 2 November 2026; see "Decision")
+- Status: Accepted — Option B, then superseded by ADR-090 (3 November 2026; see "Decision")
 - Date: 27 October 2026
 - Milestone: Phase 5 (connected-server estate) / Phase 6 candidate
+- Superseded by: ADR-090, for open question 4 (the URL deny-list below).
+  Every other answer on this page (permission, approval shape, host, credential,
+  alongside-not-instead, login-and-stay) is unchanged by ADR-090.
 - Supersedes, for the scope defined here: the data-blind and record-surface
   posture of ADR-028, ADR-064, ADR-075, ADR-086 wherever this ADR's tool is
   used instead of theirs
@@ -329,6 +332,13 @@ Answers to the open questions:
    `res.groups`, `res.config.settings`, any `ir.*` model, `base.module`,
    `/odoo/settings`, and debug mode. Every request the page makes is held to the
    project's own host and Odoo's sign-in hosts; anything else is aborted.
+   **Superseded by ADR-090 (3 November 2026): this screen-level deny-list was
+   removed.** Automation Rules - which this list blocked as a side effect of
+   blocking `/odoo/settings`, since Odoo collapses the Automation Rules URL to
+   that same bare path - is what surfaced the problem; the operator's answer,
+   given the choice again, was to remove the deny-list entirely rather than
+   carve out an exception. Only the host-boundary check from the next line
+   remains.
 5. **Alongside, not instead of**, the RPC tools. The agent is instructed to
    prefer the record and schema tools and use the browser only for what only
    the UI does.

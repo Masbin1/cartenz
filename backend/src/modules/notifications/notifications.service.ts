@@ -38,7 +38,7 @@ export interface NotifiableTaskEvent {
 const GONE_STATUS_CODES = [404, 410];
 
 /**
- * Web push notifications (ADR-065).
+ * Web push notifications (ADR-065, ADR-089).
  *
  * The dispatcher is called after a task event has been persisted and published
  * to Redis, and it must never affect that path: every failure here is caught,
@@ -46,10 +46,10 @@ const GONE_STATUS_CODES = [404, 410];
  * experience; a task failing because a push service was slow is a broken
  * platform.
  *
- * Recipients are decided by event kind. An approval is addressed to admins
- * because only an admin may grant one (ADR-029) - notifying a regular user
- * would be notifying somebody who cannot act on it. A task's outcome goes to
- * whoever asked for the task.
+ * Every event - an approval as much as an outcome - goes to the person who
+ * created the task, and only them (ADR-089). An admin who did not create the
+ * task still sees a pending approval on the Approvals page; they are not
+ * pushed one for a task they did not ask about.
  */
 @Injectable()
 export class NotificationsService {
@@ -245,7 +245,7 @@ export class NotificationsService {
 
       if (!task) return;
 
-      const recipients = await this.recipientsFor(type, task.createdByUserId);
+      const recipients = await this.recipientsFor(task.createdByUserId);
       if (recipients.length === 0) return;
 
       await Promise.all(
@@ -279,20 +279,15 @@ export class NotificationsService {
   }
 
   /**
-   * Who is told about an event. Approvals go to active admins - the only rank
-   * that may grant one - and outcomes to the person who created the task.
+   * Who is told about an event.
+   *
+   * Both an approval and an outcome go to the person who created the task -
+   * they are the one waiting on it, and a push to someone else is a push to
+   * somebody who cannot act on it and did not ask. An admin who is not the
+   * creator finds a pending approval on the Approvals page rather than
+   * through a push; only the creator is pinged.
    */
-  private async recipientsFor(
-    event: NotifyingEvent,
-    createdByUserId: string | null,
-  ): Promise<{ id: string }[]> {
-    if (event === 'approval_required') {
-      return this.database.db
-        .select({ id: users.id })
-        .from(users)
-        .where(and(eq(users.isAdmin, true), eq(users.isActive, true)));
-    }
-
+  private async recipientsFor(createdByUserId: string | null): Promise<{ id: string }[]> {
     if (!createdByUserId) return [];
     return this.database.db
       .select({ id: users.id })

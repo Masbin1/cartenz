@@ -1,42 +1,19 @@
 /**
- * What the in-portal browser may load and what the agent may do in it
- * (ADR-087, Option B).
+ * What the in-portal browser may load (ADR-087, Option C: full access).
  *
- * Pure functions, so the rules are tested without a Chromium. They are not the
- * record surface's guarantees - ADR-087 is explicit that a driven browser cannot
- * have those - they are the narrower ones that *can* be enforced:
- *
- * - the session stays on the project's own Odoo Online host (and odoo.com's
- *   login pages), so the browser is not a general web proxy on this host;
- * - the screens ADR-087 open question 4 named (users, access, technical
- *   settings, database manager) are refused by URL, not by prompt;
- * - the agent reaches elements only through the snapshot's refs.
+ * Pure functions, so the rules are tested without a Chromium. ADR-087
+ * Option B's URL deny-list (users, access, technical settings, database
+ * manager, debug mode) was removed by explicit operator decision (ADR-090):
+ * the agent is driven in the person's own logged-in session and may reach
+ * anything that session can reach, the same as the person watching it could
+ * by hand. The one guarantee kept is the host boundary below - the session
+ * stays on the project's own Odoo Online host (and odoo.com's login pages),
+ * so a driven browser is not a general web proxy onto the rest of the
+ * internet from this server.
  */
 
 /** Hosts a session may load besides the project's own: Odoo's own sign-in. */
 const LOGIN_HOSTS = ['www.odoo.com', 'accounts.odoo.com'];
-
-/**
- * URL fragments of screens the agent is never driven onto, even in an approved
- * session. Matched against path + query + hash, lower-cased. Odoo 17+ uses
- * `/odoo/action-...` paths and 16- uses `#model=...&action=...`; both forms are
- * covered by matching the model or action name wherever it appears.
- *
- * ponytail: a substring deny-list. A determined page can reach these screens by
- * a path this list does not name (a renamed menu, a custom action); that is the
- * residual risk ADR-087 accepted for Option B, which is why a person watches.
- */
-const AGENT_BLOCKED_FRAGMENTS = [
-  '/web/database',
-  'res.users',
-  'res.groups',
-  'res.config.settings',
-  'ir.',
-  'base.module',
-  'action-base.',
-  '/odoo/settings',
-  'debug=',
-];
 
 export function hostOf(url: string): string | null {
   try {
@@ -55,17 +32,20 @@ export function isAllowedUrl(url: string, projectHost: string): boolean {
   return host === projectHost || LOGIN_HOSTS.includes(host) || host.endsWith('.odoocdn.com');
 }
 
-/** Why the agent may not be on this URL, or null when it may. */
+/**
+ * Why the agent may not be on this URL, or null when it may.
+ *
+ * ADR-090: narrowed to the host boundary only. There is no longer a set of
+ * screens the agent is refused within its own host - Settings, Technical,
+ * Users, the database manager and debug mode are all reachable, by operator
+ * decision, the same as they are to the person who is signed in and
+ * watching.
+ */
 export function agentUrlRefusal(url: string, projectHost: string): string | null {
   if (hostOf(url) !== projectHost) {
     return `the agent works only on ${projectHost}`;
   }
-  const parsed = new URL(url);
-  const target = decodeURIComponent(`${parsed.pathname}${parsed.search}${parsed.hash}`).toLowerCase();
-  const blocked = AGENT_BLOCKED_FRAGMENTS.find((fragment) => target.includes(fragment));
-  return blocked
-    ? `"${blocked}" screens (users, access, settings, technical, database manager) are never driven by the agent`
-    : null;
+  return null;
 }
 
 /** A snapshot element reference, as `ariaSnapshot({ mode: 'ai' })` prints them. */

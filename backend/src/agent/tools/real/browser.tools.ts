@@ -12,7 +12,7 @@ import type { AnyToolDefinition, ToolDefinition, ToolExecutionContext } from '..
 
 /**
  * The agent's hands in a person's logged-in Odoo Online session (ADR-087,
- * Option B).
+ * ADR-090: Option C, full access).
  *
  * The session is opened and signed in by a person in the agent workspace (the
  * API's BrowserSessionService); these tools attach to that same Chromium over
@@ -21,11 +21,14 @@ import type { AnyToolDefinition, ToolDefinition, ToolExecutionContext } from '..
  *
  * What still holds inside a session: `browser_control` is a separate,
  * default-off permission; every tool is `odoo_online`-only; the agent reaches an
- * element only by a ref from its own latest snapshot; and the users, access,
- * settings and technical screens are refused by URL before and after every
- * action (browser-policy.ts). What does not hold, by construction, is the record
- * surface's deny-list, caps and per-write approval: that is the trade ADR-087
- * records, and why a session is approved once per task and watched live.
+ * element only by a ref from its own latest snapshot; and the session is held
+ * to the project's own Odoo Online host (browser-policy.ts) - not to a subset
+ * of screens within it. ADR-090 removed the Settings/Technical/Users/debug-mode
+ * URL deny-list ADR-087 Option B shipped with: the agent now reaches anything
+ * the signed-in session can reach, the same as the person watching it could by
+ * hand. What does not hold, by construction, is the record surface's
+ * deny-list, caps and per-write approval: that is the trade ADR-087 records,
+ * and why a session is approved once per task and watched live.
  */
 
 interface Attached {

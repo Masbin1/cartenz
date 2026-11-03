@@ -64,6 +64,7 @@ ADR-077 to ADR-079 were never used; the gap is deliberate.
 | [ADR-062](ADR-062-task-pulls-its-branch.md) | A task can pull the branch it works on, and "nothing new" is a success | Accepted |
 | [ADR-063](ADR-063-project-local-checkout.md) | A Connected Project Keeps One Local Clone, and Tasks Work From It | Accepted |
 | [ADR-065](ADR-065-web-push-notifications.md) | Web push notifications for approval, completion and failure | Accepted |
+| [ADR-089](ADR-089-push-notifications-creator-only.md) | Push notifications go to the task's creator only | Accepted |
 | [ADR-066](ADR-066-ai-office-read-only-board.md) | AI Office is a read-only board over tasks, not a multi-agent runtime | Accepted |
 | [ADR-072](ADR-072-email-invitations-and-password-reset.md) | Email invitations and password reset | Accepted |
 | [ADR-074](ADR-074-conversation-remembers-earlier-turns.md) | A conversation remembers its earlier turns | Accepted |
@@ -72,7 +73,8 @@ ADR-077 to ADR-079 were never used; the gap is deliberate.
 | [ADR-081](ADR-081-task-settlement-reply.md) | The reply is composed from what the task did | Accepted |
 | [ADR-082](ADR-082-read-only-plan-is-answered.md) | A plan that names no file is answered, not failed | Proposed |
 | [ADR-083](ADR-083-read-history-and-push-existing-commits.md) | The agent can read history, and a task can deliver commits it did not make | Proposed |
-| [ADR-087](ADR-087-browser-driven-rpa-control.md) | Browser-driven (RPA) control of a live Odoo instance | Proposed |
+| [ADR-087](ADR-087-browser-driven-rpa-control.md) | Browser-driven (RPA) control of a live Odoo instance | Accepted (Option B, superseded in part by ADR-090) |
+| [ADR-090](ADR-090-browser-full-access-within-host.md) | The in-portal browser reaches anything the signed-in session can | Accepted |
 
 ## Odoo Online
 

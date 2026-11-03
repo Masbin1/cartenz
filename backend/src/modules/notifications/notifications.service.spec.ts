@@ -161,7 +161,7 @@ describe('NotificationsService', () => {
     expect(sendNotification).not.toHaveBeenCalled();
   });
 
-  it('asks for admins on an approval and for the creator on an outcome', async () => {
+  it('asks for the creator on both an approval and an outcome', async () => {
     const { service, recipientsFor } = build({ recipients: [], subscriptions: {} });
 
     await service.dispatchForEvent({
@@ -177,8 +177,8 @@ describe('NotificationsService', () => {
       message: 'x',
     });
 
-    expect(recipientsFor).toHaveBeenNthCalledWith(1, 'approval_required', CREATOR);
-    expect(recipientsFor).toHaveBeenNthCalledWith(2, 'task_completed', CREATOR);
+    expect(recipientsFor).toHaveBeenNthCalledWith(1, CREATOR);
+    expect(recipientsFor).toHaveBeenNthCalledWith(2, CREATOR);
   });
 
   it('sends an approval to every subscribed browser of every recipient', async () => {
@@ -331,3 +331,89 @@ describe('eventWanted', () => {
     expect(eventWanted('task_failed', all)).toBe(true);
   });
 });
+
+/**
+ * ADR-089: a push for any event - approval included - goes only to the task's
+ * creator, never to every admin. This exercises `recipientsFor` itself
+ * (unmocked, unlike the suite above) against a users table that mixes admins
+ * and non-admins, so a regression that reaches back into `isAdmin` is caught
+ * here even though the suite above mocks `recipientsFor` away.
+ */
+describe('NotificationsService.recipientsFor (ADR-089)', () => {
+  const ADMIN_NOT_CREATOR = 'admin-not-creator';
+  const CREATOR_NOT_ADMIN = 'creator-not-admin';
+
+  const userRows: Record<string, { id: string; isAdmin: boolean; isActive: boolean }> = {
+    [ADMIN_NOT_CREATOR]: { id: ADMIN_NOT_CREATOR, isAdmin: true, isActive: true },
+    [CREATOR_NOT_ADMIN]: { id: CREATOR_NOT_ADMIN, isAdmin: false, isActive: true },
+  };
+
+  const buildService = () => {
+    const database = {
+      db: {
+        // Only ever reached through recipientsFor's own select().from(users).where(...)
+        // in this describe block, so a fixed, filtered-by-id answer is enough.
+        select: () => ({
+          from: () => ({
+            where: (condition: unknown) => {
+              // drizzle's eq()/and() build a queryChunks tree with circular
+              // references back to the table definition (JSON.stringify
+              // throws on it), so the bound value is found by a manual,
+              // cycle-guarded walk instead of serialising the whole tree.
+              const matchedId = Object.keys(userRows).find((id) => containsString(condition, id));
+              const row = matchedId ? userRows[matchedId] : undefined;
+              return Promise.resolve(row ? [{ id: row.id }] : []);
+            },
+          }),
+        }),
+      },
+    } as unknown as DatabaseService;
+
+    const resolved = {
+      push: {
+        publicKey: 'BPublicKey',
+        privateKey: 'privateKey',
+        subject: 'mailto:ops@example.com',
+        portalUrl: 'https://cartenz.example.com',
+      },
+    } as AppConfig;
+    const mailSettings = { portalUrl: async () => resolved.push.portalUrl } as unknown as MailSettingsService;
+    const service = new NotificationsService(database, resolved, mailSettings);
+    return service as unknown as {
+      recipientsFor: (createdByUserId: string | null) => Promise<{ id: string }[]>;
+    };
+  };
+
+  it('returns the creator even when they are not an admin', async () => {
+    const service = buildService();
+    const recipients = await service.recipientsFor(CREATOR_NOT_ADMIN);
+    expect(recipients).toEqual([{ id: CREATOR_NOT_ADMIN }]);
+  });
+
+  it('never returns an admin who is not the creator', async () => {
+    const service = buildService();
+    const recipients = await service.recipientsFor(CREATOR_NOT_ADMIN);
+    expect(recipients.map((r) => r.id)).not.toContain(ADMIN_NOT_CREATOR);
+  });
+
+  it('returns nothing for a task with no creator', async () => {
+    const service = buildService();
+    expect(await service.recipientsFor(null)).toEqual([]);
+  });
+});
+
+/**
+ * Finds `needle` as a string value reachable from `value`, walking plain
+ * objects and arrays with a `seen` set to stop at a cycle - drizzle's query
+ * tree links back to its table definition, which `JSON.stringify` cannot
+ * walk at all.
+ */
+function containsString(value: unknown, needle: string, seen = new Set<unknown>()): boolean {
+  if (typeof value === 'string') return value === needle;
+  if (value === null || typeof value !== 'object') return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+
+  const entries = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>);
+  return entries.some((entry) => containsString(entry, needle, seen));
+}

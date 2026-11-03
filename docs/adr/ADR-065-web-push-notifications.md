@@ -30,11 +30,11 @@ failure as well.
 Standard Web Push (RFC 8030 `web-push` + VAPID), not a third-party push
 service:
 
-- **Recipients.** `approval_required` goes to every active admin - the only
-  rank that can grant one, mirrored from `AuthorizationService`'s "admin has
-  access to every project" rule rather than re-implemented. `task_completed`
-  and `task_failed` go to the task's creator (`agentTasks.createdByUserId`).
-  Nobody else is notified: a push is not a broadcast channel.
+- **Recipients.** Every notifying event - `approval_required`,
+  `task_completed`, `task_failed` - goes to the task's creator
+  (`agentTasks.createdByUserId`) and nobody else. **Superseded by ADR-089**:
+  the original decision here routed `approval_required` to every active
+  admin instead; see that ADR for why and when it changed.
 - **Payload is minimal on purpose.** Title, one line of body text (task
   reference + project name), the task's portal URL, and which named sound to
   play. No prompt, no diff, no tool output, no Odoo record - a push transits a
@@ -104,9 +104,9 @@ service:
   Chrome, Firefox, Edge and installed-PWA Safari without a per-platform build.
 - No email or SMS fallback. If push is unsupported or denied, the portal says
   so on Account; the person still sees the task the next time they open it.
-- No per-project notification scoping. An admin gets every project's approval
-  requests, matching the existing "admin reaches every project" authorization
-  model instead of adding a second one.
+- No per-project notification scoping. Every notifying event already narrows
+  to the one person who can act on or cares about it (the creator - ADR-089);
+  there is no separate project-level audience to scope.
 - No notification history or read/unread state server-side. A push is
   transient the way `TaskEventsGateway`'s realtime stream already is; the task
   page itself remains the record of what happened.
