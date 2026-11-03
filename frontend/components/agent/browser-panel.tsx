@@ -53,6 +53,15 @@ function SessionBrowser({ projectId, onClose }: { projectId: string; onClose: ()
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
+  // The object URL behind `frame`, revoked once its replacement is set. A ref
+  // rather than a second state field: `fetchFrame` reads and replaces it
+  // outside React's render cycle, from both the poll timer and a click/key
+  // handler, and must never revoke the URL still on screen.
+  const currentFrameUrl = useRef<string | null>(null);
+  // Guards the two frame sources (the 1s poll and an input's own refetch) from
+  // overlapping: an input's refetch always wins, so a click never flashes a
+  // stale polled frame it already made obsolete.
+  const fetchInFlight = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -68,40 +77,54 @@ function SessionBrowser({ projectId, onClose }: { projectId: string; onClose: ()
     void load();
   }, [load]);
 
-  // Poll frames while a session is open. ponytail: 1 fps JPEG polling, upgrade
-  // to a CDP screencast over the WebSocket if people find it too choppy.
+  const fetchFrame = useCallback(async (): Promise<boolean> => {
+    if (fetchInFlight.current) return true;
+    fetchInFlight.current = true;
+    try {
+      const next = await fetchBrowserFrame(projectId).catch(() => null);
+      if (!next) return false;
+      const previous = currentFrameUrl.current;
+      currentFrameUrl.current = next;
+      setFrame(next);
+      if (previous) URL.revokeObjectURL(previous);
+      return true;
+    } finally {
+      fetchInFlight.current = false;
+    }
+  }, [projectId]);
+
+  // Poll frames while a session is open, as a floor - every input below also
+  // fetches its own frame the instant the server confirms it, so a click feels
+  // immediate instead of waiting out the rest of this interval. ponytail: 1 fps
+  // JPEG polling, upgrade to a CDP screencast over the WebSocket if people
+  // still find it choppy.
   useEffect(() => {
     if (!state?.open) return;
     let alive = true;
-    let current: string | null = null;
     const tick = async () => {
-      const next = await fetchBrowserFrame(projectId).catch(() => null);
-      if (!alive) {
-        if (next) URL.revokeObjectURL(next);
-        return;
-      }
-      if (next) {
-        if (current) URL.revokeObjectURL(current);
-        current = next;
-        setFrame(next);
-      } else {
-        void load();
-      }
+      const ok = await fetchFrame();
+      if (alive && !ok) void load();
     };
     void tick();
     const timer = window.setInterval(() => void tick(), FRAME_MS);
     return () => {
       alive = false;
       window.clearInterval(timer);
-      if (current) URL.revokeObjectURL(current);
+      if (currentFrameUrl.current) {
+        URL.revokeObjectURL(currentFrameUrl.current);
+        currentFrameUrl.current = null;
+      }
     };
-  }, [projectId, state?.open, load]);
+  }, [projectId, state?.open, load, fetchFrame]);
 
   const send = async (input: BrowserInput) => {
     try {
       const result = await api.projects.browserInput(projectId, input);
       if (input.type !== 'type' && input.type !== 'key') setDraft(result.url);
       setError(null);
+      // The page already changed server-side; show that now rather than
+      // waiting up to FRAME_MS for the next scheduled poll.
+      void fetchFrame();
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The browser did not accept that.');
       if (caught instanceof ApiError && caught.status === 404) void load();
