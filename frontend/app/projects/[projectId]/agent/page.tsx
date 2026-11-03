@@ -631,7 +631,7 @@ export default function AgentWorkspacePage() {
               aria-labelledby="conversation-title"
               className="space-y-6 lg:flex lg:h-[calc(100dvh-6.5rem)] lg:min-h-[30rem] lg:flex-col lg:space-y-3"
             >
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
                   onClick={() => setConversationsOpen((open) => !open)}
