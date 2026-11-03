@@ -131,6 +131,23 @@ function SessionBrowser({ projectId, onClose }: { projectId: string; onClose: ()
     }
   };
 
+  // A native listener, not JSX's onWheel: React registers wheel as a passive
+  // document listener for scroll performance, so a JSX handler's
+  // preventDefault() is silently ignored there. Without this, scrolling the
+  // frame also scrolled the page behind it - the chat column moved along with
+  // every scroll of the Odoo session.
+  useEffect(() => {
+    const node = imageRef.current;
+    if (!node) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      void send({ type: 'scroll', dy: Math.round(event.deltaY) });
+    };
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return () => node.removeEventListener('wheel', onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frame]);
+
   const start = async () => {
     setBusy(true);
     setError(null);
@@ -211,7 +228,6 @@ function SessionBrowser({ projectId, onClose }: { projectId: string; onClose: ()
               tabIndex={0}
               onClick={click}
               onKeyDown={key}
-              onWheel={(event) => void send({ type: 'scroll', dy: Math.round(event.deltaY) })}
               className="block w-full cursor-pointer select-none outline-none focus-visible:ring-2 focus-visible:ring-accent"
               draggable={false}
             />
@@ -340,13 +356,13 @@ function Toolbar({
 }) {
   return (
     <div className="flex items-center gap-1 border-b border-surface-border p-2">
-      <button type="button" className="icon-btn h-8 w-8" onClick={onBack} disabled={disabled} aria-label="Back">
+      <button type="button" className="icon-btn h-8 w-8 shrink-0" onClick={onBack} disabled={disabled} aria-label="Back">
         <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
       </button>
-      <button type="button" className="icon-btn h-8 w-8" onClick={onForward} disabled={disabled} aria-label="Forward">
+      <button type="button" className="icon-btn h-8 w-8 shrink-0" onClick={onForward} disabled={disabled} aria-label="Forward">
         <ArrowRight className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
       </button>
-      <button type="button" className="icon-btn h-8 w-8" onClick={onReload} disabled={disabled} aria-label="Reload">
+      <button type="button" className="icon-btn h-8 w-8 shrink-0" onClick={onReload} disabled={disabled} aria-label="Reload">
         <RotateCw className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
       </button>
       <form onSubmit={onSubmit} className="min-w-0 flex-1">
@@ -363,10 +379,15 @@ function Toolbar({
           className="field-input h-8 w-full text-meta"
         />
       </form>
-      {children}
-      <button type="button" className="icon-btn h-8 w-8" onClick={onClose} aria-label="Hide browser">
-        <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-      </button>
+      {/* shrink-0 so these never lose space to the URL field, which only
+          shrinks: without it, a narrow panel pushed "Hide browser" partly
+          under the field instead of beside it. */}
+      <div className="flex shrink-0 items-center gap-1">
+        {children}
+        <button type="button" className="icon-btn h-8 w-8" onClick={onClose} aria-label="Hide browser">
+          <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        </button>
+      </div>
     </div>
   );
 }
