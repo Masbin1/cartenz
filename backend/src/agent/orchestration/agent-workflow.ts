@@ -30,7 +30,7 @@ import type { ToolExecutionContext, AnyToolDefinition } from '../tools/tool.inte
 import type { ExecutionMode } from '../executors/execution-mode';
 import type { CodeSearchMatch } from '../analysis/code-search';
 import { rankCandidates, type ModelRelevance } from '../analysis/odoo-model-index';
-import { inferOdooTarget } from './odoo-target';
+import { inferOdooTarget, resolveOdooTarget } from './odoo-target';
 import type { OdooFieldSummary } from './model-agent-planner';
 import { OdooValidationRunner } from '../validation/odoo-validation-runner';
 import { changedModules } from '../validation/changed-modules';
@@ -128,6 +128,46 @@ export class AgentWorkflow {
       );
       return [];
     }
+  }
+
+  /**
+   * Prompt and answer text of this conversation's earlier turns, oldest
+   * first - not formatted for the model like `conversationContext`, just the
+   * raw text `resolveOdooTarget` scans for a custom model name mentioned
+   * earlier in the same conversation (ADR-091).
+   *
+   * Same failure rule as `conversationContext`: a read error degrades to "no
+   * history", which only costs `resolveOdooTarget` its one extra source and
+   * falls back to `inferOdooTarget`'s existing behaviour - it never fails the
+   * task over context that is a convenience, not a precondition.
+   */
+  private async conversationTurnTexts(snapshot: TaskExecutionSnapshot): Promise<string[]> {
+    try {
+      const turns = await this.tasks.loadConversationTurns(
+        snapshot.taskId,
+        snapshot.sessionId,
+        DEFAULT_CONVERSATION_BUDGET.maxTurns,
+      );
+      return turns.flatMap((turn) => [turn.prompt, turn.answer ?? ''].filter(Boolean));
+    } catch (error) {
+      this.logger.warn(
+        `Conversation history for ${snapshot.reference} could not be read for model-name ` +
+          `resolution; falling back to the current prompt: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * The model an Odoo Online task is about, honouring a custom model named
+   * earlier in the same conversation (ADR-091) ahead of
+   * `inferOdooTarget`'s standard-model table.
+   */
+  private async resolveTarget(snapshot: TaskExecutionSnapshot) {
+    const history = await this.conversationTurnTexts(snapshot);
+    return resolveOdooTarget(snapshot.prompt, history);
   }
 
   /**
@@ -492,7 +532,7 @@ export class AgentWorkflow {
    */
   private async analyzeOdooOnline(snapshot: TaskExecutionSnapshot): Promise<boolean> {
     const workspace = await this.acquireWorkspace(snapshot);
-    const target = inferOdooTarget(snapshot.prompt).model;
+    const target = (await this.resolveTarget(snapshot)).model;
 
     await this.narrate(
       snapshot,
@@ -533,7 +573,7 @@ export class AgentWorkflow {
     await this.narrate(snapshot, 'Creating implementation plan...');
 
     const workspace = await this.acquireWorkspace(snapshot);
-    const target = inferOdooTarget(snapshot.prompt).model;
+    const target = (await this.resolveTarget(snapshot)).model;
 
     // The schema the plan must be true to, read from the instance rather than
     // assumed: a plan naming a field that does not exist cannot be carried out.

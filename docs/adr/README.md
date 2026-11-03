@@ -75,6 +75,7 @@ ADR-077 to ADR-079 were never used; the gap is deliberate.
 | [ADR-083](ADR-083-read-history-and-push-existing-commits.md) | The agent can read history, and a task can deliver commits it did not make | Proposed |
 | [ADR-087](ADR-087-browser-driven-rpa-control.md) | Browser-driven (RPA) control of a live Odoo instance | Accepted (Option B, superseded in part by ADR-090) |
 | [ADR-090](ADR-090-browser-full-access-within-host.md) | The in-portal browser reaches anything the signed-in session can | Accepted |
+| [ADR-091](ADR-091-odoo-online-target-resolution-from-history.md) | Odoo Online tasks resolve the target model from conversation history | Accepted |
 
 ## Odoo Online
 
