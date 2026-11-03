@@ -961,7 +961,14 @@ export default function AgentWorkspacePage() {
                       ) : null}
                     </button>
 
-                    {environments.length > 0 ? (
+                    {/* ADR-021/038: Odoo Online always carries exactly one
+                        placeholder environment with nothing real to pick -
+                        there is no repository, so no branch a choice could
+                        route to (see tasks.service.ts/projects.service.ts).
+                        Hidden there for the same reason the Chat/Change
+                        toggle is (ADR-088): a control with one meaningless
+                        option is not a choice, it is noise. */}
+                    {environments.length > 0 && project.projectType !== 'odoo_online' ? (
                       <div className="flex min-w-0 items-center gap-2">
                         <label htmlFor="environment" className="sr-only text-meta text-content-subtle sm:not-sr-only">
                           Target
