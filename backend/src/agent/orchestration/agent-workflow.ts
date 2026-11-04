@@ -10,6 +10,7 @@ import { ModelImplementationLoop, type LoopToolResult } from './model-implementa
 import { ChatLoop } from './model-chat-loop';
 import { buildConversationContext, DEFAULT_CONVERSATION_BUDGET } from './conversation-context';
 import { buildProjectHistory, DEFAULT_PROJECT_HISTORY_BUDGET } from './project-history';
+import { buildPriorProgress, DEFAULT_PRIOR_PROGRESS_BUDGET } from './prior-progress';
 import { ModelCallRecorder } from '../model/model-call-recorder.service';
 import { ModelProviderError, type PromptPart } from '../model/model-provider.interface';
 import { AiBoundaryRefusalError } from '../../core/ai-boundary/boundary-types';
@@ -168,6 +169,33 @@ export class AgentWorkflow {
   private async resolveTarget(snapshot: TaskExecutionSnapshot) {
     const history = await this.conversationTurnTexts(snapshot);
     return resolveOdooTarget(snapshot.prompt, history);
+  }
+
+  /**
+   * This task's own successful tool calls so far, rendered as one prompt part
+   * (ADR-092). Empty for a task's first pass through implementation - it only
+   * has something to say the second (or later) time implementation runs,
+   * which is exactly a task resuming after an approval suspended it.
+   *
+   * Same failure rule as the other context builders: a read error degrades
+   * to "no prior progress" rather than failing the task - the model simply
+   * reasons as if this were its first attempt, the behaviour that existed
+   * before ADR-092 for every task, not a new failure mode.
+   */
+  private async priorProgress(snapshot: TaskExecutionSnapshot): Promise<PromptPart[]> {
+    try {
+      const actions = await this.tasks.loadPriorActions(
+        snapshot.taskId,
+        DEFAULT_PRIOR_PROGRESS_BUDGET.maxActions,
+      );
+      return buildPriorProgress(actions);
+    } catch (error) {
+      this.logger.warn(
+        `Prior actions for ${snapshot.reference} could not be read; resuming as if this were ` +
+          `the first attempt: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    }
   }
 
   /**
@@ -687,6 +715,10 @@ export class AgentWorkflow {
         plan: snapshot.plan,
         agentPermissions: snapshot.agentPermissions,
         executionMode: 'odoo_online',
+        // ADR-092: a resumption after an approval suspended this task sees what
+        // it already did, instead of re-entering implementation with no memory
+        // of the steps already taken before the pause.
+        priorProgress: await this.priorProgress(snapshot),
         run: async (call) => {
           const result = await this.callTool(snapshot, workspace, call.name, call.input);
           if (result.status === 'succeeded' && CHANGING_ODOO_TOOLS.includes(call.name)) {
@@ -958,6 +990,10 @@ export class AgentWorkflow {
         agentPermissions: snapshot.agentPermissions,
         executionMode: snapshot.executionMode,
         odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
+        // ADR-092: a resumption after an approval suspended this task sees what
+        // it already did, instead of re-entering implementation with no memory
+        // of the steps already taken before the pause.
+        priorProgress: await this.priorProgress(snapshot),
         run: async (call) => {
           const outcome = await this.callTool(snapshot, workspace, call.name, call.input);
           return {
@@ -1184,6 +1220,10 @@ export class AgentWorkflow {
         conversationContext: await this.conversationContext(snapshot),
         // ADR-080: what this project has already discussed, across conversations.
         projectHistory: await this.projectHistory(snapshot),
+        // ADR-092: a resumption after an approval suspended this task sees what
+        // it already did, instead of re-entering implementation with no memory
+        // of the steps already taken before the pause.
+        priorProgress: await this.priorProgress(snapshot),
         odooSourcePrefixes: workspace.readOnlyRoots.map((root) => root.prefix),
         run: async (call) => {
           const result = await this.callTool(snapshot, workspace, call.name, call.input);

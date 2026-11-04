@@ -68,6 +68,12 @@ export interface ChatLoopInput {
    */
   readonly projectHistory?: readonly PromptPart[];
   /**
+   * This task's own successful tool calls so far (ADR-092), when this is a
+   * resumption after an approval suspended it mid-implementation. Empty on a
+   * task's first pass.
+   */
+  readonly priorProgress?: readonly PromptPart[];
+  /**
    * Documents attached to the task (ADR-030). Each is rendered as a prompt part
    * labelled with its filename and marked untrusted so the boundary redacts it.
    * An image attachment (ADR-042) additionally carries its bytes so a multimodal
@@ -253,6 +259,10 @@ export class ChatLoop {
     ];
 
     for (const part of input.conversationContext ?? []) {
+      parts.push(part);
+    }
+
+    for (const part of input.priorProgress ?? []) {
       parts.push(part);
     }
 

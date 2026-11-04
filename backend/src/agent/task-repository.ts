@@ -27,6 +27,7 @@ import { GitCredentialsService } from '../modules/settings/git-credentials.servi
 import { resolveProjectGitAccess } from './git/project-git-access';
 import type { ConversationTurn } from './orchestration/conversation-context';
 import type { ProjectHistory, ProjectHistoryTask } from './orchestration/project-history';
+import type { PriorAction } from './orchestration/prior-progress';
 import { composeTaskReport, reportFactsFromTask, type TaskSettlement } from './orchestration/task-report';
 
 /** Everything a workflow step needs about a task, read in one query. */
@@ -677,6 +678,47 @@ export class TaskRepository {
             .filter((path) => path.length > 0)
         : [],
     }));
+  }
+
+  /**
+   * Successful tool calls `taskId` itself has already made, oldest first
+   * (ADR-092).
+   *
+   * Exists for exactly one case: a task suspended mid-implementation for an
+   * approval (`waiting_approval`) re-enters `implementChat`/`implementOdooOnline`/
+   * `implement` from the top on resume - same prompt, same plan, a brand new
+   * model call with no memory of the steps already taken before the
+   * suspension. `loadConversationTurns` cannot help here: it is *other*
+   * turns in the conversation, explicitly excluding the one currently
+   * running. Without this, a model that got as far as opening the
+   * Automation Rules screen and was paused for `browser_click`'s approval
+   * came back from "approved, continuing" with no idea it had gotten that
+   * far, and treated the fields it had already created as the whole task -
+   * which is what task_131131 did.
+   *
+   * Reads successes only: a failed or denied attempt is not progress to
+   * repeat, and including it would just invite the model to re-litigate a
+   * call the platform already settled.
+   */
+  async loadPriorActions(taskId: string, maxActions: number): Promise<PriorAction[]> {
+    const rows = await this.database.db
+      .select({
+        toolName: agentActions.toolName,
+        input: agentActions.input,
+        output: agentActions.output,
+      })
+      .from(agentActions)
+      .where(and(eq(agentActions.taskId, taskId), eq(agentActions.status, 'succeeded')))
+      .orderBy(asc(agentActions.sequence));
+
+    return rows
+      .filter((row): row is typeof row & { toolName: string } => row.toolName !== null)
+      .slice(0, maxActions)
+      .map((row) => ({
+        toolName: row.toolName,
+        input: row.input ?? {},
+        output: row.output ?? {},
+      }));
   }
 
   /**

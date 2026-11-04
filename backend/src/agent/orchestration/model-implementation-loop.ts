@@ -83,6 +83,12 @@ export interface ImplementationLoopInput {
   readonly executionMode?: ExecutionMode | null;
   /** Read-only Odoo source prefixes available to this task (ADR-031). */
   readonly odooSourcePrefixes?: readonly string[];
+  /**
+   * This task's own successful tool calls so far (ADR-092), when this is a
+   * resumption after an approval suspended it mid-implementation. Empty on a
+   * task's first pass.
+   */
+  readonly priorProgress?: readonly PromptPart[];
   readonly run: LoopToolRunner;
 }
 
@@ -318,6 +324,7 @@ export class ModelImplementationLoop {
         content: JSON.stringify(plan, null, 2),
         untrusted: false,
       },
+      ...(input.priorProgress ?? []),
     ];
   }
 }
