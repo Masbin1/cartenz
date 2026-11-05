@@ -2362,17 +2362,30 @@ export type { AgentTaskStatus };
  *
  * The implementation step counts these rather than trusting the model's summary,
  * which is the same rule the repository modes apply by trusting `git diff`.
+ *
+ * `browser_click` and `browser_type` are here too (ADR-093): task_551621 drove
+ * the signed-in browser through "Save manually" on two new products and a new
+ * Sales Order - real writes to the live instance - and was still reported as
+ * "Nothing was changed on the instance", because this list had never
+ * contained a browser tool. A write made through the browser is exactly as
+ * real as one made through odoo_create_records; the tool used to make it is
+ * an implementation detail the person reviewing the result should not have
+ * to know to get an honest answer about whether anything happened.
+ * `browser_navigate` and `browser_snapshot` are deliberately excluded - they
+ * read a screen, they do not change one.
  */
-const CHANGING_ODOO_TOOLS = [
+export const CHANGING_ODOO_TOOLS = [
   'odoo_create_field',
   'odoo_create_model',
   'odoo_add_field_to_view',
   'odoo_create_records',
   'odoo_update_records',
+  'browser_click',
+  'browser_type',
 ];
 
 /** One applied change, in the terms a reviewer reads in the activity log. */
-function describeOdooChange(toolName: string, output: Record<string, unknown>): string {
+export function describeOdooChange(toolName: string, output: Record<string, unknown>): string {
   if (toolName === 'odoo_create_field') {
     return `Created field ${String(output.field)} on ${String(output.model)} (id ${String(output.fieldId)}).`;
   }
@@ -2390,6 +2403,15 @@ function describeOdooChange(toolName: string, output: Record<string, unknown>): 
   if (toolName === 'odoo_update_records') {
     const ids = Array.isArray(output.ids) ? output.ids.join(', ') : '';
     return `Updated ${String(output.updated)} ${String(output.model)} record(s) (ids ${ids}).`;
+  }
+  if (toolName === 'browser_click' || toolName === 'browser_type') {
+    // Unlike the RPC tools above, a browser action returns a screen, not an
+    // id Odoo assigned - there is no record to name here. Honest about what
+    // is and is not known: an action was taken on this screen, full stop.
+    // Whether it was a save, a line added, or a field filled is for the
+    // model's own summary to say; this exists only so the task is not
+    // reported as having changed nothing when it did.
+    return `Acted in the browser on ${String(output.title ?? output.url ?? 'a screen')}.`;
   }
   return (
     `Placed ${String(output.field)} after ${String(output.after)} on the ${String(output.model)} ` +

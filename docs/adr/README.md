@@ -77,6 +77,7 @@ ADR-077 to ADR-079 were never used; the gap is deliberate.
 | [ADR-090](ADR-090-browser-full-access-within-host.md) | The in-portal browser reaches anything the signed-in session can | Accepted |
 | [ADR-091](ADR-091-odoo-online-target-resolution-from-history.md) | Odoo Online tasks resolve the target model from conversation history | Accepted |
 | [ADR-092](ADR-092-resumed-task-prior-progress.md) | A resumed task sees its own prior progress | Accepted |
+| [ADR-093](ADR-093-browser-write-counts-as-change.md) | A browser write counts as a change to the instance | Accepted |
 
 ## Odoo Online
 
