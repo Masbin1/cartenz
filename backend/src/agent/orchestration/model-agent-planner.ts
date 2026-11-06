@@ -236,7 +236,7 @@ export class ModelAgentPlanner {
     }
 
     const result = await provider.generateStructured({
-      system: `${system}\n\n${ODOO_ONLINE_PLANNING_INSTRUCTION}`,
+      system: `${system}\n\n${buildOdooOnlinePlanningInstruction(input.grantedTools)}`,
       parts,
       schema: odooOnlinePlanSchema,
       schemaName: 'OdooOnlinePlan',
@@ -434,48 +434,120 @@ const PLANNING_INSTRUCTION = [
  * states what the tools can actually do, because a plan proposing anything else
  * is a plan a person approves and the platform then refuses.
  */
-const ODOO_ONLINE_PLANNING_INSTRUCTION = [
-  '# This request',
-  'Produce a plan for the request below. This project is an Odoo Online instance:',
-  'there is no repository, no source code and no file to edit. Customization and',
-  'data changes happen directly on the live instance.',
-  '',
-  'Always reply in Indonesian or English only, matching whichever the user used',
-  '(e.g. if the user wrote in Indonesian, write the plan in Indonesian; if English,',
-  'in English). If the request is in neither, default to Indonesian rather than',
-  'drifting into a third language.',
-  '',
-  'Earlier requests in this project, including requests made in other',
-  'conversations, are listed under "Earlier conversations in this project". Read',
-  'them before planning: a request that refers to earlier work is planned against',
-  'that record, not against the current message alone.',
-  '',
-  'What you will be able to do when the plan is approved:',
-  '- odoo_create_field: create a custom field on a model. Odoo prefixes it with "x_".',
-  '  Supports scalar types (char, text, html, integer, float, monetary, boolean, date,',
-  '  datetime), "selection" (needs a list of value/label options), and relational',
-  '  types many2one/one2many/many2many (each needs "relation", the target model;',
-  '  one2many also needs "relationField", the many2one on the target that points back).',
-  '- odoo_create_model: create a whole new custom model named "x_...". It brings its',
-  '  own display field, access rights and a default form view, the way Studio does.',
-  '- odoo_add_field_to_view: place an existing field on the form view, below another field.',
-  '- odoo_list_models and odoo_list_fields: read schema.',
-  '- odoo_search_records: read existing business records.',
-  '- odoo_create_records: create business records - sample products, demo customers,',
-  '  and the like - when the request is for data rather than schema.',
-  '- odoo_update_records: change field values on existing records, by id.',
-  '',
-  'Requirements for the plan:',
-  '- Do not name files, modules, branches or commits. None exist here.',
-  '- A schema change names the target model, the field to create and its type, and',
-  '  the existing field it should appear below. Use the field list you were given:',
-  '  the "after" field must be one that already exists. Do not propose creating a',
-  '  field that the list shows already exists.',
-  '- A data change names the target model, roughly how many records and what they',
-  '  represent (e.g. "5 sample office products with name and price"). It is not',
-  '  required to enumerate every field value; the implementer reads the schema and',
-  '  fills in reasonable values for a request like "sample data".',
-  '- The risks must be specific to this instance. Note that this changes live data',
-  '  on a running system used by real people, and that a created record is not',
-  '  removed by undoing the task.',
-].join('\n');
+/**
+ * Capability lines for the Odoo Online planning instruction, one per tool,
+ * keyed by the tool name they depend on. Each is included in the prompt only
+ * when `grantedTools` actually contains that tool name (ADR-096).
+ *
+ * Before this, the instruction listed every tool unconditionally regardless
+ * of the project's permissions. A project with `database_record_write` off
+ * still read "you will be able to use odoo_create_records" and planned a data
+ * change around it; the plan was approved on that promise, and only at
+ * implementation time - after planning, narration and a person's approval had
+ * all already happened - did the permission validator refuse the tool and the
+ * task die with "no change made" (task_26123, task_819929, task_394605). A
+ * plan must never promise a tool the project has not granted.
+ */
+const ODOO_ONLINE_CAPABILITY_LINES: readonly { readonly tool: string; readonly lines: readonly string[] }[] = [
+  {
+    tool: 'odoo_create_field',
+    lines: [
+      '- odoo_create_field: create a custom field on a model. Odoo prefixes it with "x_".',
+      '  Supports scalar types (char, text, html, integer, float, monetary, boolean, date,',
+      '  datetime), "selection" (needs a list of value/label options), and relational',
+      '  types many2one/one2many/many2many (each needs "relation", the target model;',
+      '  one2many also needs "relationField", the many2one on the target that points back).',
+    ],
+  },
+  {
+    tool: 'odoo_create_model',
+    lines: [
+      '- odoo_create_model: create a whole new custom model named "x_...". It brings its',
+      '  own display field, access rights and a default form view, the way Studio does.',
+    ],
+  },
+  {
+    tool: 'odoo_add_field_to_view',
+    lines: ['- odoo_add_field_to_view: place an existing field on the form view, below another field.'],
+  },
+  {
+    tool: 'odoo_list_fields',
+    lines: ['- odoo_list_models and odoo_list_fields: read schema.'],
+  },
+  {
+    tool: 'odoo_search_records',
+    lines: ['- odoo_search_records: read existing business records.'],
+  },
+  {
+    tool: 'odoo_create_records',
+    lines: [
+      '- odoo_create_records: create business records - sample products, demo customers,',
+      '  and the like - when the request is for data rather than schema.',
+    ],
+  },
+  {
+    tool: 'odoo_update_records',
+    lines: ['- odoo_update_records: change field values on existing records, by id.'],
+  },
+];
+
+/**
+ * Builds the Odoo Online planning instruction, naming only the tools this
+ * project's permissions actually grant (ADR-096). See
+ * `ODOO_ONLINE_CAPABILITY_LINES` for why this is not a static list.
+ *
+ * If no capability applies at all (a project with every Odoo Online
+ * permission off), the capability section says so plainly rather than
+ * silently rendering empty - a plan with no tool to use should say that in
+ * its summary, not pretend data or schema tools exist.
+ */
+function buildOdooOnlinePlanningInstruction(grantedTools: readonly string[]): string {
+  const granted = new Set(grantedTools);
+  const capabilityLines = ODOO_ONLINE_CAPABILITY_LINES.filter((entry) => granted.has(entry.tool)).flatMap(
+    (entry) => entry.lines,
+  );
+
+  return [
+    '# This request',
+    'Produce a plan for the request below. This project is an Odoo Online instance:',
+    'there is no repository, no source code and no file to edit. Customization and',
+    'data changes happen directly on the live instance.',
+    '',
+    'Always reply in Indonesian or English only, matching whichever the user used',
+    '(e.g. if the user wrote in Indonesian, write the plan in Indonesian; if English,',
+    'in English). If the request is in neither, default to Indonesian rather than',
+    'drifting into a third language.',
+    '',
+    'Earlier requests in this project, including requests made in other',
+    'conversations, are listed under "Earlier conversations in this project". Read',
+    'them before planning: a request that refers to earlier work is planned against',
+    'that record, not against the current message alone.',
+    '',
+    'What you will be able to do when the plan is approved:',
+    ...(capabilityLines.length > 0
+      ? capabilityLines
+      : [
+          '- Nothing: this project grants none of the Odoo Online schema or data tools.',
+          '  Do not plan a schema change or a data change - say in the summary that this',
+          '  project has no tool to carry out the request, and that the permission must be',
+          '  granted on the project before it can be planned.',
+        ]),
+    '',
+    'Requirements for the plan:',
+    '- Do not name files, modules, branches or commits. None exist here.',
+    '- Never plan a step that uses a tool not listed above. If the request needs one',
+    '  (e.g. it asks for sample data but odoo_create_records is not listed), say so in',
+    '  the risks and stop there - do not plan around it with a tool that is listed.',
+    '- A schema change names the target model, the field to create and its type, and',
+    '  the existing field it should appear below. Use the field list you were given:',
+    '  the "after" field must be one that already exists. Do not propose creating a',
+    '  field that the list shows already exists.',
+    '- A data change names the target model, roughly how many records and what they',
+    '  represent (e.g. "5 sample office products with name and price"). It is not',
+    '  required to enumerate every field value; the implementer reads the schema and',
+    '  fills in reasonable values for a request like "sample data".',
+    '- The risks must be specific to this instance. Note that this changes live data',
+    '  on a running system used by real people, and that a created record is not',
+    '  removed by undoing the task.',
+  ].join('\n');
+}
