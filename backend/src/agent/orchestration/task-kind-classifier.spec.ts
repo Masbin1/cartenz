@@ -3,7 +3,7 @@ import type { ModelProviderResolver } from '../model/model-provider-resolver';
 import type { ModelProvider } from '../model/model-provider.interface';
 
 /**
- * ADR-088: the Odoo Online task-kind classifier.
+ * ADR-088, extended to every project type by ADR-095: the task-kind classifier.
  *
  * The one property worth pinning is the fail-safe direction: anything that
  * goes wrong - a bad value, a thrown error - must resolve to `change`, never

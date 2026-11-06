@@ -89,6 +89,17 @@ export interface ImplementationLoopInput {
    * task's first pass.
    */
   readonly priorProgress?: readonly PromptPart[];
+  /**
+   * 'verify' (ADR-094, odoo_online only) runs this loop a second time after a
+   * successful implementation, to check the result rather than make more of
+   * it: the schema-write tools (odoo_create_field, odoo_create_model,
+   * odoo_add_field_to_view) are withheld so a verification pass cannot
+   * silently become a second implementation pass, and the instruction asks
+   * for a real check (sample data created or read back, a computed value
+   * compared to hand arithmetic) rather than a repeat of the plan. Defaults
+   * to 'implement', the existing behaviour.
+   */
+  readonly mode?: 'implement' | 'verify';
   readonly run: LoopToolRunner;
 }
 
@@ -146,7 +157,7 @@ export class ModelImplementationLoop {
 
   async run(input: ImplementationLoopInput): Promise<ImplementationLoopOutcome> {
     const provider = await this.providers.forProject(input.projectId, { localOnly: input.localProviderOnly });
-    const tools = this.offeredTools(input.agentPermissions, input.executionMode ?? null);
+    const tools = this.offeredTools(input.agentPermissions, input.executionMode ?? null, input.mode);
 
     // An empty tool list means the model is asked to change a repository with no
     // way to touch it. It answers that it cannot, changes nothing, and the run
@@ -244,9 +255,11 @@ export class ModelImplementationLoop {
 
     const result = await provider.runToolLoop({
       system: `${system}\n\n${
-        input.executionMode === 'odoo_online'
-          ? ODOO_ONLINE_INSTRUCTION
-          : IMPLEMENTATION_INSTRUCTION
+        input.mode === 'verify'
+          ? ODOO_ONLINE_VERIFY_INSTRUCTION
+          : input.executionMode === 'odoo_online'
+            ? ODOO_ONLINE_INSTRUCTION
+            : IMPLEMENTATION_INSTRUCTION
       }`,
       parts: this.buildParts(input),
       tools,
@@ -288,10 +301,17 @@ export class ModelImplementationLoop {
    * Offering a tool that would be refused is not a security problem, because the
    * validator refuses it either way. It is a quality problem: a model that spends
    * its budget being told no produces a worse result.
+   *
+   * A third filter applies only in `'verify'` mode (ADR-094): the schema-write
+   * tools are withheld so a verification pass cannot silently become a second
+   * implementation pass. Not a security boundary either - nothing stops a later
+   * `change` task from creating more schema - just a guardrail against a
+   * verification run quietly expanding its own scope.
    */
   private offeredTools(
     agentPermissions: Record<string, boolean>,
     executionMode: ExecutionMode | null,
+    mode?: 'implement' | 'verify',
   ): ModelTool[] {
     return this.registry
       .all()
@@ -302,6 +322,7 @@ export class ModelImplementationLoop {
           (executionMode !== null && tool.modes.includes(executionMode)),
       )
       .filter((tool) => agentPermissions[tool.permission] === true)
+      .filter((tool) => mode !== 'verify' || !VERIFY_EXCLUDED_TOOLS.includes(tool.name))
       .map((tool) => ({
         name: tool.name,
         description: tool.description,
@@ -423,4 +444,63 @@ const ODOO_ONLINE_INSTRUCTION = [
   '',
   'Finish with a short summary of what you changed. Do not claim to have created',
   'anything unless a tool result returned its id.',
+].join('\n');
+
+/**
+ * Tools withheld in `'verify'` mode (ADR-094) because they create schema -
+ * `odoo_create_field`, `odoo_create_model`, `odoo_add_field_to_view` - the
+ * class of action a verification pass must not perform, however plausible a
+ * reason the model might construct for doing so mid-check.
+ */
+export const VERIFY_EXCLUDED_TOOLS = ['odoo_create_field', 'odoo_create_model', 'odoo_add_field_to_view'];
+
+/**
+ * The Odoo Online verification instruction (ADR-094).
+ *
+ * task_837942 created three Monetary fields through odoo_create_field and
+ * reported success - which was true of the RPC call, but the fields were
+ * empty static columns: odoo_create_field has no compute/depends parameter
+ * at all, so "computed, recalculated automatically" was never actually
+ * built. Nothing afterwards checked that the field behaved as asked, because
+ * validateOdooOnline's prior behaviour was to record zero tests and move on
+ * - true to its word ("there is no test suite to run"), but it meant a
+ * schema change's correctness was never actually checked against anything.
+ * This instruction is what runs in that gap: a second pass, after a
+ * successful implementation, whose only job is to find out whether what was
+ * just built behaves the way the request asked - not to build more of it.
+ */
+const ODOO_ONLINE_VERIFY_INSTRUCTION = [
+  '# Verify what was just built',
+  'The plan below was just carried out successfully on the live Odoo Online instance.',
+  'Your only job now is to check whether it actually works as the request asked - not to',
+  'change, extend or fix anything. If you find a problem, report it; do not try to correct it.',
+  '',
+  'You do NOT have odoo_create_field, odoo_create_model or odoo_add_field_to_view in this',
+  'pass. If verifying properly would require creating more schema, say so in your summary',
+  'instead of trying - that is a real limit of this pass, not something to work around.',
+  '',
+  'How to verify, depending on what the plan actually built:',
+  '- A computed/derived field (profit, margin, a total, a status set by a condition): create',
+  '  one or two sample records with odoo_create_records using plain round numbers you choose',
+  '  yourself (so the right answer is easy to check by hand), covering the normal case and, if',
+  '  the request mentioned one, the edge case (a zero or empty value). Read the field back with',
+  '  odoo_search_records and compare it to what you calculate by hand from the inputs you used.',
+  '  State both numbers in your summary - do not just say "it matched" without showing them.',
+  '- A field with no formula behind it (a plain data field, a selection, a relation): confirm',
+  '  with odoo_list_fields that it exists with the right type, and if useful, create one sample',
+  '  record that sets it and read it back, to confirm Odoo accepts and stores the value.',
+  '- An Automation Rule or Server Action built through the browser: if a browser session is',
+  '  open, create a record through the browser that should trigger it, then check whether the',
+  '  expected effect happened (a field changed, a status updated). If no session is open, say',
+  '  so and that this could not be checked this way.',
+  '- If NOTHING about what was built can be verified with the tools and access available in',
+  '  this pass (no database_record_write/read, no open browser session), say exactly that -',
+  '  do not invent a result. This is a real outcome, not a failure to hide.',
+  '',
+  'When you create sample records purely to verify, say so plainly in your summary so they',
+  'are not mistaken for data the person asked for - they are check fixtures, not deliverables.',
+  '',
+  'Finish with a short, concrete verdict: VERIFIED (state what you checked and the numbers),',
+  'FAILED (state exactly what did not match and the numbers), or NOT VERIFIABLE (state why -',
+  'which access or tool was missing).',
 ].join('\n');

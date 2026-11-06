@@ -3,18 +3,21 @@ import { z } from 'zod';
 import { ModelProviderResolver } from '../model/model-provider-resolver';
 
 /**
- * Chooses `chat` or `change` for a prompt the person did not label, on Odoo
- * Online only (ADR-088).
+ * Chooses `chat` or `change` for a prompt the person did not label (ADR-088,
+ * extended to every project type by ADR-095).
  *
- * The two task kinds differ in one safety-relevant way on Odoo Online: `chat`
- * runs immediately and asks for approval only when it actually reaches a
- * write tool, mid-run; `change` plans first, puts the whole plan to a person
- * once, and only then runs. Neither skips validation there - Odoo Online has
- * none to skip, unlike a repository-backed project, which is why this
- * classifier is odoo_online-only (`tasks.service.ts` keeps the manual toggle
- * everywhere else: on odoo.sh and on-premise, `chat` skips the test run that
- * `change` does not, and a misclassification there would be a silently
- * unvalidated change rather than one more inline approval).
+ * The two task kinds differ in one safety-relevant way: `chat` runs
+ * immediately and asks for approval only when it actually reaches a write
+ * tool, mid-run; `change` plans first, puts the whole plan to a person once,
+ * and only then runs. This classifier used to be restricted to Odoo Online
+ * because that was the only mode where neither kind skipped validation - on
+ * a repository-backed project, `chat` used to also skip the test run
+ * `change` ran, so a misclassification there would have silently landed an
+ * untested change. ADR-095 closed that gap directly (`implementChat` and
+ * `completeChat` in `agent-workflow.ts` now run the same `validate()` a
+ * change task does, on any chat that wrote files), which is what makes this
+ * classifier safe to use everywhere: a wrong guess now costs at most one
+ * extra approval moment, never a skipped test, in any mode.
  *
  * A wrong call here still costs nothing but a less convenient approval
  * moment, so this fails toward `change` on any doubt: a parse failure, a
@@ -58,14 +61,17 @@ const CLASSIFIER_SCHEMA = z.object({
   kind: z
     .enum(['chat', 'change'])
     .describe(
-      '"change" if the request asks to create, add, modify, remove or configure anything ' +
-        'in the Odoo instance. "chat" only if it asks a question, requests an explanation, ' +
-        'or asks to look something up with no change intended. When genuinely unsure, answer "change".',
+      '"change" if the request asks to create, add, modify, remove or configure anything - ' +
+        'a field, a model, a view, a record, a setting, a file, a module, an automation. ' +
+        '"chat" only if it asks a question, requests an explanation, or asks to look something ' +
+        'up with no change intended. When genuinely unsure, answer "change".',
     ),
 });
 
 const CLASSIFIER_SYSTEM =
-  'Classify one request against a live Odoo Online instance as "chat" or "change". ' +
-  '"change": creates, adds, modifies, removes or configures a field, model, view, record or ' +
-  'setting. "chat": asks a question, asks for an explanation, or asks to look something up, ' +
-  'with no change intended. Answer "change" whenever the request is ambiguous or you are not sure.';
+  'Classify one request against an Odoo project as "chat" or "change". The project may be a ' +
+  'live Odoo Online instance (field, model, record, setting) or a codebase (module, file, ' +
+  'function, automation rule, test). "change": creates, adds, modifies, removes or configures ' +
+  'anything, in either kind of project. "chat": asks a question, asks for an explanation, or ' +
+  'asks to look something up, with no change intended. Answer "change" whenever the request is ' +
+  'ambiguous or you are not sure.';

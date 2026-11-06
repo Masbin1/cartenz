@@ -68,7 +68,10 @@ describe('TasksService.create — main branch restriction', () => {
       {} as TaskRepository,
       {} as ToolRegistry,
       {} as ModelCallRecorder,
-      {} as TaskKindClassifier,
+      // ADR-095: every project type now calls classify() for an unlabelled
+      // kind, so this suite's focus (the main-branch refusal) needs a working
+      // stub here too, not just the kind-auto-detection suite below.
+      { classify: async () => 'change' } as unknown as TaskKindClassifier,
       environments,
       {} as AgentOrchestrator,
     );
@@ -181,7 +184,9 @@ describe('TasksService.create — a project whose repository is a connection (AD
       {} as TaskRepository,
       {} as ToolRegistry,
       {} as ModelCallRecorder,
-      {} as TaskKindClassifier,
+      // ADR-095: every project type now calls classify() for an unlabelled
+      // kind.
+      { classify: async () => 'change' } as unknown as TaskKindClassifier,
       environments,
       {} as AgentOrchestrator,
     );
@@ -217,11 +222,10 @@ describe('TasksService.create — a project whose repository is a connection (AD
 });
 
 /**
- * ADR-088: on Odoo Online, a request that did not name a kind is classified
- * from its text; every other project type keeps the caller's own choice (or
- * the `change` default) untouched.
+ * ADR-088, extended to every project type by ADR-095: a request that did not
+ * name a kind is classified from its own text, regardless of project type.
  */
-describe('TasksService.create — Odoo Online kind auto-detection (ADR-088)', () => {
+describe('TasksService.create — task kind auto-detection (ADR-088, ADR-095)', () => {
   const makeService = (projectType: string, classify: jest.Mock) => {
     const project = { projectType, repositoryUrl: null, name: 'P' };
 
@@ -289,15 +293,21 @@ describe('TasksService.create — Odoo Online kind auto-detection (ADR-088)', ()
     expect(classify).not.toHaveBeenCalled();
   });
 
-  it('does not classify on odoo.sh - the manual toggle stays there', async () => {
+  it('classifies an odoo.sh request that named no kind (ADR-095)', async () => {
     const classify = jest.fn().mockResolvedValue('chat');
     await submit(makeService('odoo_sh', classify));
-    expect(classify).not.toHaveBeenCalled();
+    expect(classify).toHaveBeenCalledWith('add a field', 'project-1');
   });
 
-  it('does not classify on-premise - the manual toggle stays there', async () => {
+  it('classifies an on-premise request that named no kind (ADR-095)', async () => {
     const classify = jest.fn().mockResolvedValue('chat');
     await submit(makeService('on_premise', classify));
+    expect(classify).toHaveBeenCalledWith('add a field', 'project-1');
+  });
+
+  it('does not classify on odoo.sh when the caller already named a kind', async () => {
+    const classify = jest.fn().mockResolvedValue('chat');
+    await submit(makeService('odoo_sh', classify), 'change');
     expect(classify).not.toHaveBeenCalled();
   });
 });

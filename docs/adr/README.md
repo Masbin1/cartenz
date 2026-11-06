@@ -78,6 +78,8 @@ ADR-077 to ADR-079 were never used; the gap is deliberate.
 | [ADR-091](ADR-091-odoo-online-target-resolution-from-history.md) | Odoo Online tasks resolve the target model from conversation history | Accepted |
 | [ADR-092](ADR-092-resumed-task-prior-progress.md) | A resumed task sees its own prior progress | Accepted |
 | [ADR-093](ADR-093-browser-write-counts-as-change.md) | A browser write counts as a change to the instance | Accepted |
+| [ADR-094](ADR-094-odoo-online-verification-pass.md) | Odoo Online tasks verify what they built, not just that Odoo accepted it | Accepted |
+| [ADR-095](ADR-095-task-kind-classifier-everywhere.md) | One toggle-free task mode, testing always runs | Accepted |
 
 ## Odoo Online
 

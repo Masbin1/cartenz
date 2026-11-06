@@ -54,7 +54,14 @@ export interface TaskTestResults {
   readonly skipped: number;
   readonly suites: readonly {
     readonly name: string;
-    readonly status: 'passed' | 'failed';
+    /**
+     * `skipped` (ADR-094) is distinct from `failed`: it means the check could
+     * not be attempted at all - no permission to read data back, no browser
+     * session open - rather than that it was attempted and the result was
+     * wrong. Counted into `skipped`, not `failed`, so a task with nothing
+     * verifiable is not reported the same as one that is actually broken.
+     */
+    readonly status: 'passed' | 'failed' | 'skipped';
     readonly detail?: string;
   }[];
   readonly simulated: boolean;

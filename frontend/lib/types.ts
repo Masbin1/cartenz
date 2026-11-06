@@ -509,7 +509,7 @@ export interface TaskTestResults {
   passed: number;
   failed: number;
   skipped: number;
-  suites: { name: string; status: 'passed' | 'failed'; detail?: string }[];
+  suites: { name: string; status: 'passed' | 'failed' | 'skipped'; detail?: string }[];
   simulated: boolean;
 }
 

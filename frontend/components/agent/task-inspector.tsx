@@ -163,7 +163,13 @@ export function TaskInspector({ task }: { task: TaskDetail | null }) {
                     <li key={suite.name} className="flex items-center justify-between gap-3">
                       <span className="mono-meta min-w-0 break-all">{suite.name}</span>
                       <StatusDot
-                        tone={suite.status === 'passed' ? 'success' : 'failure'}
+                        tone={
+                          suite.status === 'passed'
+                            ? 'success'
+                            : suite.status === 'skipped'
+                              ? 'idle'
+                              : 'failure'
+                        }
                         size="small"
                         className="shrink-0"
                       >

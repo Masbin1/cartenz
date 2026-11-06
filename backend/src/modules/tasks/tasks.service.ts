@@ -114,16 +114,20 @@ export class TasksService {
     if (!project) throw new NotFoundException('Project not found');
 
     /**
-     * ADR-088: on Odoo Online only, a request that did not name a kind is
-     * classified from its own text instead of defaulting to `change`. The two
-     * kinds there differ only in when approval is asked (once, up front, for
-     * `change`; inline, the moment a write tool is reached, for `chat`) -
-     * neither skips the validation the other runs, because Odoo Online has
-     * none to skip. That is what makes guessing safe here and nowhere else:
-     * `tasks.service.ts` leaves the manual toggle in place for odoo.sh and
-     * on-premise, where `chat` skips the test run `change` does not.
+     * ADR-088 (odoo_online), extended by ADR-095 to every project type: a
+     * request that did not name a kind is classified from its own text
+     * instead of defaulting to `change`. This used to be odoo_online-only
+     * because that was the only mode where `chat` and `change` differed in
+     * nothing but *when* approval is asked - a misclassification elsewhere
+     * cost nothing but one approval moment. On a repository-backed project,
+     * `chat` used to also skip the validation `change` ran, which made a
+     * wrong guess there silently land an untested change - that gap is what
+     * ADR-095 closed (`implementChat`/`completeChat` now run `validate()` on
+     * any chat that wrote files, exactly as a change task does), which is
+     * what makes extending the classifier here safe rather than merely
+     * convenient: testing now runs regardless of which kind was guessed.
      */
-    if (dto.kind === undefined && project.projectType === 'odoo_online') {
+    if (dto.kind === undefined) {
       kind = await this.taskKindClassifier.classify(dto.prompt, projectId);
     }
 

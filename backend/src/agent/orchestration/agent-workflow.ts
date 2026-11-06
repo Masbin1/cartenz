@@ -803,31 +803,166 @@ export class AgentWorkflow {
   /**
    * TESTING, on Odoo Online.
    *
-   * There is nothing to run. Odoo validated each write as it applied it - an
-   * unknown field type or a malformed view arch is an RPC error, not a silent
-   * success - and there is no repository test suite to run against a live
-   * instance. The state is still passed through rather than skipped, because it
-   * is how the lifecycle reaches `completed`, and saying plainly that no test ran
-   * is better than a validation step that could only simulate one.
+   * Runs a second, read-focused pass of the implementation loop (ADR-094) to
+   * check what the just-applied plan actually built, rather than only
+   * recording that Odoo accepted the writes. Odoo accepting a write is real
+   * evidence the schema or record is well-formed - an unknown field type or a
+   * malformed view arch is an RPC error, not a silent success - but it is not
+   * evidence the *behaviour* the request asked for exists: `odoo_create_field`
+   * has no compute/formula parameter at all, so a Monetary field created to be
+   * "computed automatically" is, by construction, a static empty column until
+   * something else makes it compute - and nothing before this step ever
+   * checked that part.
+   *
+   * Skipped - not failed - when the project grants neither
+   * `database_record_write`, `database_record_read` nor `browser_control`:
+   * there is no tool this pass could use to check anything, and a task that
+   * only ever had schema-write tools available is not broken for lacking a
+   * capability it was never granted. The person who scoped the project's
+   * permissions made that call, not this task.
    */
   private async validateOdooOnline(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    const verification = await this.verifyOdooOnline(snapshot);
+
     await this.tasks.saveTestResults(snapshot.taskId, {
-      passed: 0,
-      failed: 0,
-      skipped: 0,
-      suites: [],
+      passed: verification.status === 'passed' ? 1 : 0,
+      failed: verification.status === 'failed' ? 1 : 0,
+      skipped: verification.status === 'skipped' ? 1 : 0,
+      suites: [{ name: 'Verification', status: verification.status, detail: verification.detail }],
       simulated: false,
     });
 
-    await this.narrate(
-      snapshot,
-      'No test suite was run: this project has no repository. Each change was accepted by ' +
-        'Odoo as it was applied, which is the only validation this mode has.',
-    );
+    await this.narrate(snapshot, verification.narration);
+
+    // A genuine FAILED verdict means verification actually ran and found the
+    // built behaviour does not match the request - not that verification
+    // itself had trouble (that is `skipped`, handled separately in
+    // verifyOdooOnline, and never reaches this branch). This is the one case
+    // where testing fails an already-applied Odoo Online change: the writes
+    // happened and Odoo accepted them, but what they do is wrong, which is
+    // exactly the class of problem this whole step exists to catch.
+    if (verification.status === 'failed') {
+      return this.tasks.transition(snapshot.taskId, 'testing', 'failed', {
+        failureReason: `Verification found a problem: ${verification.detail}`,
+      });
+    }
 
     return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
       message: 'The change was applied to the Odoo Online instance.',
     });
+  }
+
+  /**
+   * Checks what `implementOdooOnline` just built, by running the
+   * implementation loop again in `'verify'` mode (ADR-094): the same tools
+   * except the three schema-write ones, and an instruction to create sample
+   * data, read it back, and compare it to hand arithmetic rather than to
+   * carry out more of the plan.
+   *
+   * Deliberately best-effort and never fails the task on its own: a
+   * verification pass that itself errors, times out, or finds nothing it can
+   * check is recorded as `skipped` with the reason, exactly as a project with
+   * no read/browser access at all is. The thing this step must never do is
+   * let a verification problem overturn an already-applied, already-approved
+   * change - that would be strictly worse than ADR-094 not existing, since a
+   * person would see a change they approved reported as failed over a
+   * follow-up check's own trouble, not over anything wrong with the change.
+   */
+  private async verifyOdooOnline(
+    snapshot: TaskExecutionSnapshot,
+  ): Promise<{ status: 'passed' | 'failed' | 'skipped'; detail: string; narration: string }> {
+    const canVerify =
+      snapshot.agentPermissions.database_record_write === true ||
+      snapshot.agentPermissions.database_record_read === true ||
+      snapshot.agentPermissions.browser_control === true;
+
+    if (!canVerify) {
+      const detail =
+        'This project grants no database read/write or browser access, so there is no tool ' +
+        'this pass could use to check the result. Nothing was verified.';
+      return {
+        status: 'skipped',
+        detail,
+        narration:
+          'No verification was possible: this project has no database read/write or browser ' +
+          'permission granted. Each change was accepted by Odoo as it was applied, which is the ' +
+          'only check that ran.',
+      };
+    }
+
+    if (!snapshot.plan) {
+      // Nothing to verify a plan-less run against. Should not happen for a
+      // task that reached `implementing` on this path, but a missing plan is
+      // context to skip on, not a reason to fail an already-applied change.
+      return {
+        status: 'skipped',
+        detail: 'No plan was recorded for this task, so there was nothing to verify against.',
+        narration: 'No verification was possible: no implementation plan was recorded.',
+      };
+    }
+
+    const workspace = await this.acquireWorkspace(snapshot);
+    await this.narrate(snapshot, 'Verifying the result against the instance...');
+
+    let outcome;
+    try {
+      outcome = await this.implementationLoop.run({
+        projectId: snapshot.projectId,
+        localProviderOnly: snapshot.localProviderOnly,
+        prompt: snapshot.prompt,
+        projectName: snapshot.projectName,
+        projectBrief: snapshot.projectBrief,
+        taskReference: snapshot.reference,
+        branch: 'the live instance',
+        odooVersion: snapshot.odooVersion,
+        plan: snapshot.plan,
+        agentPermissions: snapshot.agentPermissions,
+        executionMode: 'odoo_online',
+        mode: 'verify',
+        run: async (call) => {
+          const result = await this.callTool(snapshot, workspace, call.name, call.input);
+          return {
+            status: toLoopResult(result.status),
+            output: result.output,
+            denialReason: result.denialReason,
+          };
+        },
+      });
+    } catch (error) {
+      // A verification pass that itself breaks is reported as unverified, not
+      // as the just-applied change having failed - see the method docstring.
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Verification for ${snapshot.reference} could not run: ${message}`);
+      return {
+        status: 'skipped',
+        detail: `The verification pass could not run: ${message}`,
+        narration: `Verification could not run (${message}). Each change was accepted by Odoo ` +
+          'as it was applied, which is the only check that ran.',
+      };
+    }
+
+    if (outcome.suspended) {
+      // A write tool mid-verification needing approval is unusual (verify
+      // mode is meant to read and create small sample data that earlier
+      // approvals already cover) but not impossible. Treated as unverified
+      // rather than suspending the whole task a second time over a check.
+      return {
+        status: 'skipped',
+        detail: 'The verification pass paused for an approval it was not expected to need.',
+        narration:
+          'Verification could not finish: it reached an action that required approval. Each ' +
+          'change was accepted by Odoo as it was applied, which is the only check that ran.',
+      };
+    }
+
+    const summary = outcome.summary.trim();
+    const verdict = parseVerificationVerdict(summary);
+
+    return {
+      status: verdict,
+      detail: summary || 'The verification pass produced no summary.',
+      narration: summary.length > 0 ? summary : 'Verification finished with no summary.',
+    };
   }
 
   /**
@@ -1321,15 +1456,18 @@ export class AgentWorkflow {
       });
     }
 
-    // An approved write is committed and pushed under exactly the rules a change
-    // task's commit follows (ADR-053): the environment's push posture decides
-    // whether the push needs an approval of its own, and the commit lands on the
-    // branch the task was given. The workspace is destroyed when the run ends,
-    // so without this the change the person approved would survive only as a
-    // patch on the task - reviewable, and usable nowhere.
+    // ADR-095: a chat task that wrote files now passes through `testing` exactly
+    // as a change task does, instead of going straight to `committing`. Chat
+    // used to skip validation entirely for any write, which is exactly the gap
+    // that let an unreviewed, untested change land through a conversation that
+    // happened to use a write tool - the person asked for one toggle-free mode
+    // that still always tests, and this is the other half of that: `completeChat`
+    // (TESTING) runs `validate()` when there is something to validate, instead
+    // of completing unconditionally.
     if (wrote) {
-      return this.tasks.transition(snapshot.taskId, 'implementing', 'committing', {
-        message: 'The approved change is committed and pushed like a change task.',
+      return this.tasks.transition(snapshot.taskId, 'implementing', 'testing', {
+        message: `${diff.files.length} file(s) changed, +${diff.linesAdded}/-${diff.linesRemoved} ` +
+          `across ${outcome.toolCalls} tool call(s). Running validation.`,
       });
     }
 
@@ -1369,16 +1507,25 @@ export class AgentWorkflow {
   }
 
   /**
-   * TESTING, on a chat task with no change to land. A conversation has nothing
-   * to validate, commit or push, so the task completes the moment its answer is
-   * saved. (A conversation that wrote, with approval, goes to `committing`
-   * directly - ADR-053.) This branch exists rather than an `implementing ->
-   * completed` edge because the state machine deliberately keeps that edge
-   * absent: `odoo_online` must pass through validation (a real defect it guards),
-   * and a chat task passing through `testing` keeps the machine intact for every
-   * kind.
+   * TESTING, on a chat task.
+   *
+   * ADR-095: a chat that wrote files now runs the same `validate()` a change
+   * task does, rather than completing unconditionally - closing the gap
+   * `implementChat` already closed on its side (routing a write through
+   * `testing` instead of straight to `committing`). A chat that only
+   * answered, with nothing in the working tree to validate, still completes
+   * at once: there is genuinely nothing for `validate()` to check, and
+   * calling it anyway would mean asking the repository's own test runner to
+   * grade a diff that does not exist.
    */
   private async completeChat(snapshot: TaskExecutionSnapshot): Promise<boolean> {
+    const workspace = await this.acquireWorkspace(snapshot);
+
+    if (!workspace.simulated) {
+      const status = await this.git.status(workspace.repositoryPath);
+      if (!status.clean) return this.validate(snapshot);
+    }
+
     return this.tasks.transition(snapshot.taskId, 'testing', 'completed', {
       message: 'Answered.',
     });
@@ -2356,6 +2503,24 @@ function toolAllowedInMode(tool: AnyToolDefinition, mode: ExecutionMode | null):
 
 /** Re-exported so the worker can narrow on the status union. */
 export type { AgentTaskStatus };
+
+/**
+ * Reads a `verifyOdooOnline` summary for its closing verdict (ADR-094).
+ *
+ * Order matters: "NOT VERIFIABLE" is checked before "VERIFIED" and "FAILED"
+ * because it contains neither word as a whole word, but a careless summary
+ * that writes "not verified" (lowercase, no hyphenated instruction followed)
+ * must not match `\bVERIFIED\b` and read as a pass - an unmatched case
+ * already falls through to `skipped`, which is the right answer for it, but
+ * checking the explicit "NOT VERIFIABLE" phrase first makes that the primary
+ * path rather than an accident of the catch-all.
+ */
+export function parseVerificationVerdict(summary: string): 'passed' | 'failed' | 'skipped' {
+  if (/\bNOT VERIFI(?:ED|ABLE)\b/.test(summary)) return 'skipped';
+  if (/\bVERIFIED\b/.test(summary)) return 'passed';
+  if (/\bFAILED\b/.test(summary)) return 'failed';
+  return 'skipped';
+}
 
 /**
  * The Odoo Online tools that change the instance, as opposed to reading it.

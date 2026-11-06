@@ -1,7 +1,7 @@
 'use client';
 
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUp,
   FileText,
@@ -47,7 +47,6 @@ import type {
   ProjectEnvironment,
   TaskDetail,
   TaskDiff,
-  TaskKind,
   TaskSummary,
 } from '@/lib/types';
 
@@ -102,7 +101,6 @@ export default function AgentWorkspacePage() {
   const [diff, setDiff] = useState<TaskDiff | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
-  const [kind, setKind] = useState<TaskKind>('change');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [environments, setEnvironments] = useState<ProjectEnvironment[]>([]);
@@ -324,10 +322,10 @@ export default function AgentWorkspacePage() {
         // server opens one — which is the only way a new session is created.
         sessionId: sessionId || undefined,
         environmentId: environmentId || undefined,
-        // ADR-088: Odoo Online omits kind so the server classifies the prompt
-        // itself; the toggle above is hidden there for the same reason. Every
-        // other project type keeps sending the person's own choice.
-        kind: project?.projectType === 'odoo_online' ? undefined : kind,
+        // ADR-088/ADR-095: every project type omits kind so the server
+        // classifies the prompt itself; the toggle is retired everywhere, not
+        // only on Odoo Online.
+        kind: undefined,
         documentIds: attachedIds.size > 0 ? [...attachedIds] : undefined,
       });
       setSessionId(created.sessionId);
@@ -924,28 +922,11 @@ export default function AgentWorkspacePage() {
                   ) : null}
 
                   <div className="flex flex-wrap items-center gap-2 border-t border-surface-border px-3 py-2.5 sm:px-4">
-                    {project.projectType === 'odoo_online' ? null : (
-                      <div
-                        role="group"
-                        aria-label="Task mode"
-                        className="flex rounded-lg bg-surface-overlay p-0.5"
-                      >
-                        <ModeButton
-                          active={kind === 'change'}
-                          disabled={submitting}
-                          onClick={() => setKind('change')}
-                        >
-                          Change
-                        </ModeButton>
-                        <ModeButton
-                          active={kind === 'chat'}
-                          disabled={submitting}
-                          onClick={() => setKind('chat')}
-                        >
-                          Chat
-                        </ModeButton>
-                      </div>
-                    )}
+                    {/* ADR-088/ADR-095: every project type now classifies an
+                        unlabelled prompt itself rather than defaulting to
+                        Change, so this toggle - a control for a choice the
+                        server makes on its own - is retired everywhere, not
+                        only on Odoo Online. */}
 
                     <button
                       type="button"
@@ -1010,9 +991,9 @@ export default function AgentWorkspacePage() {
                 </form>
 
                 <p className="mt-2 px-1 text-caption text-content-subtle">
-                  {kind === 'chat'
-                    ? 'Chat reads the project and answers; writing a file asks for your approval first.'
-                    : 'The agent plans first and waits for your approval before changing anything.'}
+                  The agent decides from your prompt whether this is a question or a change: a
+                  change plans first and waits for your approval, a question may ask for approval
+                  only if it ends up writing something.
                   {capabilities && !capabilities.git.pushEnabled
                     ? ' This server cannot push: the branch stays in the workspace for review.'
                     : null}
@@ -1167,35 +1148,6 @@ function useStoredFlag(key: string) {
     }
   }, [key, value]);
   return [value, setValue] as const;
-}
-
-/** One side of the Change / Chat mode control in the composer footer. */
-function ModeButton({
-  active,
-  disabled,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  disabled: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-pressed={active}
-      className={`rounded-md px-2.5 py-1 text-meta font-medium transition-colors disabled:cursor-not-allowed ${
-        active
-          ? 'bg-surface-raised text-content ring-1 ring-surface-border'
-          : 'text-content-muted hover:text-content'
-      }`}
-    >
-      {children}
-    </button>
-  );
 }
 
 function DocumentIcon({ mimeType }: { mimeType: string }) {
