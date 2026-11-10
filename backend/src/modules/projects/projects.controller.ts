@@ -32,6 +32,7 @@ import {
   UpdateAgentPermissionsDto,
   UpdateProjectDto,
   UpdateProjectGitAccessDto,
+  VerifyOdooOnlineConnectionDto,
 } from './dto/project.dto';
 import { ProjectEnvironmentsService } from './project-environments.service';
 import { AuthorizationService } from '../../core/authz/authorization.service';
@@ -107,6 +108,25 @@ export class ProjectsController {
   @HttpCode(HttpStatus.OK)
   remoteBranchesFor(@CurrentUser() user: AuthenticatedUser, @Body() dto: RemoteBranchesDto) {
     return this.projects.remoteBranchesFor(user, dto);
+  }
+
+  /**
+   * Proves an Odoo Online API key works, before any project exists.
+   *
+   * Same reason `remote-branches` runs ahead of project creation: the
+   * connect-existing form used to create the project row first and only find
+   * out the credentials were wrong afterwards, leaving an orphaned project
+   * whose name was then stuck — a second attempt with corrected credentials
+   * hit "a project with that name already exists". Checked here, up front,
+   * nothing is created or stored either way.
+   */
+  @Post('odoo-online/verify')
+  @HttpCode(HttpStatus.OK)
+  verifyOdooOnlineConnection(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: VerifyOdooOnlineConnectionDto,
+  ) {
+    return this.projects.verifyOdooOnlineConnection(user, dto);
   }
 
   /**

@@ -476,6 +476,41 @@ export class UpdateAgentPermissionsDto {
 }
 
 /**
+ * Proves an Odoo Online API key works, before any project exists.
+ *
+ * Same four values `CreateConnectionDto.metadata` carries for an `odoo_api`
+ * connection, flattened here because there is no project yet for them to be
+ * metadata *of*. `apiKey` is the one field here that is a secret: never
+ * logged, never stored, discarded as soon as the one authenticate call
+ * returns.
+ */
+export class VerifyOdooOnlineConnectionDto {
+  @IsString()
+  @IsNotEmpty({ message: 'An Odoo Online connection needs the instance url' })
+  @MaxLength(500)
+  @Transform(trim)
+  url!: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'An Odoo Online connection needs the login' })
+  @MaxLength(320)
+  @Transform(trim)
+  login!: string;
+
+  /** Defaults to the URL's subdomain when omitted, same as the connection path. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  @Transform(trim)
+  db?: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'An Odoo Online connection needs an API key' })
+  @MaxLength(16384)
+  apiKey!: string;
+}
+
+/**
  * Create a project connection. `credential` is the only field in the API that
  * carries secret material; it is sealed immediately and is never read back,
  * logged or returned.

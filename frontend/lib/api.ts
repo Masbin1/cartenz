@@ -722,6 +722,26 @@ export const api = {
         folders: { name: string; path: string; isGitRepository: boolean }[];
       }>('/projects/on-premise-locations'),
 
+    /**
+     * Proves an Odoo Online API key works, before the project exists.
+     *
+     * Call this before `create()` for an Odoo Online connect: it creates and
+     * stores nothing, so a bad URL/login/key is a form error with no project
+     * left behind — the gap this closes is `create()` succeeding and then
+     * `createConnection()` failing, which used to leave an orphaned project
+     * whose name was then stuck on a later retry.
+     */
+    verifyOdooOnlineConnection: (body: {
+      url: string;
+      login: string;
+      db?: string;
+      apiKey: string;
+    }) =>
+      request<{ url: string; db: string; login: string }>('/projects/odoo-online/verify', {
+        method: 'POST',
+        body,
+      }),
+
     remoteBranches: (projectId: string) =>
       request<{ branches: string[] }>(`/projects/${projectId}/remote-branches`),
 

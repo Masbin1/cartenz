@@ -2551,12 +2551,37 @@ export class ProjectsService {
       return typeof value === 'string' ? value.trim() : '';
     };
 
-    const rawUrl = read('url');
-    const login = read('login');
+    return this.verifyOdooOnlineCredentials({
+      url: read('url'),
+      login: read('login'),
+      db: read('db'),
+      apiKey: dto.credential ?? '',
+    });
+  }
+
+  /**
+   * The actual check behind `verifiedOdooOnlineMetadata`, pulled out so it can
+   * also run *before* a project exists (`verifyOdooOnlineConnection` below).
+   *
+   * The connect-existing form used to create the project row first and only
+   * validate these four fields when it then created the connection — so a
+   * blank field or a wrong API key left an orphaned, uncreatable-again project
+   * behind (its name had already taken the unique slot) while reporting
+   * nothing but a connection error. Validating here, before any row is
+   * written, is what closes that gap.
+   */
+  private async verifyOdooOnlineCredentials(input: {
+    url: string;
+    login: string;
+    db?: string;
+    apiKey: string;
+  }): Promise<{ url: string; db: string; login: string }> {
+    const rawUrl = input.url.trim();
+    const login = input.login.trim();
 
     if (!rawUrl || !login) {
       throw new BadRequestException(
-        'An Odoo Online connection needs the instance url and the login in its metadata.',
+        'An Odoo Online connection needs the instance url and the login.',
       );
     }
 
@@ -2567,21 +2592,22 @@ export class ProjectsService {
       throw new BadRequestException((error as Error).message);
     }
 
-    const db = read('db') || databaseFromUrl(url);
+    const db = input.db?.trim() || databaseFromUrl(url);
     if (!db) {
       throw new BadRequestException(
         `The database could not be determined from "${url}". Supply it explicitly.`,
       );
     }
 
-    if (!dto.credential || dto.credential.length === 0) {
+    if (!input.apiKey || input.apiKey.length === 0) {
       throw new BadRequestException('An Odoo Online connection needs an API key.');
     }
 
     // The one call that proves all four values at once. The key is used here and
-    // not retained: what is stored is the sealed reference the caller writes.
+    // not retained by this method: what is stored (by whichever caller asked)
+    // is the sealed reference, never this plaintext value.
     const uid = await this.odooOnline
-      .authenticate({ url, db, login, apiKey: dto.credential })
+      .authenticate({ url, db, login, apiKey: input.apiKey })
       .catch((error: unknown) => {
         throw new BadRequestException(
           `The Odoo Online instance refused these credentials: ${(error as Error).message}`,
@@ -2591,6 +2617,23 @@ export class ProjectsService {
     this.logger.log(`Odoo Online connection verified against ${url} (${db}), uid ${uid}`);
 
     return { url, db, login };
+  }
+
+  /**
+   * Proves an Odoo Online API key works, before any project row exists.
+   *
+   * Used by the "Connect an existing project" form so a bad URL, login or key
+   * is a form error instead of a project that gets created and then fails to
+   * connect, leaving its name stuck on an orphan nothing points at (the
+   * failure mode this method exists to close). Creates nothing and stores
+   * nothing — the credential is discarded the moment `authenticate` returns.
+   */
+  async verifyOdooOnlineConnection(
+    user: AuthenticatedUser,
+    dto: { url: string; login: string; db?: string; apiKey: string },
+  ): Promise<{ url: string; db: string; login: string }> {
+    void user; // No project exists yet, so there is nothing to check access against.
+    return this.verifyOdooOnlineCredentials(dto);
   }
 
   async deleteConnection(user: AuthenticatedUser, projectId: string, connectionId: string) {

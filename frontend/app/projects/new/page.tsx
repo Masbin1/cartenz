@@ -578,6 +578,30 @@ function ConnectExistingForm({ region, isAdmin }: { region: UserRegion; isAdmin:
         setSubmitting(false);
         return;
       }
+
+      /**
+       * Proven BEFORE the project is created, not after (the bug this closes):
+       * `create()` used to run first and `createConnection()` second, so a
+       * wrong URL, login or API key left a project row behind with no working
+       * connection. Its name had already taken the unique slot, so fixing the
+       * field and submitting again failed with "a project with that name
+       * already exists" — the project could be neither used nor recreated.
+       * Verifying here creates nothing, so a failure costs nothing to retry.
+       */
+      try {
+        await api.projects.verifyOdooOnlineConnection({
+          url: odooOnline.url.trim(),
+          login: odooOnline.login.trim(),
+          db: odooOnline.db.trim() || undefined,
+          apiKey: odooOnline.apiKey.trim(),
+        });
+      } catch (caught) {
+        setError(
+          caught instanceof ApiError ? caught.message : 'The Odoo Online instance could not be reached.',
+        );
+        setSubmitting(false);
+        return;
+      }
     }
 
     try {
