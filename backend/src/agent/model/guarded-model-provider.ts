@@ -91,6 +91,23 @@ export class GuardedModelProvider implements ModelProvider {
     const callCounts = new Map<string, number>();
 
     /**
+     * Zero-result search_code streak guard (task_878534: a chat task trying
+     * eleven different search_code queries chasing the same symbol -
+     * "int_type_id", "int_type_id =", "'int_type_id'", "int_type_id =
+     * fields.Many2one(...)" and so on - seven of them returning zero matches,
+     * before the step budget ran out with no answer. The repeated-call guard
+     * above does not catch this: every query string was different, so none of
+     * them looked like a repeat.
+     *
+     * What actually repeats is the *outcome*, not the input: a model guessing
+     * variations of how a symbol might be spelled in the source, when it is
+     * not there to find. Tracked as a streak reset by any successful (non-zero)
+     * search, not by other tool calls in between - reading a file does not fix
+     * the search, so it should not reset the count either.
+     */
+    let zeroResultSearchStreak = 0;
+
+    /**
      * Tool results are the subtlest egress path in the whole system: `read_file`
      * returns repository content straight into the model's context, and it is the
      * one place the platform hands over material it has never inspected. Wrapping
@@ -126,7 +143,35 @@ export class GuardedModelProvider implements ModelProvider {
         };
       }
 
+      // The 5th search_code in a row that found nothing is refused outright:
+      // four failed guesses at how a symbol might be spelled is enough to show
+      // it genuinely is not there, and a 5th guess is the same dead end with
+      // different punctuation.
+      if (name === 'search_code' && zeroResultSearchStreak >= 4) {
+        this.logger.warn(
+          `Refused search_code after ${zeroResultSearchStreak} consecutive zero-result ` +
+            `searches: ${signature}`,
+        );
+        return {
+          result: {
+            status: 'denied',
+            message:
+              `The last ${zeroResultSearchStreak} search_code calls in a row found nothing, ` +
+              'including this query. Guessing another spelling or phrasing of the same symbol ' +
+              'will not find it either - it is genuinely not present as literal text in this ' +
+              'repository. Stop searching for it and answer with what you have found so far, ' +
+              'stating plainly that this symbol could not be located.',
+          },
+        };
+      }
+
       const outcome = await request.execute(name, args);
+
+      if (name === 'search_code') {
+        const matchCount = (outcome.result as { matchCount?: unknown } | undefined)?.matchCount;
+        zeroResultSearchStreak = matchCount === 0 ? zeroResultSearchStreak + 1 : 0;
+      }
+
       const filtered = this.boundary.filterDeep(outcome.result ?? {}, {
         direction: 'to_provider',
         label: `tool result: ${name}`,
@@ -164,6 +209,23 @@ export class GuardedModelProvider implements ModelProvider {
             _repeat_notice:
               `This is the same call to ${name} with the same arguments you already made ` +
               'once before. The result is unchanged. Calling it again will be refused.',
+          },
+        };
+      }
+
+      // A warning on the 3rd consecutive zero-result search_code, one guess
+      // before the hard refusal above - so the model sees the pattern named
+      // while it still has one more free attempt, rather than being refused
+      // with no warning in between.
+      if (name === 'search_code' && zeroResultSearchStreak === 3) {
+        return {
+          ...outcome,
+          result: {
+            ...value,
+            _repeat_notice:
+              'The last 3 search_code calls in a row, including this one, found nothing. ' +
+              'One more zero-result search_code will be refused - stop guessing variations ' +
+              'of this symbol and answer with what you have, or search for something different.',
           },
         };
       }

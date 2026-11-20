@@ -384,6 +384,117 @@ describe('GuardedModelProvider', () => {
     });
   });
 
+  describe('zero-result search_code streak (task_878534)', () => {
+    const zeroResultCalls = (queries: readonly string[]) =>
+      queries.map((query) => ({ name: 'search_code', args: { query } }));
+
+    it('warns on the 3rd consecutive zero-result search, with the query varying each time', async () => {
+      inner.scriptedCalls = zeroResultCalls(['int_type_id', 'int_type_id =', "'int_type_id'"]);
+
+      await guarded.runToolLoop({
+        system: 'You are an agent.',
+        parts: [{ label: 'Request', content: 'Find int_type_id' }],
+        tools: [],
+        execute: async () => ({ result: { matchCount: 0, matches: [] } }),
+        maxSteps: 10,
+        maxToolCalls: 10,
+      });
+
+      expect(inner.toolResultsReceived[0]._repeat_notice).toBeUndefined();
+      expect(inner.toolResultsReceived[1]._repeat_notice).toBeUndefined();
+      expect(inner.toolResultsReceived[2]._repeat_notice).toContain('found nothing');
+    });
+
+    it('refuses the 5th consecutive zero-result search without running the tool', async () => {
+      let realCalls = 0;
+      inner.scriptedCalls = zeroResultCalls([
+        'int_type_id',
+        'int_type_id =',
+        "'int_type_id'",
+        'int_type_id = fields',
+        'int_type_id = fields.Many2one',
+      ]);
+
+      await guarded.runToolLoop({
+        system: 'You are an agent.',
+        parts: [{ label: 'Request', content: 'Find int_type_id' }],
+        tools: [],
+        execute: async () => {
+          realCalls += 1;
+          return { result: { matchCount: 0, matches: [] } };
+        },
+        maxSteps: 10,
+        maxToolCalls: 10,
+      });
+
+      // Only the first 4 reached the real search; the 5th was refused outright.
+      expect(realCalls).toBe(4);
+      expect(inner.toolResultsReceived[4].status).toBe('denied');
+      expect(inner.toolResultsReceived[4].message).toContain('found nothing');
+    });
+
+    it('resets the streak on a search that actually finds something', async () => {
+      let realCalls = 0;
+      inner.scriptedCalls = [
+        ...zeroResultCalls(['a', 'b', 'c']),
+        { name: 'search_code', args: { query: 'd' } },
+        ...zeroResultCalls(['e', 'f', 'g', 'h']),
+      ];
+      const resultFor = (query: string) =>
+        query === 'd' ? { matchCount: 1, matches: [{ path: 'x.py', line: 1 }] } : { matchCount: 0, matches: [] };
+
+      await guarded.runToolLoop({
+        system: 'You are an agent.',
+        parts: [{ label: 'Request', content: 'Search several things' }],
+        tools: [],
+        execute: async (_name, args) => {
+          realCalls += 1;
+          return { result: resultFor((args as { query: string }).query) };
+        },
+        maxSteps: 10,
+        maxToolCalls: 10,
+      });
+
+      // The non-zero 4th search resets the streak, so the next 4 zero-result
+      // searches (e, f, g, h) count from zero again - none of them hits the
+      // 5-in-a-row refusal.
+      expect(realCalls).toBe(8);
+      expect(inner.toolResultsReceived.every((result) => result.status !== 'denied')).toBe(true);
+    });
+
+    it('does not let an unrelated tool call between searches reset the streak', async () => {
+      let realCalls = 0;
+      inner.scriptedCalls = [
+        { name: 'search_code', args: { query: 'a' } },
+        { name: 'read_file', args: { path: 'b.py' } },
+        { name: 'search_code', args: { query: 'c' } },
+        { name: 'read_file', args: { path: 'd.py' } },
+        { name: 'search_code', args: { query: 'e' } },
+        { name: 'search_code', args: { query: 'f' } },
+        { name: 'search_code', args: { query: 'g' } },
+      ];
+
+      await guarded.runToolLoop({
+        system: 'You are an agent.',
+        parts: [{ label: 'Request', content: 'Search around some reads' }],
+        tools: [],
+        execute: async (calledName) => {
+          realCalls += 1;
+          return calledName === 'search_code'
+            ? { result: { matchCount: 0, matches: [] } }
+            : { result: { content: 'x' } };
+        },
+        maxSteps: 10,
+        maxToolCalls: 10,
+      });
+
+      // 5 search_code calls total, all zero-result, with reads interleaved;
+      // reads do not reset the streak, so the 5th search is refused.
+      expect(realCalls).toBe(6);
+      expect(inner.toolResultsReceived[6].status).toBe('denied');
+    });
+  });
+
   describe('accounting', () => {
     it('reports what it removed, in both directions', async () => {
       const schema = z.object({ summary: z.string() });
