@@ -222,6 +222,93 @@ describe('TasksService.create — a project whose repository is a connection (AD
 });
 
 /**
+ * Cancelling a task must close its pending approval too.
+ *
+ * Found by a functionality sweep: a task cancelled while an
+ * `implementation_plan`/`git_push` approval sat `pending` left that row
+ * untouched. `AiOfficeService.attention()` lists every `approvals.status =
+ * 'pending'` row with no further filter, so the cancelled task's dead
+ * approval kept appearing in the "needs attention" queue forever - nobody
+ * could ever decide it, because the task that would have resumed on that
+ * decision no longer exists to resume.
+ */
+describe('TasksService.cancel — closes a pending approval (ai-office attention leak)', () => {
+  const makeService = (taskStatus: string) => {
+    const task = {
+      id: 'task-1',
+      reference: 'task_1',
+      projectId: 'project-1',
+      status: taskStatus,
+    };
+
+    const updateCalls: { set: Record<string, unknown>; where: unknown }[] = [];
+
+    const database = {
+      db: {
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              limit: async () => [task],
+            }),
+          }),
+        }),
+        update: (_table: unknown) => ({
+          set: (values: Record<string, unknown>) => ({
+            where: async (clause: unknown) => {
+              updateCalls.push({ set: values, where: clause });
+              return [];
+            },
+          }),
+        }),
+      },
+    } as unknown as DatabaseService;
+
+    const audit = { record: async () => undefined } as unknown as AuditService;
+    const authz = { requireProjectAccess: async () => undefined } as unknown as AuthorizationService;
+    const orchestratorCancel = jest.fn().mockResolvedValue(undefined);
+    const orchestrator = { cancel: orchestratorCancel } as unknown as AgentOrchestrator;
+
+    const taskRepository = {
+      transition: jest.fn().mockResolvedValue(true),
+    } as unknown as TaskRepository;
+
+    const service = new TasksService(
+      database,
+      authz,
+      audit,
+      taskRepository,
+      {} as ToolRegistry,
+      {} as ModelCallRecorder,
+      {} as TaskKindClassifier,
+      {} as ProjectEnvironmentsService,
+      orchestrator,
+    );
+
+    return { service, updateCalls, orchestratorCancel };
+  };
+
+  it('rejects the task\'s pending approval when cancelled', async () => {
+    const { service, updateCalls } = makeService('waiting_approval');
+    await service.cancel({ userId: 'u' } as never, 'task-1', 'testing cleanup');
+
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].set).toMatchObject({
+      status: 'rejected',
+      decisionNote: expect.stringContaining('cancelled'),
+    });
+    expect(updateCalls[0].set.decidedAt).toBeInstanceOf(Date);
+  });
+
+  it('still cancels the task even though the status-after-cancel is independent', async () => {
+    const { service, orchestratorCancel } = makeService('implementing');
+    const result = await service.cancel({ userId: 'u' } as never, 'task-1', undefined);
+
+    expect(result).toEqual({ id: 'task-1', status: 'cancelled' });
+    expect(orchestratorCancel).toHaveBeenCalledWith('task-1');
+  });
+});
+
+/**
  * ADR-088, extended to every project type by ADR-095: a request that did not
  * name a kind is classified from its own text, regardless of project type.
  */

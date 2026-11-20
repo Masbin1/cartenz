@@ -541,6 +541,27 @@ export class TasksService {
 
     await this.orchestrator.cancel(taskId);
 
+    /**
+     * Closes any approval still sitting on this task as `pending`.
+     *
+     * Found by a functionality sweep: cancelling a task left its pending
+     * `implementation_plan`/`git_push` approval row untouched, so it kept
+     * showing up forever in the AI Office "needs attention" queue
+     * (`ai-office.service.ts#attention`, which lists every `approvals.status =
+     * 'pending'` row) for a task that was already dead and would never resume
+     * to decide it. `rejected` rather than deleting the row: the approval was a
+     * real request that was never going to be answered, and the audit trail
+     * should say so rather than have the row simply vanish.
+     */
+    await this.database.db
+      .update(approvals)
+      .set({
+        status: 'rejected',
+        decidedAt: new Date(),
+        decisionNote: 'The task was cancelled before this was decided.',
+      })
+      .where(and(eq(approvals.taskId, taskId), eq(approvals.status, 'pending')));
+
     await this.audit.record({
       event: AUDIT_EVENTS.TASK_CANCELLED,
       projectId: task.projectId,
