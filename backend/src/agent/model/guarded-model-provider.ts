@@ -74,6 +74,23 @@ export class GuardedModelProvider implements ModelProvider {
     const outbound = this.filterOutbound(request.system, request.parts, findings);
 
     /**
+     * Repeated-call guard (task_230820: a chat task calling `search_code` with
+     * the exact same query fifteen times in a row - 26 reads in all - until the
+     * step budget ran out with no answer given). Nothing upstream of this
+     * wrapper compares a call to what came before it: the step and tool-call
+     * budgets are just counters, so a model stuck repeating itself burns the
+     * whole budget before either one objects, and the task fails having done
+     * nothing.
+     *
+     * Scoped to this one loop invocation (one task attempt), not persisted
+     * beyond it - a resumed task counts fresh, which is deliberate: its
+     * `priorProgress` already tells the model what happened last time, and a
+     * Map surviving across HTTP calls would need a store, for a problem that is
+     * about one run getting stuck, not about memory across runs.
+     */
+    const callCounts = new Map<string, number>();
+
+    /**
      * Tool results are the subtlest egress path in the whole system: `read_file`
      * returns repository content straight into the model's context, and it is the
      * one place the platform hands over material it has never inspected. Wrapping
@@ -84,6 +101,31 @@ export class GuardedModelProvider implements ModelProvider {
       name: string,
       args: Record<string, unknown>,
     ): Promise<ToolCallOutcome> => {
+      const signature = `${name}::${stableStringify(args ?? {})}`;
+      const priorCount = callCounts.get(signature) ?? 0;
+      callCounts.set(signature, priorCount + 1);
+
+      // The 3rd and every later identical call is refused outright - the real
+      // tool never runs, so a loop like task_230820's costs no further real
+      // work once spotted, and the model is told plainly rather than left to
+      // find out by getting the same result back again.
+      if (priorCount >= 2) {
+        this.logger.warn(
+          `Refused a repeated identical call to ${name} (attempt ${priorCount + 1}, ` +
+            `same arguments as before): ${signature}`,
+        );
+        return {
+          result: {
+            status: 'denied',
+            message:
+              `You already called ${name} with these exact same arguments ${priorCount} ` +
+              'time(s) before in this task, and the result will not change by calling it ' +
+              'again. Repeating it will keep being refused. Use what the earlier result ' +
+              'already told you and answer now, or do something genuinely different instead.',
+          },
+        };
+      }
+
       const outcome = await request.execute(name, args);
       const filtered = this.boundary.filterDeep(outcome.result ?? {}, {
         direction: 'to_provider',
@@ -108,7 +150,25 @@ export class GuardedModelProvider implements ModelProvider {
       }
 
       findings.push(...filtered.findings);
-      return { ...outcome, result: (filtered.value ?? {}) as Record<string, unknown> };
+      const value = (filtered.value ?? {}) as Record<string, unknown>;
+
+      // The 2nd identical call still runs - a deliberate second look is
+      // legitimate (orient, then confirm before finishing) - but it is told
+      // plainly that nothing changed, so a 3rd attempt is a choice the model
+      // makes with the fact in front of it, not a surprise refusal.
+      if (priorCount === 1) {
+        return {
+          ...outcome,
+          result: {
+            ...value,
+            _repeat_notice:
+              `This is the same call to ${name} with the same arguments you already made ` +
+              'once before. The result is unchanged. Calling it again will be refused.',
+          },
+        };
+      }
+
+      return { ...outcome, result: value };
     };
 
     const result = await this.inner.runToolLoop({
@@ -196,6 +256,28 @@ export class GuardedModelProvider implements ModelProvider {
 
     return filtered.value as T;
   }
+}
+
+/**
+ * Deterministic JSON, independent of key insertion order.
+ *
+ * Model tool calls are parsed from the model's own JSON output, which does not
+ * promise a stable key order across two calls that mean the same thing (e.g.
+ * `{path, query}` vs `{query, path}`). `JSON.stringify` alone would treat those
+ * as different signatures and let the repeated-call guard above miss them.
+ */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const keys = Object.keys(value as Record<string, unknown>).sort();
+    const entries = keys.map(
+      (key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`,
+    );
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function merge(findings: readonly BoundaryFinding[]): BoundaryFinding[] {

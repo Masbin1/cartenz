@@ -285,6 +285,105 @@ describe('GuardedModelProvider', () => {
     });
   });
 
+  describe('repeated identical tool calls (task_230820)', () => {
+    it('lets the 1st and 2nd identical calls through, flagging the 2nd', async () => {
+      inner.scriptedCalls = [
+        { name: 'search_code', args: { query: 'int_type_id' } },
+        { name: 'search_code', args: { query: 'int_type_id' } },
+      ];
+
+      await guarded.runToolLoop({
+        system: 'You are an agent.',
+        parts: [{ label: 'Request', content: 'Find int_type_id' }],
+        tools: [],
+        execute: async () => ({ result: { matches: ['a.py:3'] } }),
+        maxSteps: 10,
+        maxToolCalls: 10,
+      });
+
+      expect(inner.toolResultsReceived[0]._repeat_notice).toBeUndefined();
+      expect(inner.toolResultsReceived[1]._repeat_notice).toContain('same call');
+      // The real result still reaches the model both times - only the 3rd+ is refused.
+      expect(inner.toolResultsReceived[1].matches).toEqual(['a.py:3']);
+    });
+
+    it('refuses the 3rd identical call without running the tool again', async () => {
+      let realCalls = 0;
+      inner.scriptedCalls = [
+        { name: 'search_code', args: { query: 'int_type_id' } },
+        { name: 'search_code', args: { query: 'int_type_id' } },
+        { name: 'search_code', args: { query: 'int_type_id' } },
+      ];
+
+      await guarded.runToolLoop({
+        system: 'You are an agent.',
+        parts: [{ label: 'Request', content: 'Find int_type_id' }],
+        tools: [],
+        execute: async () => {
+          realCalls += 1;
+          return { result: { matches: ['a.py:3'] } };
+        },
+        maxSteps: 10,
+        maxToolCalls: 10,
+      });
+
+      // Only the 1st and 2nd calls reached the real tool; the 3rd was refused
+      // by this wrapper before request.execute ran at all.
+      expect(realCalls).toBe(2);
+      expect(inner.toolResultsReceived[2].status).toBe('denied');
+      expect(inner.toolResultsReceived[2].message).toContain('already called search_code');
+    });
+
+    it('does not confuse two calls with different arguments for a repeat', async () => {
+      let realCalls = 0;
+      inner.scriptedCalls = [
+        { name: 'search_code', args: { query: 'int_type_id' } },
+        { name: 'search_code', args: { query: 'product_reference_code' } },
+        { name: 'search_code', args: { query: 'int_type_id' } },
+      ];
+
+      await guarded.runToolLoop({
+        system: 'You are an agent.',
+        parts: [{ label: 'Request', content: 'Search two things' }],
+        tools: [],
+        execute: async () => {
+          realCalls += 1;
+          return { result: {} };
+        },
+        maxSteps: 10,
+        maxToolCalls: 10,
+      });
+
+      // All three are distinct or a 2nd-of-a-pair, none a 3rd repeat yet.
+      expect(realCalls).toBe(3);
+      expect(inner.toolResultsReceived.every((result) => result.status !== 'denied')).toBe(true);
+    });
+
+    it('treats argument key order as the same call', async () => {
+      let realCalls = 0;
+      inner.scriptedCalls = [
+        { name: 'read_file', args: { path: 'a.py', encoding: 'utf8' } },
+        { name: 'read_file', args: { encoding: 'utf8', path: 'a.py' } },
+        { name: 'read_file', args: { path: 'a.py', encoding: 'utf8' } },
+      ];
+
+      await guarded.runToolLoop({
+        system: 'You are an agent.',
+        parts: [{ label: 'Request', content: 'Read a file' }],
+        tools: [],
+        execute: async () => {
+          realCalls += 1;
+          return { result: { content: 'x' } };
+        },
+        maxSteps: 10,
+        maxToolCalls: 10,
+      });
+
+      expect(realCalls).toBe(2);
+      expect(inner.toolResultsReceived[2].status).toBe('denied');
+    });
+  });
+
   describe('accounting', () => {
     it('reports what it removed, in both directions', async () => {
       const schema = z.object({ summary: z.string() });
