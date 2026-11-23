@@ -32,6 +32,7 @@ import {
   UpdateAgentPermissionsDto,
   UpdateProjectDto,
   UpdateProjectGitAccessDto,
+  UpdateOdooOnlineConnectionDto,
   VerifyOdooOnlineConnectionDto,
 } from './dto/project.dto';
 import { ProjectEnvironmentsService } from './project-environments.service';
@@ -326,6 +327,26 @@ export class ProjectsController {
     @Param('connectionId', ParseUUIDPipe) connectionId: string,
   ) {
     return this.projects.deleteConnection(user, projectId, connectionId);
+  }
+
+  /**
+   * Updates an Odoo Online connection's url, login, db and/or API key.
+   *
+   * Its own path rather than a generic PATCH on the connection, for the same
+   * reason `git-access` has its own: an Odoo Online connection's URL and key
+   * mean something a generic "connection" PATCH would have to special-case
+   * anyway (the re-authentication step), so the type-specific name says what
+   * actually happens up front rather than hiding it behind a shape the caller
+   * has to read `connectionType` to understand.
+   */
+  @Patch(':projectId/connections/:connectionId/odoo-online')
+  updateOdooOnlineConnection(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('connectionId', ParseUUIDPipe) connectionId: string,
+    @Body() dto: UpdateOdooOnlineConnectionDto,
+  ) {
+    return this.projects.updateOdooOnlineConnection(user, projectId, connectionId, dto);
   }
 
   /**

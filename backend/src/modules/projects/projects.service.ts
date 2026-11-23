@@ -2667,6 +2667,134 @@ export class ProjectsService {
     });
   }
 
+  /**
+   * Updates an Odoo Online connection's address, login, database and/or API
+   * key (project settings, "Odoo instance").
+   *
+   * Written for the case a development/staging instance's address genuinely
+   * changes and the project must follow it there, without deleting and
+   * re-creating the connection (which would also discard its id and audit
+   * history). Only `odoo_api` connections are editable this way - a Git
+   * remote's URL is changed through the project's own `repositoryUrl`/
+   * on-premise settings, not through this path.
+   *
+   * Every field is optional on the request, but what is actually verified and
+   * stored is the FULL resulting set: an omitted field keeps its current
+   * value, and the combination (not just the changed field in isolation) is
+   * re-authenticated against the live instance before anything is written.
+   * Changing only the API key but leaving a now-stale URL would otherwise
+   * "succeed" while every task still fails at its first read.
+   */
+  async updateOdooOnlineConnection(
+    user: AuthenticatedUser,
+    projectId: string,
+    connectionId: string,
+    dto: { url?: string; login?: string; db?: string; apiKey?: string },
+  ) {
+    await this.authz.requireProjectAccess(user, projectId, {
+      requireAdmin: true,
+    });
+
+    if (!dto.url && !dto.login && !dto.db && !dto.apiKey) {
+      throw new BadRequestException(
+        'Supply at least one of url, login, db or apiKey to change.',
+      );
+    }
+
+    const [connection] = await this.database.db
+      .select()
+      .from(projectConnections)
+      .where(
+        and(eq(projectConnections.id, connectionId), eq(projectConnections.projectId, projectId)),
+      )
+      .limit(1);
+
+    if (!connection) throw new NotFoundException('Connection not found');
+
+    if (connection.connectionType !== 'odoo_api') {
+      throw new BadRequestException(
+        `This endpoint edits an Odoo Online connection; "${connection.connectionType}" is not one.`,
+      );
+    }
+
+    const currentMetadata = connection.metadata as { url?: unknown; login?: unknown; db?: unknown };
+    const currentLogin =
+      dto.login ?? (typeof currentMetadata.login === 'string' ? currentMetadata.login : '');
+    const currentUrl =
+      dto.url ?? (typeof currentMetadata.url === 'string' ? currentMetadata.url : '');
+    const currentDb = dto.db ?? (typeof currentMetadata.db === 'string' ? currentMetadata.db : undefined);
+
+    // The key is the one field never read back: an omitted apiKey means "keep
+    // the one already sealed", so it has to be unsealed here to re-authenticate
+    // the combination - there is no way to prove a URL or login change works
+    // without a key to try it with.
+    const apiKey =
+      dto.apiKey ?? (connection.secretRef ? await this.secrets.read(connection.secretRef) : '');
+
+    if (!apiKey) {
+      throw new BadRequestException(
+        'This connection has no API key stored yet. Supply one to verify and save the change.',
+      );
+    }
+
+    const verified = await this.verifyOdooOnlineCredentials({
+      url: currentUrl,
+      login: currentLogin,
+      db: currentDb,
+      apiKey,
+    });
+
+    // The key is only re-sealed when it actually changed - rewriting the same
+    // plaintext under a fresh reference would still work, but it would also
+    // destroy and recreate a secret record for no reason, losing whatever
+    // `createdAt` on it meant before.
+    let secretRef = connection.secretRef;
+    if (dto.apiKey) {
+      const sealed = await this.secrets.write({
+        projectId,
+        purpose: 'odoo_api-token',
+        value: dto.apiKey,
+      });
+      if (connection.secretRef) await this.secrets.destroy(connection.secretRef);
+      secretRef = sealed.ref;
+    }
+
+    const [updated] = await this.database.db
+      .update(projectConnections)
+      .set({
+        secretRef,
+        status: 'connected',
+        metadata: redactMetadata({ url: verified.url, login: verified.login, db: verified.db }),
+        lastCheckedAt: new Date(),
+        lastError: null,
+      })
+      .where(eq(projectConnections.id, connectionId))
+      .returning({
+        id: projectConnections.id,
+        connectionType: projectConnections.connectionType,
+        status: projectConnections.status,
+        metadata: projectConnections.metadata,
+        createdAt: projectConnections.createdAt,
+      });
+
+    await this.audit.record({
+      event: AUDIT_EVENTS.PROJECT_CONNECTION_UPDATED,
+      projectId,
+      userId: user.userId,
+      metadata: {
+        connectionType: 'odoo_api',
+        changed: [
+          dto.url ? 'url' : null,
+          dto.login ? 'login' : null,
+          dto.db ? 'db' : null,
+          dto.apiKey ? 'apiKey' : null,
+        ].filter((field): field is string => field !== null),
+      },
+    });
+
+    return { ...updated, hasCredentials: secretRef !== null };
+  }
+
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------

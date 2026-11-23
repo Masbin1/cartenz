@@ -983,6 +983,24 @@ export const api = {
     deleteConnection: (projectId: string, connectionId: string) =>
       request<void>(`/projects/${projectId}/connections/${connectionId}`, { method: 'DELETE' }),
 
+    /**
+     * Updates an Odoo Online connection's url, login, db and/or API key.
+     *
+     * Every field is optional — send only what changed. The server re-verifies
+     * the full resulting set (not just the changed field) against the live
+     * instance before saving, so a typo or a revoked key surfaces here rather
+     * than at the next task's first read.
+     */
+    updateOdooOnlineConnection: (
+      projectId: string,
+      connectionId: string,
+      body: { url?: string; login?: string; db?: string; apiKey?: string },
+    ) =>
+      request<ProjectConnectionResponse>(
+        `/projects/${projectId}/connections/${connectionId}/odoo-online`,
+        { method: 'PATCH', body },
+      ),
+
     environments: (projectId: string) =>
       request<ProjectEnvironment[]>(`/projects/${projectId}/environments`),
 

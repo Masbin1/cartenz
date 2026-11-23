@@ -42,6 +42,8 @@ export const AUDIT_EVENTS = {
   PROJECT_DELETED: 'project.deleted',
   PROJECT_CONNECTION_CREATED: 'project.connection_created',
   PROJECT_CONNECTION_DELETED: 'project.connection_deleted',
+  /** An Odoo Online connection's url, login, db or API key was changed (ADR-028 addendum). */
+  PROJECT_CONNECTION_UPDATED: 'project.connection_updated',
   PROJECT_SPECIFICATION_CREATED: 'project.specification_created',
   PROJECT_AGENT_PERMISSIONS_CHANGED: 'project.agent_permissions_changed',
   /** An admin/owner revealed a provisioned instance's Odoo master password (ADR-040). */

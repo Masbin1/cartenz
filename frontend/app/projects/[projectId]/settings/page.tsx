@@ -77,6 +77,23 @@ export default function ProjectSettingsPage() {
   }>({ gitTransport: 'auto', gitCredentialId: '', gitUsername: '' });
   const [gitAccessSaving, setGitAccessSaving] = useState(false);
 
+  /**
+   * The Odoo Online connection's url, login and API key (project settings,
+   * "Odoo instance"). A development/staging instance's address genuinely
+   * changes over the project's life, and this is how it is followed there
+   * without deleting and re-creating the connection.
+   *
+   * The API key field is deliberately never pre-filled from the loaded
+   * connection - the server never returns one, by design (ADR-014) - so it
+   * starts blank and is sent only when the person actually types a new one.
+   */
+  const [odooOnlineDraft, setOdooOnlineDraft] = useState<{ url: string; login: string; apiKey: string }>({
+    url: '',
+    login: '',
+    apiKey: '',
+  });
+  const [odooOnlineSaving, setOdooOnlineSaving] = useState(false);
+
   const canEdit = user?.isAdmin ?? false;
 
   const load = useCallback(async () => {
@@ -90,6 +107,16 @@ export default function ProjectSettingsPage() {
       setLocalOnly(detail.localProviderOnly);
       setEnvironments(environmentList);
       setBranchDraft((previous) => (previous === '' ? detail.defaultBranch : previous));
+
+      const odooOnline = detail.connections.find((c) => c.connectionType === 'odoo_api');
+      if (odooOnline) {
+        setOdooOnlineDraft((previous) => ({
+          ...previous,
+          url: typeof odooOnline.metadata.url === 'string' ? odooOnline.metadata.url : previous.url,
+          login:
+            typeof odooOnline.metadata.login === 'string' ? odooOnline.metadata.login : previous.login,
+        }));
+      }
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'The project could not be loaded.');
     }
@@ -234,6 +261,61 @@ export default function ProjectSettingsPage() {
       );
     } finally {
       setGitAccessSaving(false);
+    }
+  };
+
+  /**
+   * Saves the Odoo Online connection's url, login and/or API key.
+   *
+   * Only fields that changed from what was loaded are sent — an unchanged url
+   * or login is omitted so the server keeps its current value rather than
+   * re-verifying a value that was never edited, and the API key is sent only
+   * when the field was actually typed into (it is never pre-filled).
+   * Whatever is sent, the server re-verifies the FULL resulting set against
+   * the live instance before saving, so a wrong URL or a revoked key is a
+   * form error here rather than every task's first read failing afterwards.
+   */
+  const saveOdooOnline = async () => {
+    const connection = project?.connections.find((c) => c.connectionType === 'odoo_api');
+    if (!connection) return;
+
+    const currentUrl = typeof connection.metadata.url === 'string' ? connection.metadata.url : '';
+    const currentLogin =
+      typeof connection.metadata.login === 'string' ? connection.metadata.login : '';
+
+    const body: { url?: string; login?: string; apiKey?: string } = {};
+    if (odooOnlineDraft.url.trim() && odooOnlineDraft.url.trim() !== currentUrl) {
+      body.url = odooOnlineDraft.url.trim();
+    }
+    if (odooOnlineDraft.login.trim() && odooOnlineDraft.login.trim() !== currentLogin) {
+      body.login = odooOnlineDraft.login.trim();
+    }
+    if (odooOnlineDraft.apiKey.trim()) {
+      body.apiKey = odooOnlineDraft.apiKey.trim();
+    }
+
+    if (Object.keys(body).length === 0) {
+      setNotice('Nothing changed.');
+      return;
+    }
+
+    setOdooOnlineSaving(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      await api.projects.updateOdooOnlineConnection(projectId, connection.id, body);
+      setOdooOnlineDraft((previous) => ({ ...previous, apiKey: '' }));
+      await load();
+      setNotice('Odoo instance connection updated and verified.');
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError
+          ? caught.message
+          : 'The Odoo Online connection could not be updated.',
+      );
+    } finally {
+      setOdooOnlineSaving(false);
     }
   };
 
@@ -1045,6 +1127,131 @@ export default function ProjectSettingsPage() {
               </div>
             </SettingsGroup>
           ) : null}
+
+          {(() => {
+            const odooOnlineConnection = project.connections.find(
+              (c) => c.connectionType === 'odoo_api',
+            );
+            if (!odooOnlineConnection) return null;
+
+            return (
+              <SettingsGroup
+                title="Odoo instance"
+                description="The Odoo Online database this project works against. The address changes as the project moves between development, staging and the customer&apos;s own instance — update it here rather than disconnecting and reconnecting, so the connection keeps its history."
+                aside={canEdit ? undefined : 'Admin role required to change.'}
+              >
+                <div className="panel overflow-hidden">
+                  <div className="space-y-6 px-5 py-6 sm:px-6">
+                    <div>
+                      <label htmlFor="odooOnlineUrl" className="field-label">
+                        Instance URL
+                      </label>
+                      <input
+                        id="odooOnlineUrl"
+                        type="text"
+                        value={odooOnlineDraft.url}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setOdooOnlineDraft((previous) => ({ ...previous, url: event.target.value }))
+                        }
+                        placeholder="https://your-database.odoo.com"
+                        className="field-input"
+                      />
+                      <p className="field-hint">
+                        Paste the new address exactly as it appears in the browser — the database
+                        name is read from its subdomain.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label htmlFor="odooOnlineLogin" className="field-label">
+                        Login
+                      </label>
+                      <input
+                        id="odooOnlineLogin"
+                        type="email"
+                        value={odooOnlineDraft.login}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setOdooOnlineDraft((previous) => ({ ...previous, login: event.target.value }))
+                        }
+                        placeholder="you@company.com"
+                        className="field-input"
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="odooOnlineApiKey" className="field-label">
+                        API key
+                      </label>
+                      <input
+                        id="odooOnlineApiKey"
+                        type="password"
+                        autoComplete="new-password"
+                        value={odooOnlineDraft.apiKey}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setOdooOnlineDraft((previous) => ({ ...previous, apiKey: event.target.value }))
+                        }
+                        placeholder={
+                          odooOnlineConnection.hasCredentials
+                            ? 'Leave blank to keep the current key'
+                            : 'No key stored yet'
+                        }
+                        className="field-input"
+                      />
+                      <p className="field-hint">
+                        Generate one in the instance under Preferences → Account Security. Never
+                        shown again once saved — leave this blank to keep the one already stored.
+                      </p>
+                    </div>
+
+                    <DetailList>
+                      <DetailItem label="Status">
+                        <StatusDot
+                          size="small"
+                          tone={
+                            odooOnlineConnection.status === 'connected'
+                              ? 'success'
+                              : odooOnlineConnection.status === 'error'
+                                ? 'failure'
+                                : 'idle'
+                          }
+                        >
+                          {humanise(odooOnlineConnection.status)}
+                        </StatusDot>
+                      </DetailItem>
+                      {odooOnlineConnection.lastCheckedAt ? (
+                        <DetailItem label="Last verified">
+                          {new Date(odooOnlineConnection.lastCheckedAt).toLocaleString()}
+                        </DetailItem>
+                      ) : null}
+                    </DetailList>
+
+                    {odooOnlineConnection.status === 'error' && odooOnlineConnection.lastError ? (
+                      <Alert tone="error" title="The instance refused the stored credentials">
+                        {odooOnlineConnection.lastError}
+                      </Alert>
+                    ) : null}
+                  </div>
+
+                  {canEdit ? (
+                    <div className="flex justify-end border-t border-surface-border px-5 py-4 sm:px-6">
+                      <button
+                        type="button"
+                        onClick={() => void saveOdooOnline()}
+                        disabled={odooOnlineSaving}
+                        className="btn-primary"
+                      >
+                        {odooOnlineSaving ? <Spinner className="h-3.5 w-3.5" /> : null}
+                        Save and verify
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </SettingsGroup>
+            );
+          })()}
 
           <SettingsGroup
             title="Connections"

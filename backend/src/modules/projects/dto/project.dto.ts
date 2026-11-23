@@ -511,6 +511,48 @@ export class VerifyOdooOnlineConnectionDto {
 }
 
 /**
+ * Updates an existing `odoo_api` connection's address, login and/or API key.
+ *
+ * Every field is optional so a caller can rotate only the key, or only move
+ * the URL after a staging/development instance address changes, without
+ * resending the others. At least one must be supplied - an empty body is
+ * refused rather than silently doing nothing. Whatever results (existing
+ * values filled in for whichever field was omitted) is re-verified against
+ * the live instance before anything is stored, exactly as creating the
+ * connection does: a typo in a new URL or a revoked key becomes a form error
+ * immediately rather than a task failing on its first read, after a person
+ * has already written a prompt and waited for it.
+ */
+export class UpdateOdooOnlineConnectionDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'The instance url cannot be blank' })
+  @MaxLength(500)
+  @Transform(trim)
+  url?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'The login cannot be blank' })
+  @MaxLength(320)
+  @Transform(trim)
+  login?: string;
+
+  /** Defaults to the URL's subdomain when omitted, same as the connection path. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  @Transform(trim)
+  db?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'The API key cannot be blank' })
+  @MaxLength(16384)
+  apiKey?: string;
+}
+
+/**
  * Create a project connection. `credential` is the only field in the API that
  * carries secret material; it is sealed immediately and is never read back,
  * logged or returned.
