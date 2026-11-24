@@ -125,6 +125,21 @@ describe('ProjectsService.updateOdooOnlineConnection — source properties', () 
     expect(block).toMatch(/this\.verifyOdooOnlineCredentials\(\{/);
   });
 
+  /**
+   * Found live: changing only the url left the OLD database name attached
+   * (the subdomain-derived db is "offered as a default" by `databaseFromUrl`,
+   * but nothing re-offered it once a connection already had one), so moving a
+   * dev/staging instance to a new address authenticated against a database
+   * that had moved with it — Odoo Online's own `FATAL: database "..." does
+   * not exist`, surfaced through authenticate()'s error channel. This form
+   * has no db field by design (see UpdateOdooOnlineConnectionDto), so url
+   * changing without an explicit db must re-derive it from the NEW url, not
+   * carry the old one forward.
+   */
+  it('re-derives db from the new url when url changes and db is not explicit', () => {
+    expect(block).toMatch(/databaseFromUrl\(instanceRootOf\(dto\.url\)\)/);
+  });
+
   it('only re-seals the key when apiKey was actually supplied', () => {
     const sealBlock = block.slice(block.indexOf('let secretRef'));
     expect(sealBlock).toMatch(/if \(dto\.apiKey\) \{/);

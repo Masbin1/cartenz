@@ -2722,7 +2722,30 @@ export class ProjectsService {
       dto.login ?? (typeof currentMetadata.login === 'string' ? currentMetadata.login : '');
     const currentUrl =
       dto.url ?? (typeof currentMetadata.url === 'string' ? currentMetadata.url : '');
-    const currentDb = dto.db ?? (typeof currentMetadata.db === 'string' ? currentMetadata.db : undefined);
+
+    /**
+     * The database name, re-derived whenever the url changes rather than kept.
+     *
+     * The subdomain IS the database on odoo.com (ADR-028): moving a dev/staging
+     * instance to a new address almost always means a new database too, and
+     * `db` has no field of its own on this form for exactly that reason - it
+     * would invite pasting the new URL while leaving a stale db value sitting
+     * underneath it, authenticating against a database that moved or no longer
+     * exists (the previous shape of this method did exactly that). An explicit
+     * `dto.db` still wins, for the instance where the two genuinely differ.
+     *
+     * `instanceRootOf` throws on a non-https url; caught here (rather than left
+     * to surface as a 500) because `verifyOdooOnlineCredentials` below would
+     * only reach its own, equivalent check after this line already threw.
+     */
+    let currentDb = dto.db ?? (typeof currentMetadata.db === 'string' ? currentMetadata.db : undefined);
+    if (!dto.db && dto.url) {
+      try {
+        currentDb = databaseFromUrl(instanceRootOf(dto.url)) ?? undefined;
+      } catch (error) {
+        throw new BadRequestException((error as Error).message);
+      }
+    }
 
     // The key is the one field never read back: an omitted apiKey means "keep
     // the one already sealed", so it has to be unsealed here to re-authenticate
