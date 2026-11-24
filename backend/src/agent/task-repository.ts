@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
-import { and, asc, desc, eq, isNull, lt, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { DatabaseService } from '../core/database/database.service';
 import { withSequenceRetry } from '../core/database/task-sequence';
 import {
@@ -734,6 +734,18 @@ export class TaskRepository {
     projectId: string,
     options: {
       readonly excludeTaskId?: string;
+      /**
+       * Excludes every task of this session, not just the current one.
+       *
+       * Used when the caller already carries the current session's full turns
+       * (ADR-074's `conversationContext`) alongside this index (ADR-080): without
+       * this, every other task of the SAME conversation appeared twice - once in
+       * full by conversationContext, once summarised here - spending tokens on a
+       * duplicate rather than on history this index exists to add. Omitted by
+       * `read_project_history` (the tool has no conversation of its own to
+       * exclude) and by any caller reading a single session's history on its own.
+       */
+      readonly excludeSessionId?: string;
       readonly sessionId?: string;
       readonly reference?: string;
       readonly limit: number;
@@ -742,6 +754,14 @@ export class TaskRepository {
     const filters = [eq(agentTasks.projectId, projectId)];
 
     if (options.excludeTaskId) filters.push(ne(agentTasks.id, options.excludeTaskId));
+    if (options.excludeSessionId) {
+      filters.push(
+        or(
+          ne(agentTasks.sessionId, options.excludeSessionId),
+          isNull(agentTasks.sessionId),
+        )!,
+      );
+    }
     if (options.sessionId) filters.push(eq(agentTasks.sessionId, options.sessionId));
     if (options.reference) filters.push(eq(agentTasks.reference, options.reference));
 
@@ -812,14 +832,23 @@ export class TaskRepository {
   /**
    * The index a prompt carries: the project's most recent requests plus the
    * totals needed to say what the index leaves out (ADR-080).
+   *
+   * `excludeSessionId` is the current task's own conversation: its turns are
+   * already carried in full by `conversationContext` (ADR-074), so this index
+   * covers every OTHER conversation instead of repeating them in summary.
    */
   async projectHistoryForPrompt(
     projectId: string,
     excludeTaskId: string,
     maxTasks: number,
+    excludeSessionId?: string | null,
   ): Promise<ProjectHistory> {
     const [tasks, counts] = await Promise.all([
-      this.loadProjectHistory(projectId, { excludeTaskId, limit: maxTasks }),
+      this.loadProjectHistory(projectId, {
+        excludeTaskId,
+        limit: maxTasks,
+        ...(excludeSessionId ? { excludeSessionId } : {}),
+      }),
       this.countProjectHistory(projectId),
     ]);
 

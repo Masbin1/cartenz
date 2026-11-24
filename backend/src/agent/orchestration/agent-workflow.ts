@@ -211,6 +211,12 @@ export class AgentWorkflow {
         snapshot.projectId,
         snapshot.taskId,
         DEFAULT_PROJECT_HISTORY_BUDGET.maxTasks,
+        // The current task's own conversation is excluded: its turns are
+        // already carried in full by conversationContext() just above, so this
+        // index would otherwise repeat every other task of the SAME session
+        // in summary - a duplicate, not new context - while still bounded by
+        // the same character budget that is meant to cover OTHER conversations.
+        snapshot.sessionId,
       );
       return buildProjectHistory(history);
     } catch (error) {
