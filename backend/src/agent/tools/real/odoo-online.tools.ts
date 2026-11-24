@@ -102,10 +102,14 @@ export class OdooOnlineTools {
   }
 
   /**
-   * Resolves and unseals the Odoo Online credentials for a task's project.
+   * Resolves and unseals the JSON-RPC credentials for a task's project.
    *
-   * The API key is a sealed secret, unsealed here on demand and never held beyond
-   * the call. URL, database and login are non-secret connection metadata.
+   * Used by both `odoo_online` (the project's only mode) and `odoo_sh` (a
+   * repository-backed project's *separate* live instance, reached over the
+   * same Odoo JSON-RPC API Studio uses - distinct from the Git push path,
+   * which never touches these credentials). The API key is a sealed secret,
+   * unsealed here on demand and never held beyond the call. URL, database
+   * and login are non-secret connection metadata.
    */
   private async resolveCredentials(context: ToolExecutionContext): Promise<OdooOnlineCredentials> {
     const [connection] = await this.database.db
@@ -125,8 +129,8 @@ export class OdooOnlineTools {
 
     if (!connection?.secretRef) {
       throw new Error(
-        'This Odoo Online project has no odoo_api connection with an API key. ' +
-          'Add one in the project settings.',
+        'This project has no Odoo connection (url, login and API key) with a stored ' +
+          'key. Add one in the project settings.',
       );
     }
 
@@ -137,7 +141,7 @@ export class OdooOnlineTools {
 
     if (!url || !db || !login) {
       throw new Error(
-        'The Odoo Online connection is missing url, db or login in its metadata.',
+        'The Odoo connection is missing url, db or login in its metadata.',
       );
     }
 
@@ -310,7 +314,12 @@ export class OdooOnlineTools {
       'increasing offset to walk an entire table looking for wrong or mismatched data - there ' +
       'is no limit on how much of a table may be read this way, only on one call\'s page size.',
     permission: 'database_record_read',
-    modes: ['odoo_online', 'on_premise'],
+    // odoo_sh (ADR-028 addendum): a repository-backed project's live Odoo.sh
+    // instance has its own JSON-RPC credentials (project settings, "Odoo.sh
+    // instance") distinct from the Git push path - reading records there goes
+    // through resolveCredentials exactly like odoo_online, never through the
+    // repository workspace.
+    modes: ['odoo_online', 'odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: ODOO_SEARCH_RECORDS_SCHEMA,
@@ -367,7 +376,7 @@ export class OdooOnlineTools {
       'that is really a total or an average ("total sales by month", "count of leads by stage"), ' +
       'since it computes the answer on the instance rather than requiring every row to be read.',
     permission: 'database_record_read',
-    modes: ['odoo_online', 'on_premise'],
+    modes: ['odoo_online', 'odoo_sh', 'on_premise'],
     leavesPlatform: false,
     simulated: false,
     parameters: ODOO_AGGREGATE_RECORDS_SCHEMA,
@@ -413,7 +422,7 @@ export class OdooOnlineTools {
     name: 'odoo_create_records',
     description: 'Create records (e.g. sample products or customers) on the live Odoo instance',
     permission: 'database_record_write',
-    modes: ['odoo_online', 'on_premise'],
+    modes: ['odoo_online', 'odoo_sh', 'on_premise'],
     leavesPlatform: true,
     simulated: false,
     parameters: ODOO_CREATE_RECORDS_SCHEMA,
@@ -444,7 +453,7 @@ export class OdooOnlineTools {
     name: 'odoo_update_records',
     description: 'Update field values on existing records of the live Odoo instance',
     permission: 'database_record_write',
-    modes: ['odoo_online', 'on_premise'],
+    modes: ['odoo_online', 'odoo_sh', 'on_premise'],
     leavesPlatform: true,
     simulated: false,
     parameters: ODOO_UPDATE_RECORDS_SCHEMA,

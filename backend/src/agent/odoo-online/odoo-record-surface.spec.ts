@@ -242,12 +242,15 @@ describe('the Odoo Online record surface', () => {
       expect(decision.outcome).toBe('denied');
     });
 
-    it('is not reachable from a repository-backed task', () => {
+    it('reaches a repository-backed (odoo_sh) task when granted, like odoo_online', () => {
+      // Deliberate (ADR-028 addendum): a repository-backed project's live
+      // Odoo.sh instance is a separate JSON-RPC connection from the Git push
+      // path, gated by the same permission and approval as odoo_online.
       const decision = validator.validate(
         { toolName: 'odoo_create_records', input: createInput },
         { ...policy({ granted: ['odoo_record_write'] }), executionMode: 'odoo_sh' as const },
       );
-      expect(decision.outcome).toBe('denied');
+      expect(decision.outcome).toBe('allowed');
     });
   });
 });

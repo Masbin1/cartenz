@@ -265,19 +265,57 @@ export default function ProjectSettingsPage() {
   };
 
   /**
-   * Saves the Odoo Online connection's url, login and/or API key.
+   * Saves this project's JSON-RPC Odoo connection (url, login, API key):
+   * `odoo_online` project settings, or project settings on a repository-
+   * backed (`odoo_sh`/`repository`) or `on_premise` project's separate live
+   * instance.
    *
-   * Only fields that changed from what was loaded are sent — an unchanged url
-   * or login is omitted so the server keeps its current value rather than
-   * re-verifying a value that was never edited, and the API key is sent only
-   * when the field was actually typed into (it is never pre-filled).
-   * Whatever is sent, the server re-verifies the FULL resulting set against
-   * the live instance before saving, so a wrong URL or a revoked key is a
-   * form error here rather than every task's first read failing afterwards.
+   * Creates the connection when the project has none yet (odoo_sh/repository/
+   * on_premise never get one at project creation, unlike odoo_online); once
+   * one exists this instead edits it in place, so the connection keeps its id
+   * and audit history as the address moves between development, staging and
+   * the customer's own instance.
+   *
+   * Editing sends only fields that changed from what was loaded — an
+   * unchanged url or login is omitted so the server keeps its current value
+   * rather than re-verifying a value that was never edited, and the API key
+   * is sent only when the field was actually typed into (it is never
+   * pre-filled). Whatever is sent, the server re-verifies the FULL resulting
+   * set against the live instance before saving, so a wrong URL or a revoked
+   * key is a form error here rather than every task's first read failing
+   * afterwards.
    */
   const saveOdooOnline = async () => {
     const connection = project?.connections.find((c) => c.connectionType === 'odoo_api');
-    if (!connection) return;
+
+    if (!connection) {
+      if (!odooOnlineDraft.url.trim() || !odooOnlineDraft.login.trim() || !odooOnlineDraft.apiKey.trim()) {
+        setError('The instance needs a url, a login and an API key to connect.');
+        return;
+      }
+
+      setOdooOnlineSaving(true);
+      setError(null);
+      setNotice(null);
+
+      try {
+        await api.projects.createConnection(projectId, {
+          connectionType: 'odoo_api',
+          credential: odooOnlineDraft.apiKey.trim(),
+          metadata: { url: odooOnlineDraft.url.trim(), login: odooOnlineDraft.login.trim() },
+        });
+        setOdooOnlineDraft((previous) => ({ ...previous, apiKey: '' }));
+        await load();
+        setNotice('Instance connected and verified.');
+      } catch (caught) {
+        setError(
+          caught instanceof ApiError ? caught.message : 'The instance could not be connected.',
+        );
+      } finally {
+        setOdooOnlineSaving(false);
+      }
+      return;
+    }
 
     const currentUrl = typeof connection.metadata.url === 'string' ? connection.metadata.url : '';
     const currentLogin =
@@ -307,12 +345,12 @@ export default function ProjectSettingsPage() {
       await api.projects.updateOdooOnlineConnection(projectId, connection.id, body);
       setOdooOnlineDraft((previous) => ({ ...previous, apiKey: '' }));
       await load();
-      setNotice('Odoo instance connection updated and verified.');
+      setNotice('Instance connection updated and verified.');
     } catch (caught) {
       setError(
         caught instanceof ApiError
           ? caught.message
-          : 'The Odoo Online connection could not be updated.',
+          : 'The instance connection could not be updated.',
       );
     } finally {
       setOdooOnlineSaving(false);
@@ -1132,12 +1170,32 @@ export default function ProjectSettingsPage() {
             const odooOnlineConnection = project.connections.find(
               (c) => c.connectionType === 'odoo_api',
             );
-            if (!odooOnlineConnection) return null;
+
+            /**
+             * This panel also offers to CREATE the connection, but only for
+             * project types that have no connection yet at creation time
+             * (odoo_sh/repository/on_premise). `odoo_online` already gets its
+             * connection from the dedicated setup panel on the project page
+             * (OdooOnlineSetupPanel) - that project type's only mode IS this
+             * JSON-RPC instance, so it is never shown here with nothing
+             * connected.
+             */
+            const canConnectHere =
+              project.projectType === 'odoo_sh' ||
+              project.projectType === 'repository' ||
+              project.projectType === 'on_premise';
+            if (!odooOnlineConnection && !canConnectHere) return null;
+
+            const isOdooOnlineProject = project.projectType === 'odoo_online';
+            const title = isOdooOnlineProject ? 'Odoo instance' : 'Odoo.sh / live instance';
+            const description = isOdooOnlineProject
+              ? 'The Odoo Online database this project works against. The address changes as the project moves between development, staging and the customer\u2019s own instance — update it here rather than disconnecting and reconnecting, so the connection keeps its history.'
+              : 'A separate JSON-RPC connection to this project\u2019s live Odoo.sh (or on-premise) database — distinct from the Git push path above. Lets a chat or task read records to check data, or create/update them (e.g. inject sample data), the same way Odoo Studio does, gated by the database_record_read/database_record_write permissions.';
 
             return (
               <SettingsGroup
-                title="Odoo instance"
-                description="The Odoo Online database this project works against. The address changes as the project moves between development, staging and the customer&apos;s own instance — update it here rather than disconnecting and reconnecting, so the connection keeps its history."
+                title={title}
+                description={description}
                 aside={canEdit ? undefined : 'Admin role required to change.'}
               >
                 <div className="panel overflow-hidden">
@@ -1158,7 +1216,7 @@ export default function ProjectSettingsPage() {
                         className="field-input"
                       />
                       <p className="field-hint">
-                        Paste the new address exactly as it appears in the browser — the database
+                        Paste the address exactly as it appears in the browser — the database
                         name is read from its subdomain.
                       </p>
                     </div>
@@ -1194,41 +1252,43 @@ export default function ProjectSettingsPage() {
                           setOdooOnlineDraft((previous) => ({ ...previous, apiKey: event.target.value }))
                         }
                         placeholder={
-                          odooOnlineConnection.hasCredentials
+                          odooOnlineConnection?.hasCredentials
                             ? 'Leave blank to keep the current key'
-                            : 'No key stored yet'
+                            : 'Generate one in the instance under Settings → Users → API Keys'
                         }
                         className="field-input"
                       />
                       <p className="field-hint">
-                        Generate one in the instance under Preferences → Account Security. Never
-                        shown again once saved — leave this blank to keep the one already stored.
+                        Never shown again once saved
+                        {odooOnlineConnection ? ' — leave this blank to keep the one already stored.' : '.'}
                       </p>
                     </div>
 
-                    <DetailList>
-                      <DetailItem label="Status">
-                        <StatusDot
-                          size="small"
-                          tone={
-                            odooOnlineConnection.status === 'connected'
-                              ? 'success'
-                              : odooOnlineConnection.status === 'error'
-                                ? 'failure'
-                                : 'idle'
-                          }
-                        >
-                          {humanise(odooOnlineConnection.status)}
-                        </StatusDot>
-                      </DetailItem>
-                      {odooOnlineConnection.lastCheckedAt ? (
-                        <DetailItem label="Last verified">
-                          {new Date(odooOnlineConnection.lastCheckedAt).toLocaleString()}
+                    {odooOnlineConnection ? (
+                      <DetailList>
+                        <DetailItem label="Status">
+                          <StatusDot
+                            size="small"
+                            tone={
+                              odooOnlineConnection.status === 'connected'
+                                ? 'success'
+                                : odooOnlineConnection.status === 'error'
+                                  ? 'failure'
+                                  : 'idle'
+                            }
+                          >
+                            {humanise(odooOnlineConnection.status)}
+                          </StatusDot>
                         </DetailItem>
-                      ) : null}
-                    </DetailList>
+                        {odooOnlineConnection.lastCheckedAt ? (
+                          <DetailItem label="Last verified">
+                            {new Date(odooOnlineConnection.lastCheckedAt).toLocaleString()}
+                          </DetailItem>
+                        ) : null}
+                      </DetailList>
+                    ) : null}
 
-                    {odooOnlineConnection.status === 'error' && odooOnlineConnection.lastError ? (
+                    {odooOnlineConnection?.status === 'error' && odooOnlineConnection.lastError ? (
                       <Alert tone="error" title="The instance refused the stored credentials">
                         {odooOnlineConnection.lastError}
                       </Alert>
@@ -1244,7 +1304,7 @@ export default function ProjectSettingsPage() {
                         className="btn-primary"
                       >
                         {odooOnlineSaving ? <Spinner className="h-3.5 w-3.5" /> : null}
-                        Save and verify
+                        {odooOnlineConnection ? 'Save and verify' : 'Connect and verify'}
                       </button>
                     </div>
                   ) : null}
